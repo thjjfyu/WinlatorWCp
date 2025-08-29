@@ -257,12 +257,12 @@ jobs:
       - name: "Build release notes (with Current)"
         if: steps.gate.outputs.same == '0'
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          # Always write header only (no Current here)
           {
             echo "🤖 Automated DXVK-Sarek (async branch) builds."
             echo
-            echo "Current: sarek-async-${{ steps.meta.outputs.base }} @ [${{ steps.meta.outputs.head_short }}](https://github.com/${{ env.SAREK_REPO }}/commit/${{ steps.meta.outputs.head_sha }})"
           } > "$NOTES"
           cat "$NOTES"
 
@@ -272,23 +272,29 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          # Update release body with the freshly built NOTES (contains Current line)
+          set -Eeuo pipefail
+          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          RELEASE_TAG="${RELEASE_TAG}"
+
+          # Rebuild body header and append Current line here (release-body only)
+          {
+            echo "🤖 Automated DXVK-Sarek (async branch) builds."
+            echo
+            echo "Current: sarek-async-${{ steps.meta.outputs.base }} @ [${{ steps.meta.outputs.head_short }}](https://github.com/${{ env.SAREK_REPO }}/commit/${{ steps.meta.outputs.head_sha }})"
+          } > "$NOTES"
+
+          # Create or update release with updated body
           if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           else
-            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           fi
-      
+
           # Upload asset (overwrite same filename)
           gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
-      
+
           # Append/refresh ASYNC_HEAD line without duplicating old
           body="$(gh api repos/${REPO}/releases/tags/${RELEASE_TAG} --jq .body || echo "")"
           body_no_old="$(printf '%s\n' "$body" | sed '/^ASYNC_HEAD=/d')"
           printf '%s\nASYNC_HEAD=%s\n' "$body_no_old" "${{ steps.meta.outputs.head_sha }}" > /tmp/newbody.txt
           gh release edit "${RELEASE_TAG}" --repo "${REPO}" -F /tmp/newbody.txt
-
-      - name: "Skip note"
-        if: steps.gate.outputs.same == '1'
-        run: echo "No new async commit; build skipped."
