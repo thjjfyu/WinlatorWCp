@@ -1,0 +1,191 @@
+name: Build FEXCore Nightly (Daily)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *"
+    
+permissions:
+  contents: write
+
+jobs:
+  resolve-latest:
+    name: Resolve upstream HEAD (commit)
+    runs-on: ubuntu-latest
+    outputs:
+      branch: ${{ steps.upstream.outputs.branch }}
+      sha: ${{ steps.upstream.outputs.sha }}
+      short: ${{ steps.upstream.outputs.short }}
+      datecode: ${{ steps.datecode.outputs.code }}
+    steps:
+      - name: Resolve upstream FEX HEAD SHA (robust)
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com"
+          OWNER="FEX-Emu"
+          REPO="FEX"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ua=(-H "User-Agent: ${GITHUB_REPOSITORY:-fexcore-nightly-workflow}")
+          ver=(-H "X-GitHub-Api-Version: 2022-11-28" -H "Accept: application/vnd.github+json")
+          fetch() { curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ua[@]}" "${ver[@]}" "$1"; }
+
+          branch="$(fetch "$API/repos/$OWNER/$REPO" | jq -r .default_branch)"
+          [[ -z "$branch" || "$branch" == "null" ]] && branch="main"
+
+          sha="$(fetch "$API/repos/$OWNER/$REPO/commits/${branch}" | jq -r .sha)"
+          [[ -z "$sha" || "$sha" == "null" ]] && { echo "::error::Failed to resolve upstream HEAD SHA"; exit 1; }
+
+          short="$(printf '%s' "$sha" | cut -c1-7)"
+
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}"       >> "$GITHUB_OUTPUT"
+          echo "short=${short}"   >> "$GITHUB_OUTPUT"
+          echo "Upstream ${branch} @ ${short}"
+
+      - name: Decide date code (YYMMDD, KST)
+        id: datecode
+        run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
+
+  ensure-release:
+    name: Ensure FEX-NIGHTLY release (minimal body)
+    needs: resolve-latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create/Update Release (tag = FEX-NIGHTLY)
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "FEX-NIGHTLY"
+          tag_name: "FEX-NIGHTLY"
+          prerelease: false
+          make_latest: true
+          body: |
+            🌙 Automated FEX-NIGHTLY builds (rolling)
+            
+            Commit: ${{ needs.resolve-latest.outputs.short }}
+            Date:   ${{ needs.resolve-latest.outputs.datecode }}
+
+  compile-fexcore:
+    name: Build & append ${{ needs.resolve-latest.outputs.short }}
+    needs: [resolve-latest, ensure-release]
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Install tools
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq zstd curl wget git cmake ninja-build build-essential
+
+      # Skip if the same commit already exists in release body
+      - name: Skip if current FEX-NIGHTLY already references this commit
+        id: dupe
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          UP_SHORT: ${{ needs.resolve-latest.outputs.short }}
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+
+          HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+                  "$API/repos/${REPO}/releases/tags/FEX-NIGHTLY" || true)"
+
+          if [ "$HTTP" = "200" ] && jq -e --arg SHA "$UP_SHORT" '(.body // "") | test($SHA)' /tmp/nightly.json >/dev/null; then
+            echo "skip=true"  >> "$GITHUB_OUTPUT"
+            echo "FEX-NIGHTLY already references ${UP_SHORT}. Skipping."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout upstream FEX (exact commit)
+        if: steps.dupe.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: FEX-Emu/FEX
+          ref: ${{ needs.resolve-latest.outputs.sha }}
+          submodules: recursive
+          path: src
+          fetch-depth: 1
+
+      - name: Compile FEXCore
+        if: steps.dupe.outputs.skip != 'true'
+        run: |
+          set -Eeuo pipefail
+          mkdir -p src/build/arm64ec && cd src/build/arm64ec
+          ../../Data/nix/cmake_configure_woa64.sh ../../ -G Ninja -DTUNE_CPU=none
+          ninja
+          cd ../../..
+          mkdir -p src/build/wow64 && cd src/build/wow64
+          ../../Data/nix/cmake_configure_woa32.sh ../../ -G Ninja -DTUNE_CPU=none
+          ninja
+          cd ../../..
+
+      - name: Package Nightly WCP (FEX-Nightly-YYMMDD.wcp)
+        if: steps.dupe.outputs.skip != 'true'
+        env:
+          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p FEXCore_DLLs FEXCore_WCP/system32
+
+          # Collect DLLs (all placed under system32)
+          cp ./src/build/arm64ec/Bin/libarm64ecfex.dll ./FEXCore_DLLs/
+          cp ./src/build/wow64/Bin/libwow64fex.dll   ./FEXCore_DLLs/
+          cp ./src/build/arm64ec/Bin/libarm64ecfex.dll ./FEXCore_WCP/system32/
+          cp ./src/build/wow64/Bin/libwow64fex.dll   ./FEXCore_WCP/system32/
+
+          cd FEXCore_WCP
+
+          # List and map into files entries
+          (find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/files.txt
+          if [[ ! -s /tmp/files.txt ]]; then
+            echo "::error::No DLLs found under FEXCore_WCP/system32"; exit 1
+          fi
+
+          jq -Rn '[inputs | {source: ("system32/"+.), target: ("${system32}/"+.)}]' \
+            < /tmp/files.txt > /tmp/files.json
+
+          # Generate profile.json with commit info
+          DESC="${DATECODE} FEXCore build by Ari"
+          jq -n \
+            --argjson VC "${DATECODE}" \
+            --arg DESC "$DESC" \
+            --slurpfile F /tmp/files.json \
+            '{
+              type: "FEXCore",
+              versionName: "nightly",
+              versionCode: $VC,
+              description: $DESC,
+              files: ($F[0] // [])
+            }' > profile.json
+
+          # Package into tar.zst
+          tar --zstd -cf "FEX-Nightly-${DATECODE}.wcp" profile.json system32
+          mv "FEX-Nightly-${DATECODE}.wcp" ../FEXCore_DLLs
+          cd ..
+
+      - name: Upload packaged artifact
+        if: steps.dupe.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FEX-Nightly-${{ needs.resolve-latest.outputs.datecode }}
+          path: ./FEXCore_DLLs/FEX-Nightly-${{ needs.resolve-latest.outputs.datecode }}.wcp
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Append asset to release (tag = FEX-NIGHTLY)
+        if: steps.dupe.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "FEX-NIGHTLY"
+          files: ./FEXCore_DLLs/FEX-Nightly-${{ needs.resolve-latest.outputs.datecode }}.wcp
