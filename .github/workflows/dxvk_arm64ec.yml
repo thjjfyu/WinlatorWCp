@@ -348,7 +348,7 @@ jobs:
         run: |
           set -euo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          printf '🤖 Automated arm64ec builds (DXVK ≥ 2.3.1)\n\n' > "$NOTES"
+          printf '🤖 Automated arm64ec builds (2.3.1+)\n\n' > "$NOTES"
       
           # Append "Current: <ver>" if new WCPs exist (pick highest version)
           if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-arm64ec-*.wcp" > /dev/null; then
