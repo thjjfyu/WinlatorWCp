@@ -1,4 +1,4 @@
-name: Build FEXCore Nightly (Daily)
+name: Build FEX Nightly
 
 on:
   workflow_dispatch:
