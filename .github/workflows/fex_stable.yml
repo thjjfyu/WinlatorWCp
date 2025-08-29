@@ -1,0 +1,179 @@
+name: Build FEX Stable
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  resolve-latest:
+    name: Resolve latest stable tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      clean_tag: ${{ steps.tag.outputs.clean_tag }}
+    steps:
+      - name: Resolve latest upstream stable tag (robust)
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com"
+          OWNER="FEX-Emu"
+          REPO="FEX"
+
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          ua=(-H "User-Agent: ${GITHUB_REPOSITORY:-fexcore-stable-workflow}")
+
+          fetch() { curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ver[@]}" "${ua[@]}" "$1"; }
+
+          # 1) Prefer official "latest" stable release
+          tag="$(fetch "$API/repos/$OWNER/$REPO/releases/latest" | jq -r .tag_name)"
+          # 2) Fallback: newest non-prerelease
+          if [[ -z "$tag" || "$tag" == "null" ]]; then
+            tag="$(fetch "$API/repos/$OWNER/$REPO/releases?per_page=10" \
+                   | jq -r '[ .[] | select(.prerelease==false) ][0].tag_name // empty')"
+          fi
+
+          [[ -z "$tag" ]] && { echo "::error::Failed to resolve latest stable tag"; exit 1; }
+
+          # Clean version (drop leading 'FEX-' or similar)
+          clean_tag="$(sed -E 's/^[Ff][Ee][Xx]-//' <<< "$tag")"
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "clean_tag=$clean_tag" >> "$GITHUB_OUTPUT"
+          echo "Latest stable: tag=$tag clean=$clean_tag"
+
+  ensure-release:
+    name: Ensure FEX-STABLE release body is latest
+    needs: resolve-latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create/Update Release (tag = FEX-STABLE)
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "FEX-STABLE"
+          tag_name: "FEX-STABLE"
+          prerelease: false
+          make_latest: true
+          # Keep body minimal: header + Current (no upstream link, no 'v' prefix)
+          body: |
+            🤖 Automated FEX-STABLE builds. (rolling)
+            
+            Current: ${{ needs.resolve-latest.outputs.clean_tag }}
+
+  build-and-append:
+    name: Build & append ${{ needs.resolve-latest.outputs.tag }}
+    needs: [resolve-latest, ensure-release]
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Install tools
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq zstd curl wget git cmake ninja-build build-essential
+
+      # Skip whole job if same-version asset already exists in the fixed release
+      - name: Skip if same-version asset exists
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          FILENAME: FEX-Stable-${{ needs.resolve-latest.outputs.clean_tag }}.wcp
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+
+          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+            "$API/repos/${REPO}/releases/tags/FEX-STABLE" || true)"
+
+          if [ "$HTTP" = "200" ] && jq -e --arg N "$FILENAME" '.assets[]?.name == $N' /tmp/rel.json >/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Found asset $FILENAME in release FEX-STABLE; skipping build."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout upstream FEX at tag
+        if: steps.exists.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: FEX-Emu/FEX
+          ref: ${{ needs.resolve-latest.outputs.tag }}
+          submodules: recursive
+          path: src
+
+      # Build logic preserved as-is
+      - name: Compile FEXCore
+        if: steps.exists.outputs.skip != 'true'
+        run: |
+          set -Eeuo pipefail
+          mkdir -p src/build/arm64ec && cd src/build/arm64ec
+          ../../Data/nix/cmake_configure_woa64.sh ../../ -G Ninja -DTUNE_CPU=none
+          ninja
+          cd ../../..
+          mkdir -p src/build/wow64 && cd src/build/wow64
+          ../../Data/nix/cmake_configure_woa32.sh ../../ -G Ninja -DTUNE_CPU=none
+          ninja
+          cd ../../..
+
+      - name: Package FEXCore DLLs and WCP
+        if: steps.exists.outputs.skip != 'true'
+        env:
+          CLEAN_TAG: ${{ needs.resolve-latest.outputs.clean_tag }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p FEXCore_DLLs FEXCore_WCP/system32
+
+          cp ./src/build/arm64ec/Bin/libarm64ecfex.dll ./FEXCore_DLLs/
+          cp ./src/build/wow64/Bin/libwow64fex.dll   ./FEXCore_DLLs/
+          cp ./src/build/arm64ec/Bin/libarm64ecfex.dll ./FEXCore_WCP/system32/
+          cp ./src/build/wow64/Bin/libwow64fex.dll   ./FEXCore_WCP/system32/
+
+          DESC="FEXCore build by Ari"
+
+          jq -n \
+            --arg VER "${CLEAN_TAG}" \
+            --arg DESC "$DESC" \
+            --argjson VC 0 \
+            --slurpfile FILES <(jq -Rn '[inputs | {source: ("system32/"+.), target: ("${system32}/"+.)}]' \
+                                 < <(find FEXCore_WCP/system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n')) \
+            '{
+              type: "FEXCore",
+              versionName: $VER,
+              versionCode: $VC,
+              description: $DESC,
+              files: ($FILES[0] // [])
+            }' > FEXCore_WCP/profile.json
+
+          tar --zstd -cf "FEX-Stable-${CLEAN_TAG}.wcp" -C FEXCore_WCP profile.json system32
+          mv "FEX-Stable-${CLEAN_TAG}.wcp" FEXCore_DLLs/
+
+      - name: Upload packaged artifact
+        if: steps.exists.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FEX-Stable-${{ needs.resolve-latest.outputs.clean_tag }}
+          path: ./FEXCore_DLLs/FEX-Stable-*.wcp
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Append asset to release (tag = FEX-STABLE)
+        if: steps.exists.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "FEX-STABLE"
+          files: ./FEXCore_DLLs/FEX-Stable-*.wcp
