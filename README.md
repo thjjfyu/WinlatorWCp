@@ -19,7 +19,7 @@
 |-------|-------------|:------:|
 | [**DXVK**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK) | Original source build | <a href="https://github.com/doitsujin/dxvk">🔗</a> |
 | [**DXVK-Sarek**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK) | For low-spec (lower Vulkan support) | <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
-| [**DXVK-Sarek-Async**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK-ASYNC) | Async + For low-spec | <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
+| [**DXVK-Sarek-Async**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK-ASYNC) | Async + For low-spec | <a href="[https://github.com/pythonlover02/DXVK-Sarek/tree/async">🔗</a> |
 | [**DXVK-GPLAsync**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC) | GPL+Async patch (reduced stutter) | <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
 | [**DXVK-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-ARM64EC) | FEX build for performance | <a href="https://wiki.fex-emu.com/index.php/Development:ARM64EC">🔗</a> |
 | [**DXVK-GPLAsync-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) | FEX + GPL+Async patch (stutter & perf) | <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a><a href="https://wiki.fex-emu.com/index.php/Development:ARM64EC">🔗</a> |
