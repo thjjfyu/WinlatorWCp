@@ -1,10 +1,9 @@
-# .github/workflows/compile-fexcore-nightly.yml
-name: Build FEXCore Nightly (Daily)
+name: Build FEX Nightly
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"   # daily @ 18:00 UTC == 03:00 KST
+    - cron: "0 18 * * *"
 
 permissions:
   contents: write
