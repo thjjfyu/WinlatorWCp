@@ -1,5 +1,5 @@
 <div align="center">
-<h1>Winlator Resources (.wcp)</h1>
+<h1>Winlator Resources (.wcp)<br><br></h1>
 </div>
 📌<i>All resources are automatically built up to the latest official release.</i>
 <br>
