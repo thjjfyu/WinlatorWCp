@@ -149,7 +149,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p Box64_WCP artifacts
-          cp build/box64 Box64_WCP/box64
+          cp src/build/box64 Box64_WCP/box64
           chmod +x Box64_WCP/box64 || true
 
           cat > Box64_WCP/profile.json <<JSON
