@@ -183,15 +183,21 @@ jobs:
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
           set -Eeuo pipefail
-          BODY=$'🌙 Automated BOX64-BIONIC-NIGHTLY builds (rolling)\n\n'
-          BODY+=$'Commit: ['"${SHORT}"'](https://github.com/ptitSeb/box64/commit/'"${SHA}"')\n'
-          BODY+=$'_Based on ptitSeb'\''s release workflow_'
+
+          # Option A) printf -v: build a multiline string with real newlines
+          printf -v BODY '%s\n\n%s\n%s' \
+            '🌙 Automated BOX64-BIONIC-NIGHTLY builds (rolling)' \
+            "Commit: [${SHORT}](https://github.com/ptitSeb/box64/commit/${SHA})" \
+            "_Based on ptitSeb's release workflow_"
 
           if ! gh release view "BOX64-BIONIC-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
-            gh release create "BOX64-BIONIC-NIGHTLY" --repo "$REPO" -t "BOX64-BIONIC-NIGHTLY" -n "${BODY}"
+            gh release create "BOX64-BIONIC-NIGHTLY" --repo "$REPO" \
+              -t "BOX64-BIONIC-NIGHTLY" -n "$BODY"
           else
-            gh release edit   "BOX64-BIONIC-NIGHTLY" --repo "$REPO" -t "BOX64-BIONIC-NIGHTLY" -n "${BODY}"
+            gh release edit "BOX64-BIONIC-NIGHTLY" --repo "$REPO" \
+              -t "BOX64-BIONIC-NIGHTLY" -n "$BODY"
           fi
+
           gh release upload "BOX64-BIONIC-NIGHTLY" \
             "./artifacts/box64-bionic-nightly-${DATECODE}.wcp" \
             --repo "$REPO" --clobber
