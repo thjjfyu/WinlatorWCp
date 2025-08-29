@@ -306,13 +306,8 @@ jobs:
       - name: "Build release notes (minimal)"
         run: |
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          # Always reset body header only (no Current here)
           printf '🤖 Automated DXVK builds (2.3.1+).\n\n' > "$NOTES"
-          # Detect the latest built version from out/*.wcp
-          if compgen -G "${GITHUB_WORKSPACE}/out/*.wcp" > /dev/null; then
-            latest=$(basename $(ls -1 "${GITHUB_WORKSPACE}/out/"*.wcp | sort -V | tail -n1) .wcp)
-            ver="${latest#dxvk-}"
-            echo "Current: ${ver}" >> "$NOTES"
-          fi
           cat "$NOTES"
 
       - name: "Create/Update GitHub Release (DXVK) + upload new WCPs"
@@ -320,12 +315,49 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -e
-          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          set -Eeuo pipefail
+          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          RELEASE_TAG="${RELEASE_TAG}"
+
+          # Rebuild body header (keeps logs clean and ensures idempotency)
+          printf '🤖 Automated DXVK builds (2.3.1+).\n\n' > "$NOTES"
+
+          # Compute "Current" only for the release body
+          cur=""
+          # 1) Prefer local artifacts from this run
+          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-*.wcp" > /dev/null; then
+            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
+            ver="${latest#dxvk-}"; ver="${ver%.wcp}"
+            cur="$ver"
           else
-            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+            # 2) Fallback: inspect existing release assets to preserve Current
+            if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+              assets_json="$(gh api repos/${REPO}/releases/tags/${RELEASE_TAG})"
+              mapfile -t list < <(
+                echo "$assets_json" \
+                | jq -r '.assets[].name' \
+                | grep -E '^dxvk-.*\.wcp$' \
+                | LC_ALL=C sort -V
+              )
+              if ((${#list[@]} > 0)); then
+                latest="${list[-1]}"
+                ver="${latest#dxvk-}"; ver="${ver%.wcp}"
+                cur="$ver"
+              fi
+            fi
           fi
+
+          # Append Current line only to the release body
+          [[ -n "$cur" ]] && echo "Current: ${cur}" >> "$NOTES"
+
+          # Create or update the release with the computed body
+          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
+          else
+            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
+          fi
+
+          # Upload new artifacts if present
           if compgen -G "${GITHUB_WORKSPACE}/out/*.wcp" > /dev/null; then
             gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
           else
