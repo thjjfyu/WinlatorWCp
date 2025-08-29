@@ -1,12 +1,12 @@
-Winlator_Resources
-
+# Winlator Resources
+_All versions are always auto-built up to the latest release of the source._
 nightly use yymmdd
 https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc
 
 
 🗃️ Work in Progress
 For more details, please check each 🔗<br>
-_All versions are always auto-built up to the latest release of the source._
+
 
 ---
 + [**FEX-Stable**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Stable) · [**FEX-Nightly**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Nightly)
