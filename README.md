@@ -1,4 +1,3 @@
-
 # **Winlator Resources (.wcp)**<br><br>
 
 + [**FEX-Stable**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Stable) · [**FEX-Nightly**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Nightly) - for proton-arm64ec [🔗](https://github.com/FEX-Emu/FEX)
