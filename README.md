@@ -50,3 +50,13 @@
 
 
 ## ✨ Full credit goes to the original creators ✨
+[ptitSeb](https://github.com/ptitSeb)  
+[doitsujin](https://github.com/doitsujin)  
+[pythonlover02](https://github.com/pythonlover02)  
+[Ph42oN](https://gitlab.com/Ph42oN)  
+[HansKristian-Work](https://github.com/HansKristian-Work)  
+[brunodev85](https://github.com/brunodev85)  
+[coffincolors](https://github.com/coffincolors)  
+[Pipetto-crypto](https://github.com/Pipetto-crypto)  
+[K11MCH1](https://github.com/K11MCH1)
+
