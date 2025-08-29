@@ -102,6 +102,76 @@ jobs:
           path: src
           fetch-depth: 1
 
+      # ⛑️ 현재 실패 원인(미구현 pthread API, 포맷 경고)만 수정하는 패치 적용
+      - name: Apply Android compatibility patch
+        if: steps.dupe.outputs.skip != 'true'
+        run: |
+          set -Eeuo pipefail
+          git -C src apply -p1 <<'PATCH'
+          diff --git a/src/libtools/threads.c b/src/libtools/threads.c
+          index 1111111..2222222 100644
+          --- a/src/libtools/threads.c
+          +++ b/src/libtools/threads.c
+          @@
+          +#ifdef __ANDROID__
+          +#include <errno.h>
+          +#ifndef PTHREAD_INHERIT_SCHED
+          +#define PTHREAD_INHERIT_SCHED 0
+          +#endif
+          +#endif
+          @@
+          -    return pthread_attr_getinheritsched(PTHREAD_ATTR(attr), sched);
+          +#ifdef __ANDROID__
+          +    if (sched) *sched = PTHREAD_INHERIT_SCHED;
+          +    return 0;
+          +#else
+          +    return pthread_attr_getinheritsched(PTHREAD_ATTR(attr), sched);
+          +#endif
+          @@
+          -    int ret = pthread_attr_setinheritsched(PTHREAD_ATTR(attr), sched);
+          +#ifdef __ANDROID__
+          +    int ret = (sched == PTHREAD_INHERIT_SCHED) ? 0 : ENOTSUP;
+          +#else
+          +    int ret = pthread_attr_setinheritsched(PTHREAD_ATTR(attr), sched);
+          +#endif
+               return ret;
+          @@
+          -    int ret = pthread_mutexattr_getprotocol(&mattr.nat, p);
+          +#ifdef __ANDROID__
+          +    int ret = ENOTSUP;
+          +#else
+          +    int ret = pthread_mutexattr_getprotocol(&mattr.nat, p);
+          +#endif
+               return ret;
+          @@
+          -    int ret = pthread_mutexattr_setprotocol(&mattr.nat, p);
+          +#ifdef __ANDROID__
+          +    int ret = ENOTSUP;
+          +#else
+          +    int ret = pthread_mutexattr_setprotocol(&mattr.nat, p);
+          +#endif
+               return ret;
+          diff --git a/src/elfs/elfload_dump.c b/src/elfs/elfload_dump.c
+          index 3333333..4444444 100644
+          --- a/src/elfs/elfload_dump.c
+          +++ b/src/elfs/elfload_dump.c
+          @@
+          +#include <inttypes.h>
+          @@
+          -#define GO(T) case T: sprintf(buff, "type: %s, Off=%" PRIx64 " vaddr=%p paddr=%p filesz=%" PRIu64 " memsz=%" PRIu64 " flags=%x align=%" PRIu64, #T, e->p_offset, (void*)e->p_vaddr, (void*)e->p_paddr, e->p_filesz, e->p_memsz, e->p_flags, e->p_align); break
+          +#define GO(T) case T: sprintf(buff, "type: %s, Off=%" PRIx64 " vaddr=%p paddr=%p filesz=%" PRIu64 " memsz=%" PRIu64 " flags=%x align=%" PRIu64, \
+          +                              #T, (uint64_t)e->p_offset, (void*)e->p_vaddr, (void*)e->p_paddr, \
+          +                              (uint64_t)e->p_filesz, (uint64_t)e->p_memsz, e->p_flags, (uint64_t)e->p_align); break
+          @@
+          -    default: sprintf(buff, "type: %x, Off=%" PRIx64 " vaddr=%p paddr=%p filesz=%" PRIu64 " memsz=%" PRIu64 " flags=%x align=%" PRIu64, e->p_type, e->p_offset, (void*)e->p_vaddr, (void*)e->p_paddr, e->p_filesz, e->p_memsz, e->p_flags, e->p_align); break;
+          +    default: sprintf(buff, "type: %x, Off=%" PRIx64 " vaddr=%p paddr=%p filesz=%" PRIu64 " memsz=%" PRIu64 " flags=%x align=%" PRIu64, \
+          +                      e->p_type, (uint64_t)e->p_offset, (void*)e->p_vaddr, (void*)e->p_paddr, \
+          +                      (uint64_t)e->p_filesz, (uint64_t)e->p_memsz, e->p_flags, (uint64_t)e->p_align); break;
+          @@
+          -    h->DynStr+sym->st_name, (void*)sym->st_value, sym->st_size,
+          +    h->DynStr+sym->st_name, (void*)sym->st_value, (uint64_t)sym->st_size,
+          PATCH
+
       - name: Setup Android NDK
         if: steps.dupe.outputs.skip != 'true'
         run: |
