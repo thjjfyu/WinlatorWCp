@@ -19,8 +19,9 @@
 
 ---
 
-The nightly build uses the YYMMDD format.
-All resources are automatically built based on the latest release. All rights and credit go to the original creators.
+The nightly build uses the YYMMDD format.<br>
+All resources are automatically built based on the latest release.<br>
+All rights and credit go to the original creators.
 
 
 https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc
