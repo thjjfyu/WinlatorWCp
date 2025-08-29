@@ -36,10 +36,9 @@
 - 🚧 Work in Progress  
 - ❌ Box64 for Bionic requires a libc compatibility patch → **not included here**  
 - 🤖 All builds are generated from the latest official source release
+- 🔗 Official Box64 configuration can be found [here](https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc)
 
 
 ## ✨ Full credit goes to the original creators
 
-
-🔗 Official Box64 configuration can be found [here](https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc)
 
