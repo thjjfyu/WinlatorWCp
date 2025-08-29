@@ -23,8 +23,9 @@
 
 ---
 
-The nightly build uses the YYMMDD format.<br>
+Work in Progress
 All resources are automatically built based on the latest release.<br>
+The nightly build uses the YYMMDD format.<br>
 All rights and credit go to the original creators.
 
 
