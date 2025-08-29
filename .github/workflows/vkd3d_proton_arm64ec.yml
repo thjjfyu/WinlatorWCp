@@ -1,4 +1,4 @@
-name: Build VKD3D-proton-arm64ec (2.14.1+)
+name: Build VKD3D-proton-arm64ec
 
 on:
   workflow_dispatch:
