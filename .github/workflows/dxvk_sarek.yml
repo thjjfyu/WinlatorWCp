@@ -268,17 +268,10 @@ jobs:
 
       - name: "Build release notes (with Current)"
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          # Always reset body header only
           printf '🤖 Automated DXVK-Sarek builds (1.10.8+).\n\n' > "$NOTES"
-      
-          # If new WCPs exist in this run, append "Current: <version>"
-          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-sarek-*.wcp" > /dev/null; then
-            latest="$(ls -1 "${GITHUB_WORKSPACE}/out/dxvk-sarek-"*.wcp | sed 's#.*/##' | sort -V | tail -n1)"
-            cur="${latest#dxvk-sarek-}"; cur="${cur%.wcp}"   # e.g. 2.5.3
-            echo "Current: ${cur}" >> "$NOTES"
-          fi
-      
           cat "$NOTES"
 
       - name: "Create/Update GitHub Release (DXVK-SAREK) + upload new WCPs"
@@ -286,12 +279,44 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -e
-          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          set -Eeuo pipefail
+          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          RELEASE_TAG="${RELEASE_TAG}"
+
+          # Rebuild body header
+          printf '🤖 Automated DXVK-Sarek builds (1.10.8+).\n\n' > "$NOTES"
+
+          # Compute Current only for release body
+          cur=""
+          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-sarek-*.wcp" > /dev/null; then
+            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-sarek-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
+            cur="${latest#dxvk-sarek-}"; cur="${cur%.wcp}"
           else
-            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+            if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+              assets_json="$(gh api repos/${REPO}/releases/tags/${RELEASE_TAG})"
+              mapfile -t list < <(
+                echo "$assets_json" \
+                | jq -r '.assets[].name' \
+                | grep -E '^dxvk-sarek-.*\.wcp$' \
+                | LC_ALL=C sort -V
+              )
+              if ((${#list[@]} > 0)); then
+                latest="${list[-1]}"
+                cur="${latest#dxvk-sarek-}"; cur="${cur%.wcp}"
+              fi
+            fi
           fi
+
+          [[ -n "$cur" ]] && echo "Current: ${cur}" >> "$NOTES"
+
+          # Create or update release
+          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
+          else
+            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
+          fi
+
+          # Upload new artifacts if any
           if compgen -G "${GITHUB_WORKSPACE}/out/*.wcp" > /dev/null; then
             gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
           else
