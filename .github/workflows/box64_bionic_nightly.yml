@@ -141,7 +141,7 @@ jobs:
           echo "---- ANDROID NOTE ----"
           readelf -nW src/build/box64 | sed -n '/.note.android.ident/,/Displaying/p'
 
-      - name: Package WCP
+      - name: Package WCP (commit-based versionName, date-based versionCode)
         if: steps.dupe.outputs.skip != 'true'
         env:
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
@@ -149,19 +149,24 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p Box64_WCP artifacts
-          cp src/build/box64 Box64_WCP/box64
+          cp build/box64 Box64_WCP/box64
           chmod +x Box64_WCP/box64 || true
+
           cat > Box64_WCP/profile.json <<JSON
           {
             "type": "Box64",
-            "versionName": "${SHORT}",
-            "versionCode": 0,
-            "description": "",
+            "versionName": "nightly-${SHORT}",
+            "versionCode": ${DATECODE},
+            "description": "${DATECODE} Box64-Bionic Build by Ari",
             "files": [
-              { "source": "box64", "target": "\${bindir}/box64" }
+              {
+                "source": "box64",
+                "target": "\${bindir}/box64"
+              }
             ]
           }
           JSON
+
           (cd Box64_WCP && tar --zstd -cf "../artifacts/box64-bionic-nightly-${DATECODE}.wcp" profile.json box64)
 
       - name: Upload artifact
