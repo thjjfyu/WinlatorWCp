@@ -1,4 +1,4 @@
-name: Build VKD3D-proton (2.14.1+)
+name: Build VKD3D-proton
 
 on:
   workflow_dispatch:
