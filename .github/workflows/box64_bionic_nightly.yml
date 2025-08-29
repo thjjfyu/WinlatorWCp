@@ -183,12 +183,9 @@ jobs:
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
           set -Eeuo pipefail
-          BODY=''
-          BODY+=$'BOX64-BIONIC-NIGHTLY\n\n'
+          BODY=$'🌙 Automated BOX64-BIONIC-NIGHTLY builds (rolling)\n\n'
           BODY+=$'Commit: ['"${SHORT}"'](https://github.com/ptitSeb/box64/commit/'"${SHA}"')\n'
-          BODY+=$'Target: Android (Bionic, arm64-v8a)\n'
-          BODY+=$'Flags: Dynarec=ON, BadSignal=ON\n'
-          BODY+=$'Packaging: WCP (\${bindir})\n'
+          BODY+=$'_Based on ptitSeb'\''s release workflow_'
 
           if ! gh release view "BOX64-BIONIC-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "BOX64-BIONIC-NIGHTLY" --repo "$REPO" -t "BOX64-BIONIC-NIGHTLY" -n "${BODY}"
