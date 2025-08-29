@@ -170,17 +170,23 @@ jobs:
       - name: Ensure/Update release (tag = FEX-NIGHTLY) and upload asset
         if: steps.dupe.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}            # <<< add this
-          SHORT: ${{ needs.resolve-latest.outputs.short }}
-          SHA:   ${{ needs.resolve-latest.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPO:     ${{ github.repository }}                 # ← add this
+          SHORT:    ${{ needs.resolve-latest.outputs.short }}
+          SHA:      ${{ needs.resolve-latest.outputs.sha }}
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
           set -Eeuo pipefail
           BODY=$'🌙 Automated FEX-NIGHTLY builds (rolling)\n\nCommit: ['"${SHORT}"'](https://github.com/FEX-Emu/FEX/commit/'"${SHA}"')'
-          if ! gh release view "FEX-NIGHTLY" >/dev/null 2>&1; then
-            gh release create "FEX-NIGHTLY" -t "FEX-NIGHTLY" -n "${BODY}"
+      
+          # Use explicit --repo to avoid relying on .git presence
+          if ! gh release view "FEX-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "FEX-NIGHTLY" --repo "$REPO" -t "FEX-NIGHTLY" -n "${BODY}"
           else
-            gh release edit   "FEX-NIGHTLY" -t "FEX-NIGHTLY" -n "${BODY}"
+            gh release edit   "FEX-NIGHTLY" --repo "$REPO" -t "FEX-NIGHTLY" -n "${BODY}"
           fi
       
-          gh release upload "FEX-NIGHTLY" "./FEXCore_DLLs/fex-nightly-${DATECODE}.wcp" --clobber
+          # Upload asset (lowercase filename), accumulate versions
+          gh release upload "FEX-NIGHTLY" \
+            "./FEXCore_DLLs/fex-nightly-${DATECODE}.wcp" \
+            --repo "$REPO" --clobber
