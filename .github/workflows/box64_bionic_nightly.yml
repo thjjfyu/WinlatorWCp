@@ -1,0 +1,201 @@
+name: Build Box64 Android Bionic Nightly
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *"   # daily @ 18:00 UTC == 03:00 KST
+
+permissions:
+  contents: write
+
+jobs:
+  resolve-latest:
+    name: Resolve upstream HEAD (commit)
+    runs-on: ubuntu-latest
+    outputs:
+      sha:     ${{ steps.upstream.outputs.sha }}
+      short:   ${{ steps.upstream.outputs.short }}
+      datecode:${{ steps.datecode.outputs.code }}
+    steps:
+      - name: Install tools (jq, curl)
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+
+      - name: Resolve upstream Box64 HEAD SHA (robust)
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com"
+          OWNER="ptitSeb"
+          REPO="box64"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ua=(-H "User-Agent: ${GITHUB_REPOSITORY:-box64-bionic-nightly}")
+          ver=(-H "X-GitHub-Api-Version: 2022-11-28" -H "Accept: application/vnd.github+json")
+          fetch() { curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ua[@]}" "${ver[@]}" "$1"; }
+
+          default_branch="$(fetch "$API/repos/$OWNER/$REPO" | jq -r .default_branch)"
+          [[ -z "$default_branch" || "$default_branch" == "null" ]] && default_branch="main"
+
+          sha="$(fetch "$API/repos/$OWNER/$REPO/commits/${default_branch}" | jq -r .sha)"
+          [[ -z "$sha" || "$sha" == "null" ]] && { echo "::error::Failed to resolve upstream HEAD SHA"; exit 1; }
+
+          short="$(printf '%s' "$sha" | cut -c1-7)"
+          echo "sha=${sha}"     >> "$GITHUB_OUTPUT"
+          echo "short=${short}" >> "$GITHUB_OUTPUT"
+          echo "Upstream ${default_branch} @ ${short}"
+
+      - name: Decide date code (YYMMDD, KST)
+        id: datecode
+        run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
+
+  compile-box64:
+    name: Build & append ${{ needs.resolve-latest.outputs.short }}
+    needs: [resolve-latest]
+    runs-on: ubuntu-latest
+
+    env:
+      NDK_VERSION: r26b
+      ANDROID_API: 24
+      BUILD_TYPE:  Release
+
+    steps:
+      - name: Install build tools
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq zstd wget curl git cmake ninja-build file gh
+
+      - name: Skip if same-date asset exists
+        id: dupe
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+          FILENAME="box64-bionic-nightly-${DATECODE}.wcp"
+
+          HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+                  "$API/repos/${REPO}/releases/tags/BOX64-BIONIC-NIGHTLY" || true)"
+
+          if [ "$HTTP" = "200" ] && jq -e --arg N "$FILENAME" '.assets[]?.name == $N' /tmp/nightly.json >/dev/null; then
+            echo "skip=true"  >> "$GITHUB_OUTPUT"
+            echo "Found asset ${FILENAME} in release BOX64-BIONIC-NIGHTLY; skipping build."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout upstream Box64 (exact commit)
+        if: steps.dupe.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ptitSeb/box64
+          ref: ${{ needs.resolve-latest.outputs.sha }}
+          submodules: recursive
+          path: src
+          fetch-depth: 1
+
+      - name: Setup Android NDK
+        if: steps.dupe.outputs.skip != 'true'
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL -o ndk.zip "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
+          unzip -qq ndk.zip
+          echo "NDK=$PWD/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Configure (CMake Android Toolchain, Bionic aarch64)
+        if: steps.dupe.outputs.skip != 'true'
+        run: |
+          set -Eeuo pipefail
+          cmake -S src -B build \
+            -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="${NDK}/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=${ANDROID_API} \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+            -DARM_DYNAREC=ON \
+            -DBAD_SIGNAL=ON \
+            -DBOX32=OFF \
+            -DZYDIS3=0 \
+            -DCMAKE_C_FLAGS="-fPIC -moutline-atomics" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections"
+
+      - name: Build
+        if: steps.dupe.outputs.skip != 'true'
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Verify ELF (Bionic traits)
+        if: steps.dupe.outputs.skip != 'true'
+        run: |
+          set -Eeuo pipefail
+          echo "---- INTERP ----"
+          readelf -lW build/box64 | sed -n 's/.*Requesting program interpreter: *//p'
+          echo "---- NEEDED ----"
+          readelf -dW build/box64 | awk '/NEEDED/{print $0}'
+          echo "---- ANDROID NOTE ----"
+          readelf -nW build/box64 | sed -n '/.note.android.ident/,/Displaying/p'
+
+      - name: Package WCP (commit-based versionName)
+        if: steps.dupe.outputs.skip != 'true'
+        env:
+          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
+          SHORT:    ${{ needs.resolve-latest.outputs.short }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p Box64_WCP artifacts
+          cp build/box64 Box64_WCP/box64
+          chmod +x Box64_WCP/box64 || true
+
+          cat > Box64_WCP/profile.json <<JSON
+          {
+            "type": "Box64",
+            "versionName": "${SHORT}",
+            "versionCode": 0,
+            "description": "",
+            "files": [
+              {
+                "source": "box64",
+                "target": "\${bindir}/box64"
+              }
+            ]
+          }
+          JSON
+
+          (cd Box64_WCP && tar --zstd -cf "../artifacts/box64-bionic-nightly-${DATECODE}.wcp" profile.json box64)
+
+      - name: Upload packaged artifact
+        if: steps.dupe.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: box64-bionic-nightly-${{ needs.resolve-latest.outputs.datecode }}
+          path: ./artifacts/box64-bionic-nightly-${{ needs.resolve-latest.outputs.datecode }}.wcp
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Ensure/Update release (tag = BOX64-BIONIC-NIGHTLY) and upload asset
+        if: steps.dupe.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:     ${{ github.repository }}
+          SHORT:    ${{ needs.resolve-latest.outputs.short }}
+          SHA:      ${{ needs.resolve-latest.outputs.sha }}
+          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
+          ANDROID_API: ${{ env.ANDROID_API }}
+        run: |
+          set -Eeuo pipefail
+          BODY=$'🤖 Android **Bionic** nightly (arm64-v8a)\n\nCommit: ['"${SHORT}"'](https://github.com/ptitSeb/box64/commit/'"${SHA}"')\nminSdk: '"${ANDROID_API}"'\nDynarec: ON, BadSignal: ON\nPackaging: WCP (profile.json with ${bindir})'
+          if ! gh release view "BOX64-BIONIC-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "BOX64-BIONIC-NIGHTLY" --repo "$REPO" -t "BOX64-BIONIC-NIGHTLY" -n "${BODY}"
+          else
+            gh release edit   "BOX64-BIONIC-NIGHTLY" --repo "$REPO" -t "BOX64-BIONIC-NIGHTLY" -n "${BODY}"
+          fi
+          gh release upload "BOX64-BIONIC-NIGHTLY" \
+            "./artifacts/box64-bionic-nightly-${DATECODE}.wcp" \
+            --repo "$REPO" --clobber
