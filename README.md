@@ -1,16 +1,17 @@
 
 # **Winlator Resources (.wcp)**
 
-📌All resources are automatically built up to the latest official release.<br>
-📌The nightly build uses the YYMMDD format.
+All resources are automatically built up to the latest official release.<br>
+The nightly build uses the YYMMDD format.
 
 ---
 
-+ [**FEX-Stable**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Stable) · [**FEX-Nightly**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Nightly) - Emulate x86 Programs on ARM64 (For Proton-arm64ec) [🔗](https://github.com/FEX-Emu/FEX)
++ [**FEX-Stable**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Stable) · [**FEX-Nightly**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Nightly) - for proton-arm64ec [🔗](https://github.com/FEX-Emu/FEX)
 
 ---
 
-+ **BOX64-Stable** · **BOX64-Nightly** For Glibc - Linux Userspace x86-64 Emulator [🔗](https://github.com/ptitSeb/box64)<br>
++ **BOX64-Stable** · **BOX64-Nightly** - for Glibc [🔗](https://github.com/ptitSeb/box64)<br>
+
 📌 Since box64 for *Bionic* requires a Bionic libc compatibility patch, it will **NOT** be covered here.
 
 ---
@@ -22,16 +23,5 @@
 + [**DXVK-gplasync-arm64ec**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/DXVK-GPLASYNC-ARM64EC) - A build for FEX with GPL+Async to reduce stutter and improve performance
 
 ---
-VKD3D
----
-Turnip Driver
----
-
-
-## Box64 for Glibc
 
 https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc
-
-📌 **Note**  
-Since box64 for *Bionic* requires a **Bionic libc compatibility patch**,  
-it will **not** be covered here.
