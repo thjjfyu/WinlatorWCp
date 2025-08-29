@@ -35,8 +35,7 @@
 ## ℹ️ Notes
 - 🚧 Work in Progress  
 - ❌ Box64 for Bionic requires a libc compatibility patch → **not included here**  
-- 🤖 All resources are automatically built from the latest release  
-- 🌙 Nightly builds follow the `YYMMDD` format  
+- 🤖 All builds are generated from the latest official source release
 - ✨ Full credit goes to the original creators  
 
 
