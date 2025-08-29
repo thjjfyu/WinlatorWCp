@@ -63,7 +63,7 @@ jobs:
           make_latest: true
           # Keep body minimal: header + Current (no upstream link, no 'v' prefix)
           body: |
-            🤖 Automated FEX-STABLE builds. (rolling)
+            🤖 Automated FEX-STABLE builds. (2508.1+)
             
             Current: ${{ needs.resolve-latest.outputs.clean_tag }}
 
