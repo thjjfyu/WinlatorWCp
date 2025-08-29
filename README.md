@@ -9,7 +9,7 @@ For more details, please check each 🔗<br>
 
 
 ---
-+ [**FEX-Stable**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Stable) · [**FEX-Nightly**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Nightly) - Emulate x86 Programs on ARM64 [🔗](https://github.com/FEX-Emu/FEX)
++ [**FEX-Stable**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Stable) · [**FEX-Nightly**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Nightly) - Emulate x86 Programs on ARM64. [🔗](https://github.com/FEX-Emu/FEX)
 ---
 + [**DXVK**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/DXVK) - A build based on the original source. [🔗](https://github.com/doitsujin/dxvk) 
 + [**DXVK-sarek**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/DXVK-SAREK) · [**DXVK-sarek-async**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/DXVK-SAREK-ASYNC) - A build for older GPUs with lower Vulkan requirements. [🔗](https://github.com/pythonlover02/DXVK-Sarek/tree/main) 
