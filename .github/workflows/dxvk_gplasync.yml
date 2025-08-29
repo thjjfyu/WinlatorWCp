@@ -330,34 +330,56 @@ jobs:
             echo "::endgroup::"
           done < "${GITHUB_WORKSPACE}/to_build.txt"
 
-      # ───────────────────── Release notes (links to upstream) ────────────────
       - name: Build release notes (links only)
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          # Always reset body header only
           printf '🤖 Automated gplasync builds (2.3.1+)\n\n' > "$NOTES"
-      
-          # Append "Current: <base>-<rev>" if new WCPs exist (pick highest by version)
-          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-gplasync-*.wcp" > /dev/null; then
-            latest="$(ls -1 "${GITHUB_WORKSPACE}/out/dxvk-gplasync-"*.wcp | sed 's#.*/##' | sort -V | tail -n1)"
-            cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"   # e.g. 2.4.1-3
-            echo "Current: ${cur}" >> "$NOTES"
-          fi
-      
           cat "$NOTES"
 
-      # ─────────────────────── Upload & Release (append) ──────────────────────
       - name: Create/Update GitHub Release (DXVK-GPLASYNC) + upload new WCPs
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -e
-          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          set -Eeuo pipefail
+          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+
+          # Detect latest current version (from out/ or release assets)
+          cur=""
+          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-gplasync-*.wcp" > /dev/null; then
+            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-gplasync-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
+            cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"
           else
-            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+            if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+              assets_json="$(gh api repos/${REPO}/releases/tags/${RELEASE_TAG})"
+              mapfile -t list < <(
+                echo "$assets_json" \
+                | jq -r '.assets[].name' \
+                | grep -E '^dxvk-gplasync-.*\.wcp$' \
+                | LC_ALL=C sort -V
+              )
+              if ((${#list[@]} > 0)); then
+                latest="${list[-1]}"
+                cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"
+              fi
+            fi
           fi
+
+          # Append Current line only for release body
+          if [[ -n "$cur" ]]; then
+            echo "Current: ${cur}" >> "$NOTES"
+          fi
+
+          # Create or edit release with updated notes
+          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
+          else
+            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
+          fi
+
+          # Upload assets if new
           if compgen -G "out/*.wcp" > /dev/null; then
             gh release upload "${RELEASE_TAG}" out/*.wcp --repo "${REPO}" --clobber
           else
