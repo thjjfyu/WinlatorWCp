@@ -1,5 +1,5 @@
 # Winlator Resources (.wcp)
-_All versions are always auto-built up to the latest release of the source._
+_All resources are automatically built up to the latest official release._
 nightly use yymmdd
 https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc
 
