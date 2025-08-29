@@ -6,7 +6,7 @@
 
 + [**BOX64-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) · [**BOX64-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) - for Glibc [🔗](https://github.com/ptitSeb/box64)<br>
 
-📌 Since box64 for *Bionic* requires a Bionic libc compatibility patch, it will **NOT** be covered here.
+📌 Since box64 for *Bionic* requires a Bionic libc compatibility patch, it will **NOT** be covered here
 
 ---
 
@@ -23,7 +23,7 @@
 
 ---
 
-Work in Progress
+Work in Progress<br>
 All resources are automatically built based on the latest release.<br>
 The nightly build uses the YYMMDD format.<br>
 All rights and credit go to the original creators.
