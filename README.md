@@ -1,12 +1,10 @@
-# **Winlator Resources (.wcp)**<br><br>
+# 🤖**Winlator Resources (.wcp)**<br><br>
 
 + [**FEX-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) · [**FEX-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) - for proton-arm64ec [🔗](https://github.com/FEX-Emu/FEX)
 
 ---
 
 + [**BOX64-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) · [**BOX64-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) - for Glibc [🔗](https://github.com/ptitSeb/box64)<br>
-
-📌 Since box64 for *Bionic* requires a Bionic libc compatibility patch, it will **NOT** be covered here
 
 ---
 
@@ -23,10 +21,13 @@
 
 ---
 
-Work in Progress<br>
-All resources are automatically built based on the latest release.<br>
-The nightly build uses the YYMMDD format.<br>
-All rights and credit go to the original creators.
+🚧 Work in Progress...<br>
+❌ Box64 on Bionic requires a libc compatibility patch, so it will NOT be included here.<br>
+🤖 All resources are built automatically from the latest release.<br>
+🌙 Nightly builds follow the YYMMDD format.<br>
+
+
+✨ **Full credit goes to the original creators.**
 
 
 https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc
