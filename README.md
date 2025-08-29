@@ -40,7 +40,7 @@
 
 
 ## Adrenotools GPU Drivers
-## Proton, Wine
+## Proton
 
 
 ## ℹ️Notes
