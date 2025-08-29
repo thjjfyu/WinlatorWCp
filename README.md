@@ -3,7 +3,7 @@
 <br>
 📌 All resources are automatically built up to the latest official release.
 <br>
-📌 The nightly build name uses the YY-MM-DD format.
+📌 The nightly build uses the YY-MM-DD format.
 <br>
 📌 For more details, please check each 🔗
 
