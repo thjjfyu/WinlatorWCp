@@ -346,17 +346,10 @@ jobs:
 
       - name: Build release notes (links only)
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          # Always reset body header only (no Current here)
           printf '🤖 Automated arm64ec builds (2.3.1+)\n\n' > "$NOTES"
-      
-          # Append "Current: <ver>" if new WCPs exist (pick highest version)
-          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-arm64ec-*.wcp" > /dev/null; then
-            latest="$(ls -1 "${GITHUB_WORKSPACE}/out/dxvk-arm64ec-"*.wcp | sed 's#.*/##' | sort -V | tail -n1)"
-            ver="${latest#dxvk-arm64ec-}"; ver="${ver%.wcp}"
-            echo "Current: ${ver}" >> "$NOTES"
-          fi
-      
           cat "$NOTES"
 
       # --- Upload & Release (append new assets) -------------------------------
@@ -365,15 +358,46 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          set -e
-          # Ensure release exists & update body to full links list
-          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          set -Eeuo pipefail
+          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          RELEASE_TAG="${RELEASE_TAG}"
+
+          # Rebuild body header
+          printf '🤖 Automated arm64ec builds (2.3.1+)\n\n' > "$NOTES"
+
+          # Compute "Current" only for the release body
+          cur=""
+          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-arm64ec-*.wcp" > /dev/null; then
+            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-arm64ec-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
+            ver="${latest#dxvk-arm64ec-}"; ver="${ver%.wcp}"
+            cur="$ver"
           else
-            gh release edit "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+            if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+              assets_json="$(gh api repos/${REPO}/releases/tags/${RELEASE_TAG})"
+              mapfile -t list < <(
+                echo "$assets_json" \
+                | jq -r '.assets[].name' \
+                | grep -E '^dxvk-arm64ec-.*\.wcp$' \
+                | LC_ALL=C sort -V
+              )
+              if ((${#list[@]} > 0)); then
+                latest="${list[-1]}"
+                ver="${latest#dxvk-arm64ec-}"; ver="${ver%.wcp}"
+                cur="$ver"
+              fi
+            fi
           fi
 
-          # Upload only new files if any
+          [[ -n "$cur" ]] && echo "Current: ${cur}" >> "$NOTES"
+
+          # Create or update release
+          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
+          else
+            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
+          fi
+
+          # Upload new assets if any
           if compgen -G "out/*.wcp" > /dev/null; then
             gh release upload "${RELEASE_TAG}" out/*.wcp --repo "${REPO}" --clobber
           else
