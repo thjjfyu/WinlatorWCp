@@ -1,12 +1,13 @@
-name: Build Box64 Android Bionic Nightly
+name: Build Box64 Bionic Nightly
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"   # daily @ 18:00 UTC == 03:00 KST
+    - cron: "0 18 * * *"   # daily (UTC)
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   resolve-latest:
@@ -52,22 +53,20 @@ jobs:
         id: datecode
         run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
 
-  compile-box64:
-    name: Build & append ${{ needs.resolve-latest.outputs.short }}
+  build-android-bionic:
+    name: Build & release ${{ needs.resolve-latest.outputs.short }}
     needs: [resolve-latest]
     runs-on: ubuntu-latest
-
     env:
       NDK_VERSION: r26b
-      ANDROID_API: 24
       BUILD_TYPE:  Release
 
     steps:
-      - name: Install build tools
+      - name: Install build deps
         run: |
           set -Eeuo pipefail
           sudo apt-get update
-          sudo apt-get install -y jq zstd wget curl git cmake ninja-build file gh
+          sudo apt-get install -y git cmake make ninja-build python3 patchelf zstd file jq wget curl gh binutils
 
       - name: Skip if same-date asset exists
         id: dupe
@@ -81,13 +80,11 @@ jobs:
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
           FILENAME="box64-bionic-nightly-${DATECODE}.wcp"
-
           HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
                   "$API/repos/${REPO}/releases/tags/BOX64-BIONIC-NIGHTLY" || true)"
-
           if [ "$HTTP" = "200" ] && jq -e --arg N "$FILENAME" '.assets[]?.name == $N' /tmp/nightly.json >/dev/null; then
             echo "skip=true"  >> "$GITHUB_OUTPUT"
-            echo "Found asset ${FILENAME} in release BOX64-BIONIC-NIGHTLY; skipping build."
+            echo "Found asset ${FILENAME}; skipping build."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -102,117 +99,49 @@ jobs:
           path: src
           fetch-depth: 1
 
-      # ⛑️ 현재 실패 원인(미구현 pthread API, 포맷 경고)만 수정하는 패치 적용
-      - name: Apply Android compatibility patch
+      # Upstream style: use NDK r26b and directly point to the aarch64 Android 31 clang
+      - name: Prepare Android NDK r26b (upstream style)
         if: steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
-          git -C src apply -p1 <<'PATCH'
-          diff --git a/src/libtools/threads.c b/src/libtools/threads.c
-          index 1111111..2222222 100644
-          --- a/src/libtools/threads.c
-          +++ b/src/libtools/threads.c
-          @@
-          +#ifdef __ANDROID__
-          +#include <errno.h>
-          +#ifndef PTHREAD_INHERIT_SCHED
-          +#define PTHREAD_INHERIT_SCHED 0
-          +#endif
-          +#endif
-          @@
-          -    return pthread_attr_getinheritsched(PTHREAD_ATTR(attr), sched);
-          +#ifdef __ANDROID__
-          +    if (sched) *sched = PTHREAD_INHERIT_SCHED;
-          +    return 0;
-          +#else
-          +    return pthread_attr_getinheritsched(PTHREAD_ATTR(attr), sched);
-          +#endif
-          @@
-          -    int ret = pthread_attr_setinheritsched(PTHREAD_ATTR(attr), sched);
-          +#ifdef __ANDROID__
-          +    int ret = (sched == PTHREAD_INHERIT_SCHED) ? 0 : ENOTSUP;
-          +#else
-          +    int ret = pthread_attr_setinheritsched(PTHREAD_ATTR(attr), sched);
-          +#endif
-               return ret;
-          @@
-          -    int ret = pthread_mutexattr_getprotocol(&mattr.nat, p);
-          +#ifdef __ANDROID__
-          +    int ret = ENOTSUP;
-          +#else
-          +    int ret = pthread_mutexattr_getprotocol(&mattr.nat, p);
-          +#endif
-               return ret;
-          @@
-          -    int ret = pthread_mutexattr_setprotocol(&mattr.nat, p);
-          +#ifdef __ANDROID__
-          +    int ret = ENOTSUP;
-          +#else
-          +    int ret = pthread_mutexattr_setprotocol(&mattr.nat, p);
-          +#endif
-               return ret;
-          diff --git a/src/elfs/elfload_dump.c b/src/elfs/elfload_dump.c
-          index 3333333..4444444 100644
-          --- a/src/elfs/elfload_dump.c
-          +++ b/src/elfs/elfload_dump.c
-          @@
-          +#include <inttypes.h>
-          @@
-          -#define GO(T) case T: sprintf(buff, "type: %s, Off=%" PRIx64 " vaddr=%p paddr=%p filesz=%" PRIu64 " memsz=%" PRIu64 " flags=%x align=%" PRIu64, #T, e->p_offset, (void*)e->p_vaddr, (void*)e->p_paddr, e->p_filesz, e->p_memsz, e->p_flags, e->p_align); break
-          +#define GO(T) case T: sprintf(buff, "type: %s, Off=%" PRIx64 " vaddr=%p paddr=%p filesz=%" PRIu64 " memsz=%" PRIu64 " flags=%x align=%" PRIu64, \
-          +                              #T, (uint64_t)e->p_offset, (void*)e->p_vaddr, (void*)e->p_paddr, \
-          +                              (uint64_t)e->p_filesz, (uint64_t)e->p_memsz, e->p_flags, (uint64_t)e->p_align); break
-          @@
-          -    default: sprintf(buff, "type: %x, Off=%" PRIx64 " vaddr=%p paddr=%p filesz=%" PRIu64 " memsz=%" PRIu64 " flags=%x align=%" PRIu64, e->p_type, e->p_offset, (void*)e->p_vaddr, (void*)e->p_paddr, e->p_filesz, e->p_memsz, e->p_flags, e->p_align); break;
-          +    default: sprintf(buff, "type: %x, Off=%" PRIx64 " vaddr=%p paddr=%p filesz=%" PRIu64 " memsz=%" PRIu64 " flags=%x align=%" PRIu64, \
-          +                      e->p_type, (uint64_t)e->p_offset, (void*)e->p_vaddr, (void*)e->p_paddr, \
-          +                      (uint64_t)e->p_filesz, (uint64_t)e->p_memsz, e->p_flags, (uint64_t)e->p_align); break;
-          @@
-          -    h->DynStr+sym->st_name, (void*)sym->st_value, sym->st_size,
-          +    h->DynStr+sym->st_name, (void*)sym->st_value, (uint64_t)sym->st_size,
-          PATCH
-
-      - name: Setup Android NDK
-        if: steps.dupe.outputs.skip != 'true'
-        run: |
-          set -Eeuo pipefail
-          curl -fsSL -o ndk.zip "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
+          curl -fsSL -o ndk.zip https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip
           unzip -qq ndk.zip
-          echo "NDK=$PWD/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "NDK=$PWD/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
+          echo "BOX64_COMPILER=$PWD/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang" >> $GITHUB_ENV
+          echo "BOX64_PLATFORM_MACRO=-DANDROID=1 -DARM_DYNAREC=1 -DBAD_SIGNAL=1" >> $GITHUB_ENV
 
-      - name: Configure (CMake Android Toolchain, Bionic aarch64)
+      - name: Configure (upstream-like CMake)
         if: steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
-          cmake -S src -B build \
-            -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="${NDK}/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=${ANDROID_API} \
+          cd src
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_C_COMPILER="${BOX64_COMPILER}" \
+            ${BOX64_PLATFORM_MACRO} \
             -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
-            -DARM_DYNAREC=ON \
-            -DBAD_SIGNAL=ON \
-            -DBOX32=OFF \
+            -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON \
             -DZYDIS3=0 \
-            -DCMAKE_C_FLAGS="-fPIC -moutline-atomics" \
-            -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections"
+            -DSTATICBUILD=0 \
+            -DBOX32=0
+          cd -
 
       - name: Build
         if: steps.dupe.outputs.skip != 'true'
-        run: cmake --build build -j"$(nproc)"
+        run: cmake --build src/build -j"$(nproc)"
 
       - name: Verify ELF (Bionic traits)
         if: steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
           echo "---- INTERP ----"
-          readelf -lW build/box64 | sed -n 's/.*Requesting program interpreter: *//p'
+          readelf -lW src/build/box64 | sed -n 's/.*Requesting program interpreter: *//p'
           echo "---- NEEDED ----"
-          readelf -dW build/box64 | awk '/NEEDED/{print $0}'
+          readelf -dW src/build/box64 | awk '/NEEDED/{print $0}'
           echo "---- ANDROID NOTE ----"
-          readelf -nW build/box64 | sed -n '/.note.android.ident/,/Displaying/p'
+          readelf -nW src/build/box64 | sed -n '/.note.android.ident/,/Displaying/p'
 
-      - name: Package WCP (commit-based versionName)
+      - name: Package WCP
         if: steps.dupe.outputs.skip != 'true'
         env:
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
@@ -220,9 +149,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p Box64_WCP artifacts
-          cp build/box64 Box64_WCP/box64
+          cp src/build/box64 Box64_WCP/box64
           chmod +x Box64_WCP/box64 || true
-
           cat > Box64_WCP/profile.json <<JSON
           {
             "type": "Box64",
@@ -230,17 +158,13 @@ jobs:
             "versionCode": 0,
             "description": "",
             "files": [
-              {
-                "source": "box64",
-                "target": "\${bindir}/box64"
-              }
+              { "source": "box64", "target": "\${bindir}/box64" }
             ]
           }
           JSON
-
           (cd Box64_WCP && tar --zstd -cf "../artifacts/box64-bionic-nightly-${DATECODE}.wcp" profile.json box64)
 
-      - name: Upload packaged artifact
+      - name: Upload artifact
         if: steps.dupe.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -249,7 +173,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Ensure/Update release (tag = BOX64-BIONIC-NIGHTLY) and upload asset
+      - name: Ensure/Update release (BOX64-BIONIC-NIGHTLY)
         if: steps.dupe.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -257,10 +181,15 @@ jobs:
           SHORT:    ${{ needs.resolve-latest.outputs.short }}
           SHA:      ${{ needs.resolve-latest.outputs.sha }}
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
-          ANDROID_API: ${{ env.ANDROID_API }}
         run: |
           set -Eeuo pipefail
-          BODY=$'🤖 Android **Bionic** nightly (arm64-v8a)\n\nCommit: ['"${SHORT}"'](https://github.com/ptitSeb/box64/commit/'"${SHA}"')\nminSdk: '"${ANDROID_API}"'\nDynarec: ON, BadSignal: ON\nPackaging: WCP (profile.json with ${bindir})'
+          BODY=''
+          BODY+=$'BOX64-BIONIC-NIGHTLY\n\n'
+          BODY+=$'Commit: ['"${SHORT}"'](https://github.com/ptitSeb/box64/commit/'"${SHA}"')\n'
+          BODY+=$'Target: Android (Bionic, arm64-v8a)\n'
+          BODY+=$'Flags: Dynarec=ON, BadSignal=ON\n'
+          BODY+=$'Packaging: WCP (\${bindir})\n'
+
           if ! gh release view "BOX64-BIONIC-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "BOX64-BIONIC-NIGHTLY" --repo "$REPO" -t "BOX64-BIONIC-NIGHTLY" -n "${BODY}"
           else
@@ -269,3 +198,50 @@ jobs:
           gh release upload "BOX64-BIONIC-NIGHTLY" \
             "./artifacts/box64-bionic-nightly-${DATECODE}.wcp" \
             --repo "$REPO" --clobber
+
+  watch-upstream-workflow:
+    name: Watch upstream workflow changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install tools
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq curl gh
+
+      - name: Fetch upstream workflow (raw)
+        id: grab
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          RAW_URL="https://raw.githubusercontent.com/ptitSeb/box64/HEAD/.github/workflows/release.yml"
+          curl -fsSL "$RAW_URL" -o /tmp/upstream_release.yml
+          echo "sha=$(sha256sum /tmp/upstream_release.yml | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare & PR if changed
+        env:
+          SHA_UP: ${{ steps.grab.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p .github/upstream-cache
+          CACHE=.github/upstream-cache/box64-release-workflow.sha256
+          OLD_SHA="$(cat "$CACHE" 2>/dev/null || true)"
+          if [ "$SHA_UP" != "$OLD_SHA" ]; then
+            echo "$SHA_UP" > "$CACHE"
+            BR="sync/upstream-release-$(date +%Y%m%d%H%M%S)"
+            git switch -c "$BR"
+            cp /tmp/upstream_release.yml .github/upstream-cache/box64-release.yml
+            git add .github/upstream-cache/box64-release.yml "$CACHE"
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "chore: update cached upstream release workflow (sha=$SHA_UP)"
+            git push -u origin "$BR"
+            gh pr create --fill --title "Sync: Upstream release workflow changed" --body "Auto-detected change in ptitSeb/box64 .github/workflows/release.yml. Review and mirror relevant flags/steps here if needed."
+          else
+            echo "No changes detected."
+          fi
