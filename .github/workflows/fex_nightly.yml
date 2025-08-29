@@ -62,10 +62,9 @@ jobs:
           prerelease: false
           make_latest: true
           body: |
-            🌙 Automated FEX-NIGHTLY builds (rolling)
+            🌙 Automated FEX-NIGHTLY builds. (rolling)
             
             Commit: ${{ needs.resolve-latest.outputs.short }}
-            Date:   ${{ needs.resolve-latest.outputs.datecode }}
 
   compile-fexcore:
     name: Build & append ${{ needs.resolve-latest.outputs.short }}
