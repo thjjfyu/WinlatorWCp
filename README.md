@@ -1,20 +1,20 @@
 # 🤖 Winlator Resources (.wcp)
 
-## FEX
+## ⚙️ FEX
 | Build | Description | Source |
 |-------|-------------|:------:|
 | [**FEX-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) | Stable release | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
 | [**FEX-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | Nightly builds (YYMMDD) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
 
 
-## BOX64-**Glibc
+## 📦 BOX64-**Glibc
 | Build | Description | Source |
 |-------|-------------|:------:|
 | [**BOX64-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) | Stable release | <a href="https://github.com/ptitSeb/box64">🔗</a> |
 | [**BOX64-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | Nightly builds (YYMMDD) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
 
 
-## DXVK
+## 🧩 DXVK
 | Build | Description | Source |
 |-------|-------------|:------:|
 | [**DXVK**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK) | Original source build | <a href="https://github.com/doitsujin/dxvk">🔗</a> |
@@ -25,7 +25,7 @@
 | [**DXVK-GPLAsync-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) | FEX + GPL+Async patch (stutter & perf) | <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a><a href="https://wiki.fex-emu.com/index.php/Development:ARM64EC">🔗</a> |
 
 
-## VKD3D-Proton
+## 🌌 VKD3D-Proton
 | Build | Description | Source |
 |-------|-------------|:------:|
 | [**VKD3D-Proton**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON) | Original source build | <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
