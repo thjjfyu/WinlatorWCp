@@ -1,4 +1,4 @@
-# 🤖 Winlator Resources (.wcp) 🚧 Work in Progress
+# 🤖 Winlator Resources (.wcp) 🚧 WIP
 
 ## ⚙️ FEX
 | Build | Description | Source |
