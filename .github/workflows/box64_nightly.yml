@@ -150,18 +150,20 @@ jobs:
       - name: Ensure/Update release (tag = BOX64-NIGHTLY) and upload asset
         if: steps.dupe.outputs.skip != 'true'
         env:
+          GH_TOKEN: ${{ github.token }}
           SHORT: ${{ needs.resolve-latest.outputs.short }}
           SHA:   ${{ needs.resolve-latest.outputs.sha }}
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
           set -Eeuo pipefail
           # Update body AFTER build to avoid any pre-skip due to body contents
-          BODY=$'🌙 Automated BOX64-NIGHTLY builds. (rolling)\n\nCommit: ['"${SHORT}"'](https://github.com/ptitSeb/box64/commit/'"${SHA}"')'
+          BODY=$'🌙 Automated BOX64-NIGHTLY builds (rolling)\n\nCommit: ['"${SHORT}"'](https://github.com/ptitSeb/box64/commit/'"${SHA}"')'
           if ! gh release view "BOX64-NIGHTLY" >/dev/null 2>&1; then
             gh release create "BOX64-NIGHTLY" -t "BOX64-NIGHTLY" -n "${BODY}"
           else
             gh release edit   "BOX64-NIGHTLY" -t "BOX64-NIGHTLY" -n "${BODY}"
           fi
-
+      
           # Upload asset (lowercase filename), accumulate versions
           gh release upload "BOX64-NIGHTLY" "./artifacts/box64-nightly-${DATECODE}.wcp" --clobber
+
