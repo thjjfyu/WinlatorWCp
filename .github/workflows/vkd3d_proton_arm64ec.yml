@@ -178,14 +178,14 @@ jobs:
               profile.json system32 syswow64
 
       # ─────────────────────────── Release & Upload ─────────────────────────
-      - name: Ensure release (fixed tag, pinned body)
+      - name: Ensure release (fixed tag, pinned body incl. Current)
         if: steps.dupe.outputs.skip != 'true'
         env:
           REPO: ${{ github.repository }}
           BASE: ${{ steps.tag.outputs.base }}
         run: |
           set -euo pipefail
-          BODY="🤖 Automated VKD3D-Proton-arm64ec builds. (2.14.1+)\n\nCurrent: ${BASE}"
+          BODY=$'🤖 Automated VKD3D-Proton-arm64ec builds. (2.14.1+)\n\nCurrent: '"${BASE}"
           if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -n "${BODY}"
           else
