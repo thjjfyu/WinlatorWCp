@@ -2,7 +2,7 @@
 
 ### FEX
 [**FEX-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) · [**FEX-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY)  
-_for proton-arm64ec_ [🔗](https://github.com/FEX-Emu/FEX)
+_for Proton-arm64ec_ [🔗](https://github.com/FEX-Emu/FEX)
 
 ---
 
