@@ -1,0 +1,201 @@
+name: Build VKD3D-proton-arm64ec (1.14.1+)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *"
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-24.04
+    env:
+      VKD3D_REPO: HansKristian-Work/vkd3d-proton
+      TOOLCHAIN_DIR: /opt/llvm-mingw
+      PREFIX_EC: ${{ github.workspace }}/stage-arm64ec
+      PREFIX_X86: ${{ github.workspace }}/stage-i686
+      RELEASE_TAG: VKD3D-PROTON-ARM64EC
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      # ───────────────────────────── Essentials ─────────────────────────────
+      - name: Install prerequisites (meson/ninja/widl/glslang)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            curl xz-utils jq ca-certificates git \
+            build-essential pkg-config ninja-build meson \
+            zstd file rsync libvulkan-dev \
+            wine64-tools glslang-tools gh
+
+      - name: Install llvm-mingw (ucrt, ubuntu x86_64)
+        run: |
+          set -euo pipefail
+          mkdir -p "$TOOLCHAIN_DIR"
+          json=$(curl -fsSL https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
+          url=$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)
+          curl -fL "$url" -o /tmp/llvm-mingw.tar.xz
+          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
+          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Create Meson cross files (arm64ec / i686)
+        run: |
+          cat > "${{ github.workspace }}/arm64ec.cross" << 'EOF'
+          [binaries]
+          c = 'arm64ec-w64-mingw32-gcc'
+          cpp = 'arm64ec-w64-mingw32-g++'
+          ar = 'arm64ec-w64-mingw32-ar'
+          ld = 'arm64ec-w64-mingw32-ld'
+          windres = 'arm64ec-w64-mingw32-windres'
+          widl = 'widl'
+          strip = 'strip'
+          pkg-config = 'pkg-config'
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          [properties]
+          needs_exe_wrapper = true
+          EOF
+
+          cat > "${{ github.workspace }}/i686.cross" << 'EOF'
+          [binaries]
+          c = 'i686-w64-mingw32-gcc'
+          cpp = 'i686-w64-mingw32-g++'
+          ar = 'i686-w64-mingw32-ar'
+          ld = 'i686-w64-mingw32-ld'
+          windres = 'i686-w64-mingw32-windres'
+          widl = 'widl'
+          strip = 'strip'
+          pkg-config = 'pkg-config'
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'x86'
+          cpu = 'i686'
+          endian = 'little'
+          [properties]
+          needs_exe_wrapper = true
+          EOF
+
+      # ─────────────────────── Tag resolve & skip check ─────────────────────
+      - name: Resolve latest upstream tag
+        id: tag
+        run: |
+          set -euo pipefail
+          tag=$(git ls-remote --tags https://github.com/${{ env.VKD3D_REPO }}.git 'refs/tags/v*' \
+            | awk -F/ '{print $3}' | sed 's/\^{}//' | grep -E '^v[0-9]+' | sort -V | tail -n1)
+          [[ -n "$tag" ]] || { echo "::error::No tags found"; exit 1; }
+          echo "tag=$tag"        >> "$GITHUB_OUTPUT"
+          echo "base=${tag#v}"   >> "$GITHUB_OUTPUT"
+          echo "Resolved latest tag: $tag"
+
+      - name: Skip if same-version asset exists
+        id: dupe
+        env:
+          REPO: ${{ github.repository }}
+          BASE: ${{ steps.tag.outputs.base }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          want="vkd3d-proton-arm64ec-${BASE}.wcp"
+          http=$(curl -sS -o /tmp/rel.json -w '%{http_code}' \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  "https://api.github.com/repos/${REPO}/releases/tags/${{ env.RELEASE_TAG }}" || true)
+          if [[ "$http" == "200" ]] && jq -e --arg W "$want" '.assets[]?.name == $W' /tmp/rel.json >/dev/null; then
+            echo "skip=true"  >> "$GITHUB_OUTPUT"
+            echo "Found asset ${want}; skipping build."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ───────────────────────── Checkout & Build ───────────────────────────
+      - name: Checkout source at tag
+        if: steps.dupe.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.VKD3D_REPO }}
+          ref: ${{ steps.tag.outputs.tag }}
+          submodules: recursive
+          path: src
+
+      - name: Build vkd3d-proton (arm64ec + i686)
+        if: steps.dupe.outputs.skip != 'true'
+        working-directory: src
+        run: |
+          set -euo pipefail
+          rm -rf "${PREFIX_EC}" "${PREFIX_X86}" build.ec build.x86 "${GITHUB_WORKSPACE}/VKD3D_WCP"
+          mkdir -p "${PREFIX_EC}" "${PREFIX_X86}"
+
+          test -f meson.build || { echo "::error::Not in repository root (meson.build missing)"; exit 1; }
+
+          meson setup build.ec --cross-file "${GITHUB_WORKSPACE}/arm64ec.cross" --buildtype release --prefix "${PREFIX_EC}"
+          ninja -C build.ec -j"$(nproc)"
+          meson install -C build.ec
+
+          meson setup build.x86 --cross-file "${GITHUB_WORKSPACE}/i686.cross" --buildtype release --prefix "${PREFIX_X86}"
+          ninja -C build.x86 -j"$(nproc)"
+          meson install -C build.x86
+
+          mkdir -p "${GITHUB_WORKSPACE}/VKD3D_WCP/system32" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"
+
+          copy_one() {
+            local f="$1" pref="$2" dest="$3"
+            for src in "$pref/bin/$f" "$pref/lib/$f" "$pref/usr/bin/$f"; do
+              [ -f "$src" ] && cp -v "$src" "$dest/" && return
+            done
+          }
+          copy_one d3d12.dll     "${PREFIX_EC}"  "${GITHUB_WORKSPACE}/VKD3D_WCP/system32"
+          copy_one d3d12core.dll "${PREFIX_EC}"  "${GITHUB_WORKSPACE}/VKD3D_WCP/system32"
+          copy_one d3d12.dll     "${PREFIX_X86}" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"
+          copy_one d3d12core.dll "${PREFIX_X86}" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"
+
+          FILES_JSON="/tmp/files.json"; jq -n '[]' > "$FILES_JSON"
+          add_file() { jq --arg s "$1" --arg t "$2" '. + [{source:$s, target:$t}]' "$FILES_JSON" > /tmp/.j && mv /tmp/.j "$FILES_JSON"; }
+          [ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/d3d12.dll"     ] && add_file "system32/d3d12.dll"     '${system32}/d3d12.dll'
+          [ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/d3d12core.dll" ] && add_file "system32/d3d12core.dll" '${system32}/d3d12core.dll'
+          [ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/d3d12.dll"     ] && add_file "syswow64/d3d12.dll"     '${syswow64}/d3d12.dll'
+          [ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/d3d12core.dll" ] && add_file "syswow64/d3d12core.dll" '${syswow64}/d3d12core.dll'
+
+          jq -n \
+            --arg VN "proton-arm64ec-${{ steps.tag.outputs.base }}" \
+            --argjson VC 0 \
+            --arg DESC "VKD3D-Proton-arm64ec build by Ari" \
+            --slurpfile F "$FILES_JSON" \
+            '{type:"VKD3D", versionName:$VN, versionCode:$VC, description:$DESC, files:($F[0]//[])}' \
+            > "${GITHUB_WORKSPACE}/VKD3D_WCP/profile.json"
+
+          tar -C "${GITHUB_WORKSPACE}/VKD3D_WCP" --zstd \
+              --format=gnu --owner=0 --group=0 --numeric-owner \
+              -cf "${GITHUB_WORKSPACE}/vkd3d-proton-arm64ec-${{ steps.tag.outputs.base }}.wcp" \
+              profile.json system32 syswow64
+
+      # ─────────────────────────── Release & Upload ─────────────────────────
+      - name: Ensure release (fixed tag, pinned body)
+        if: steps.dupe.outputs.skip != 'true'
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          BODY="🤖 Automated VKD3D-Proton-arm64ec builds. (1.14.1+)"
+          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -n "${BODY}"
+          else
+            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -n "${BODY}"
+          fi
+
+      - name: Upload asset
+        if: steps.dupe.outputs.skip != 'true'
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          gh release upload "${RELEASE_TAG}" \
+            "${GITHUB_WORKSPACE}/vkd3d-proton-arm64ec-${{ steps.tag.outputs.base }}.wcp" \
+            --repo "${REPO}" --clobber
