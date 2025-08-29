@@ -1,0 +1,343 @@
+name: Build Turnip Driver Stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      ndk_pkg:
+        description: "Android NDK package dir (exact name on dl.google.com)"
+        default: "android-ndk-r29-beta3"
+        required: true
+      api_level:
+        description: "Android platform SDK level (minApi in meta.json)"
+        default: "34"
+        required: true
+  schedule:
+    - cron: "0 18 * * *"
+    
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash -Eeuo pipefail {0}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      NDK_PKG: ${{ inputs.ndk_pkg }}
+      API_LEVEL: ${{ inputs.api_level }}
+      WORKDIR: ${{ github.workspace }}/turnip_workdir
+      META_FILE: meta.json
+      DRIVER_FILE: vulkan.turnip.so
+      # Mesa official GitLab
+      GITLAB_API: https://gitlab.freedesktop.org/api/v4
+      MESA_PATH: mesa/mesa
+      NDK_URL: https://dl.google.com/android/repository/${{ inputs.ndk_pkg }}-linux.zip
+      # Optional: provide a token to reduce API 403s (optional)
+      # GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+      RELEASE_TAG: TURNIP
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout (for versioning only)
+        uses: actions/checkout@v4
+
+      # System deps (Meson via pip)
+      - name: Install system dependencies (without meson)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            build-essential \
+            ninja-build ccache clang lld llvm git \
+            patchelf unzip curl xz-utils ca-certificates \
+            python3 python3-pip python3-mako \
+            flex bison zip jq \
+            glslang-tools vulkan-tools
+
+      - name: Install Meson >= 1.4 via pip (user)
+        run: |
+          python3 -m pip install --upgrade --user pip
+          python3 -m pip install --upgrade --user 'meson>=1.4,<2'
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          meson --version
+
+      - name: Show tool versions
+        run: |
+          clang --version || true
+          meson --version || true
+          ninja --version || true
+          git --version || true
+          python3 --version || true
+          jq --version || true
+
+      - name: Resolve Mesa latest release tag from GitLab (numeric max, with git verify)
+        id: latest
+        run: |
+          set -Eeuo pipefail
+          UA="gha-turnip/${GITHUB_RUN_ID:-0} (+https://github.com/${GITHUB_REPOSITORY})"
+          PROJ_ENC="${MESA_PATH//\//%2F}"
+          API_HDRS=(-A "$UA")
+          if [ -n "${GITLAB_TOKEN:-}" ]; then
+            API_HDRS+=(-H "PRIVATE-TOKEN: ${GITLAB_TOKEN}")
+          fi
+
+          TAG=""
+
+          # 1) Releases API: highest mesa-x.y.z
+          if REL_JSON="$(curl -fsSL "${API_HDRS[@]}" \
+                "${GITLAB_API}/projects/${PROJ_ENC}/releases?per_page=100" 2>/dev/null || true)"; then
+            TAG="$(printf '%s\n' "$REL_JSON" \
+                  | jq -r '.[].tag_name' \
+                  | grep -E '^mesa-[0-9]+\.[0-9]+\.[0-9]+$' \
+                  | sort -V | tail -n1 || true)"
+          fi
+
+          # 2) Tags API fallback
+          if [ -z "${TAG:-}" ] || [ "${TAG}" = "null" ]; then
+            if TAGS_JSON="$(curl -fsSL "${API_HDRS[@]}" \
+                  "${GITLAB_API}/projects/${PROJ_ENC}/repository/tags?per_page=200" 2>/dev/null || true)"; then
+              TAG="$(printf '%s\n' "$TAGS_JSON" \
+                    | jq -r '.[].name' \
+                    | grep -E '^mesa-[0-9]+\.[0-9]+\.[0-9]+$' \
+                    | sort -V | tail -n1 || true)"
+            fi
+          fi
+
+          # 3) Final fallback: git ls-remote
+          if [ -z "${TAG:-}" ] || [ "${TAG}" = "null" ]; then
+            echo "API unavailable; falling back to git ls-remote…" >&2
+            TAG="$(git ls-remote --tags "https://gitlab.freedesktop.org/${MESA_PATH}.git" \
+                  | awk -F/ '/refs\/tags\/mesa-[0-9]+\.[0-9]+\.[0-9]+(\^\{\})?$/ {print $3}' \
+                  | sed 's/\^{}//' | sort -V | tail -n1 || true)"
+          fi
+
+          # 4) Verify against git max
+          if GIT_HIGHEST="$(git ls-remote --tags "https://gitlab.freedesktop.org/${MESA_PATH}.git" \
+                | awk -F/ '/refs\/tags\/mesa-[0-9]+\.[0-9]+\.[0-9]+(\^\{\})?$/ {print $3}' \
+                | sed 's/\^{}//' | sort -V | tail -n1 || true)"; then
+            if [ -n "$GIT_HIGHEST" ] && [ "$GIT_HIGHEST" != "$TAG" ]; then
+              echo "Overriding TAG ($TAG) -> git highest ($GIT_HIGHEST)"
+              TAG="$GIT_HIGHEST"
+            fi
+          fi
+
+          if [ -z "${TAG:-}" ] || [ "${TAG}" = "null" ]; then
+            echo "::error::Failed to resolve Mesa latest tag"
+            exit 1
+          fi
+
+          VER="${TAG#mesa-}"
+          echo "Resolved tag: $TAG (ver=$VER)"
+          {
+            echo "tag=$TAG"
+            echo "ver=$VER"
+          } >> "$GITHUB_OUTPUT"
+
+      # Cache the large NDK zip to speed up runs
+      - name: Cache downloaded NDK zip
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.WORKDIR }}/${{ env.NDK_PKG }}.zip
+          key: ndk-zip-${{ env.NDK_PKG }}
+
+      - name: Prepare workdir
+        run: |
+          rm -rf "$WORKDIR"
+          mkdir -p "$WORKDIR/src" "$WORKDIR/out"
+
+      # Crucial: prevent host pkg-config poisoning the cross build
+      - name: Sanitize pkg-config for cross (disable host detection)
+        run: |
+          {
+            echo "PKG_CONFIG=/bin/false"
+            echo "PKG_CONFIG_PATH="
+            echo "PKG_CONFIG_LIBDIR="
+          } >> "$GITHUB_ENV"
+
+      - name: Download Android NDK (uses cache if present)
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          echo "NDK_URL=$NDK_URL"
+          if [ ! -f "${NDK_PKG}.zip" ]; then
+            curl -fL --retry 3 --retry-delay 2 -o "${NDK_PKG}.zip" "$NDK_URL"
+          fi
+          unzip -q -o "${NDK_PKG}.zip"
+
+      - name: Download Mesa (official GitLab archive of latest tag)
+        working-directory: ${{ env.WORKDIR }}/src
+        env:
+          MESA_TAG: ${{ steps.latest.outputs.tag }}
+        run: |
+          PROJ_LAST="${MESA_PATH##*/}"  # "mesa"
+          ARCH_URL="https://gitlab.freedesktop.org/${MESA_PATH}/-/archive/${MESA_TAG}/${PROJ_LAST}-${MESA_TAG}.tar.gz"
+          echo "ARCH_URL=$ARCH_URL"
+          curl -fL --retry 3 --retry-delay 2 -o "${PROJ_LAST}-${MESA_TAG}.tar.gz" "$ARCH_URL"
+          tar -xzf "${PROJ_LAST}-${MESA_TAG}.tar.gz"
+          echo "Extracted dirs:"
+          ls -1d ${PROJ_LAST}-* || true
+
+      - name: Locate extracted Mesa dir
+        id: mesadir
+        working-directory: ${{ env.WORKDIR }}/src
+        env:
+          MESA_TAG: ${{ steps.latest.outputs.tag }}
+        run: |
+          PROJ_LAST="${MESA_PATH##*/}"
+          d="${PROJ_LAST}-${MESA_TAG}"
+          if [ ! -d "$d" ]; then
+            d="$(ls -1d ${PROJ_LAST}-* | head -n1)"
+          fi
+          echo "dir=$d"
+          echo "dir=$d" >> "$GITHUB_OUTPUT"
+
+      - name: Configure toolchain & cross files
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          NDK_BIN="$WORKDIR/${NDK_PKG}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "Using NDK bin: $NDK_BIN"
+
+          export CC=clang
+          export CXX=clang++
+          export AR=llvm-ar
+          export RANLIB=llvm-ranlib
+          export STRIP=llvm-strip
+          export OBJDUMP=llvm-objdump
+          export OBJCOPY=llvm-objcopy
+          export LDFLAGS="-fuse-ld=lld"
+          export PATH="$NDK_BIN:$PATH"
+
+          cat > android-aarch64.txt <<'EOF'
+          [binaries]
+          ar = '@NDK_BIN@/llvm-ar'
+          c = ['ccache', '@NDK_BIN@/aarch64-linux-android@API_LEVEL@-clang', '-Wno-deprecated-declarations', '-Wno-gnu-alignof-expression']
+          cpp = ['ccache', '@NDK_BIN@/aarch64-linux-android@API_LEVEL@-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-Wno-error=c++11-narrowing', '-Wno-deprecated-declarations', '-Wno-gnu-alignof-expression']
+          c_ld = '@NDK_BIN@/ld.lld'
+          cpp_ld = '@NDK_BIN@/ld.lld'
+          strip = '@NDK_BIN@/llvm-strip'
+          pkg-config = '/bin/false'
+
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          EOF
+
+          sed -i "s|@NDK_BIN@|$NDK_BIN|g; s|@API_LEVEL@|${API_LEVEL}|g" android-aarch64.txt
+
+          cat > native.txt <<'EOF'
+          [build_machine]
+          c = ['ccache', 'clang']
+          cpp = ['ccache', 'clang++']
+          ar = 'llvm-ar'
+          strip = 'llvm-strip'
+          c_ld = 'ld.lld'
+          cpp_ld = 'ld.lld'
+          system = 'linux'
+          cpu_family = 'x86_64'
+          cpu = 'x86_64'
+          endian = 'little'
+          EOF
+
+      - name: Configure Meson (latest release; libarchive openssl off)
+        working-directory: ${{ env.WORKDIR }}
+        env:
+          MESA_VER: ${{ steps.latest.outputs.ver }}
+        run: |
+          MESA_SRC="$WORKDIR/src/${{ steps.mesadir.outputs.dir }}"
+          echo "MESA_SRC=$MESA_SRC"
+          [ -d "$MESA_SRC" ] || { echo "No such dir: $MESA_SRC"; exit 1; }
+
+          meson setup build-android-aarch64 "$MESA_SRC" \
+            --cross-file "$WORKDIR/android-aarch64.txt" \
+            --native-file "$WORKDIR/native.txt" \
+            --buildtype=release \
+            --fatal-meson-warnings \
+            -Dstrip=true \
+            -Db_lto=true \
+            -Db_lto_mode=thin \
+            -Dplatforms=android \
+            -Dplatform-sdk-version="${API_LEVEL}" \
+            -Dandroid-stub=true \
+            -Degl=disabled \
+            -Dgallium-drivers= \
+            -Dvulkan-drivers=freedreno \
+            -Dfreedreno-kmds=kgsl \
+            -Dlibarchive:openssl=disabled \
+            --force-fallback-for=libarchive
+
+      - name: Build (ninja)
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          ninja -C build-android-aarch64 -j"$(nproc)"
+
+      - name: Collect artifact & build meta.json
+        id: artifact
+        working-directory: ${{ env.WORKDIR }}
+        env:
+          MESA_VER: ${{ steps.latest.outputs.ver }}
+        run: |
+          OUT_SO="build-android-aarch64/src/freedreno/vulkan/libvulkan_freedreno.so"
+          test -f "$OUT_SO" || { echo "Build artifact not found: $OUT_SO"; exit 1; }
+          cp "$OUT_SO" "$DRIVER_FILE"
+
+          # Locate vulkan_core.h (tree or subprojects)
+          MESA_SRC="$WORKDIR/src/${{ steps.mesadir.outputs.dir }}"
+          HDR_FILE="$(find "$MESA_SRC" -type f -path '*/include/vulkan/vulkan_core.h' | head -n1 || true)"
+          if [ -z "$HDR_FILE" ]; then
+            HDR_FILE="$(find "$MESA_SRC" -type f -path '*/subprojects/*/include/vulkan/vulkan_core.h' | head -n1 || true)"
+          fi
+
+          # Robust Vulkan version extraction
+          VK_VER="unknown"
+          if [ -n "$HDR_FILE" ]; then
+            MAJ="$(grep -E '^[[:space:]]*#define[[:space:]]+VK_HEADER_VERSION_MAJOR[[:space:]]+[0-9]+' "$HDR_FILE" 2>/dev/null | awk '{print $3}' | head -n1)"
+            MIN="$(grep -E '^[[:space:]]*#define[[:space:]]+VK_HEADER_VERSION_MINOR[[:space:]]+[0-9]+' "$HDR_FILE" 2>/dev/null | awk '{print $3}' | head -n1)"
+            PAT="$(grep -E '^[[:space:]]*#define[[:space:]]+VK_HEADER_VERSION[[:space:]]+[0-9]+'        "$HDR_FILE" 2>/dev/null | awk '{print $3}' | head -n1)"
+            COMP="$(grep -E '^[[:space:]]*#define[[:space:]]+VK_HEADER_VERSION_COMPLETE' "$HDR_FILE" 2>/dev/null | awk -F'[()]' '{print $2}' | tr -d ' ' | head -n1)"
+            if [ -n "$COMP" ]; then
+              VK_VER="$COMP"
+            elif [ -n "$MAJ" ] && [ -n "$MIN" ] && [ -n "$PAT" ]; then
+              VK_VER="${MAJ}.${MIN}.${PAT}"
+            elif [ -n "$PAT" ]; then
+              VK_VER="1.4.${PAT}"
+            fi
+          fi
+          echo "Derived Vulkan header version: $VK_VER"
+
+          DESC="Mesa ${MESA_VER} • ${VK_VER} • API ${API_LEVEL}"
+          cat > "$META_FILE" <<JSON
+          {
+            "schemaVersion": 1,
+            "name": "Turnip Driver v${MESA_VER}-STABLE",
+            "description": "${DESC}",
+            "author": "Ari",
+            "packageVersion": "1",
+            "vendor": "Mesa",
+            "driverVersion": "Vulkan ${VK_VER}",
+            "minApi": ${API_LEVEL},
+            "libraryName": "${DRIVER_FILE}"
+          }
+          JSON
+
+          OUT_ZIP="Turnip-${MESA_VER}-EMULATOR.zip"
+          zip -9 -q "$OUT_ZIP" "$DRIVER_FILE" "$META_FILE"
+          echo "outzip=$WORKDIR/$OUT_ZIP" >> "$GITHUB_OUTPUT"
+
+      # Fixed-tag release; accumulate zips; body shows Current: <ver>
+      - name: Create/Update Release (TURNIP) + upload zip (accumulate)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VER:  ${{ steps.latest.outputs.ver }}
+          OUT:  ${{ steps.artifact.outputs.outzip }}
+        run: |
+          set -Eeuo pipefail
+          BODY=$'🤖 Automated Turnip (freedreno kgsl) builds.\n\nCurrent: '"${VER}"
+          if ! gh release view "${RELEASE_TAG}" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" --repo "$REPO" -t "${RELEASE_TAG}" -n "${BODY}"
+          else
+            gh release edit   "${RELEASE_TAG}" --repo "$REPO" -t "${RELEASE_TAG}" -n "${BODY}"
+          fi
+          gh release upload "${RELEASE_TAG}" "${OUT}" --repo "$REPO" --clobber
