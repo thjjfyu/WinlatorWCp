@@ -159,15 +159,15 @@ jobs:
               files: ($FILES[0] // [])
             }' > FEXCore_WCP/profile.json
 
-          tar --zstd -cf "FEX-Stable-${CLEAN_TAG}.wcp" -C FEXCore_WCP profile.json system32
-          mv "FEX-Stable-${CLEAN_TAG}.wcp" FEXCore_DLLs/
+          tar --zstd -cf "fex-${CLEAN_TAG}.wcp" -C FEXCore_WCP profile.json system32
+          mv "fex-${CLEAN_TAG}.wcp" FEXCore_DLLs/
 
       - name: Upload packaged artifact
         if: steps.exists.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: FEX-Stable-${{ needs.resolve-latest.outputs.clean_tag }}
-          path: ./FEXCore_DLLs/FEX-Stable-*.wcp
+          name: fex-${{ needs.resolve-latest.outputs.clean_tag }}
+          path: ./FEXCore_DLLs/fex-*.wcp
           if-no-files-found: error
           retention-days: 7
 
@@ -176,4 +176,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "FEX-STABLE"
-          files: ./FEXCore_DLLs/FEX-Stable-*.wcp
+          files: ./FEXCore_DLLs/fex-*.wcp
