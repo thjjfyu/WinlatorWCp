@@ -4,21 +4,21 @@
 | Build | Description | Source |
 |-------|-------------|:------:|
 | [**FEX-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) | Stable release | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
-| [**FEX-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | Nightly builds (YYMMDD) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
+| [**FEX-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | Nightly builds (YYMMDD) |  |
 
 
 ## 📦 BOX64 for Glibc
 | Build | Description | Source |
 |-------|-------------|:------:|
 | [**Glibc-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) | Stable release | <a href="https://github.com/ptitSeb/box64">🔗</a> |
-| [**Glibc-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | Nightly builds (YYMMDD) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| [**Glibc-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | Nightly builds (YYMMDD) |  |
 
 
 ## 📦 BOX64 for Bionic
 | Build | Description | Source |
 |-------|-------------|:------:|
 | **Bionic-Stable** | Stable release | <a href="https://github.com/ptitSeb/box64">🔗</a> |
-| [**Bionic-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) | Nightly builds (YYMMDD) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| [**Bionic-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) | Nightly builds (YYMMDD) |  |
 
 
 ## 🧩 DXVK
