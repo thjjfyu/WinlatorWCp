@@ -7,7 +7,7 @@
 | [**FEX-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | Nightly builds (YYMMDD) | [🔗](https://github.com/FEX-Emu/FEX) |
 
 
-## BOX64
+## BOX64-Glibc
 | Build | Description | Source |
 |-------|-------------|--------|
 | [**BOX64-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) | Stable release | [🔗](https://github.com/ptitSeb/box64) |
