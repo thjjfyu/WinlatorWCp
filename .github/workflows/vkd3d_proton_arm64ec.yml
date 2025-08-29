@@ -182,9 +182,10 @@ jobs:
         if: steps.dupe.outputs.skip != 'true'
         env:
           REPO: ${{ github.repository }}
+          BASE: ${{ steps.tag.outputs.base }}
         run: |
           set -euo pipefail
-          BODY="🤖 Automated VKD3D-Proton-arm64ec builds. (1.14.1+)"
+          BODY="🤖 Automated VKD3D-Proton-arm64ec builds. (1.14.1+)\n\nCurrent: ${BASE}"
           if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -n "${BODY}"
           else
