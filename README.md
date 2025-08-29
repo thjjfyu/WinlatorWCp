@@ -14,6 +14,13 @@
 | [**BOX64-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | Nightly builds (YYMMDD) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
 
 
+## 📦BOX64 for Bionic
+| Build | Description | Source |
+|-------|-------------|:------:|
+| **BOX64-Stable** | Stable release | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| [**BOX64-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) | Nightly builds (YYMMDD) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+
+
 ## 🧩DXVK
 | Build | Description | Source |
 |-------|-------------|:------:|
@@ -34,7 +41,7 @@
 
 ## Adrenotools GPU Drivers
 ## Proton, Wine
-## Box64 for Bionic
+
 
 ## ℹ️Notes
 - 🚧 Work in Progress  
