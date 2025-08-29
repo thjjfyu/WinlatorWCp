@@ -10,15 +10,15 @@
 ## 📦 BOX64 for Glibc
 | Build | Description | Source |
 |-------|-------------|:------:|
-| [**BOX64-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) | Stable release | <a href="https://github.com/ptitSeb/box64">🔗</a> |
-| [**BOX64-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | Nightly builds (YYMMDD) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| [**Glibc-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) | Stable release | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| [**Glibc-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | Nightly builds (YYMMDD) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
 
 
 ## 📦 BOX64 for Bionic
 | Build | Description | Source |
 |-------|-------------|:------:|
-| **BOX64-Stable** | Stable release | <a href="https://github.com/ptitSeb/box64">🔗</a> |
-| [**BOX64-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) | Nightly builds (YYMMDD) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| **Bionic-Stable** | Stable release | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| [**Bionic-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) | Nightly builds (YYMMDD) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
 
 
 ## 🧩 DXVK
