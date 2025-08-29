@@ -65,7 +65,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           sudo apt-get update
-          sudo apt-get install -y jq zstd curl wget git cmake ninja-build build-essential
+          sudo apt-get install -y jq zstd curl wget git cmake ninja-build build-essential gh
 
       # Skip if same-date asset already exists (lowercase filename)
       - name: Skip if same-date asset exists
