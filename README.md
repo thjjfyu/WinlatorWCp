@@ -44,7 +44,7 @@
 
 
 ## ℹ️Notes
-- 🚧 Work in Progress  
+- 🚧 Work in Progress (It might be that my ignorance broke the build. If that happens, please let me know!)
 - 🤖 All builds are generated from the latest official source release
 - 🔗 Official Box64 configuration can be found [here](https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc)
 
