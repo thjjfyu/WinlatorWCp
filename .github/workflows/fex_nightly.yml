@@ -1,10 +1,11 @@
-name: Build FEX Nightly
+# .github/workflows/compile-fexcore-nightly.yml
+name: Build FEXCore Nightly (Daily)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"
-    
+    - cron: "0 18 * * *"   # daily @ 18:00 UTC == 03:00 KST
+
 permissions:
   contents: write
 
@@ -24,6 +25,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
+          # Resolve latest commit SHA on default branch via GitHub API
           API="https://api.github.com"
           OWNER="FEX-Emu"
           REPO="FEX"
@@ -49,26 +51,9 @@ jobs:
         id: datecode
         run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
 
-  ensure-release:
-    name: Ensure FEX-NIGHTLY release (minimal body)
-    needs: resolve-latest
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create/Update Release (tag = FEX-NIGHTLY)
-        uses: softprops/action-gh-release@v2
-        with:
-          name: "FEX-NIGHTLY"
-          tag_name: "FEX-NIGHTLY"
-          prerelease: false
-          make_latest: true
-          body: |
-            🌙 Automated FEX-NIGHTLY builds. (rolling)
-            
-            Commit: ${{ needs.resolve-latest.outputs.short }}
-
   compile-fexcore:
     name: Build & append ${{ needs.resolve-latest.outputs.short }}
-    needs: [resolve-latest, ensure-release]
+    needs: [resolve-latest]
     runs-on: ubuntu-24.04-arm
 
     steps:
@@ -83,25 +68,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq zstd curl wget git cmake ninja-build build-essential
 
-      # Skip if the same commit already exists in release body
-      - name: Skip if current FEX-NIGHTLY already references this commit
+      # Skip if same-date asset already exists (lowercase filename)
+      - name: Skip if same-date asset exists
         id: dupe
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          UP_SHORT: ${{ needs.resolve-latest.outputs.short }}
+          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
           set -Eeuo pipefail
           API="https://api.github.com"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
+          filename="fex-nightly-${DATECODE}.wcp"
 
           HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
                   "$API/repos/${REPO}/releases/tags/FEX-NIGHTLY" || true)"
 
-          if [ "$HTTP" = "200" ] && jq -e --arg SHA "$UP_SHORT" '(.body // "") | test($SHA)' /tmp/nightly.json >/dev/null; then
+          if [ "$HTTP" = "200" ] && jq -e --arg N "$filename" '.assets[]?.name == $N' /tmp/nightly.json >/dev/null; then
             echo "skip=true"  >> "$GITHUB_OUTPUT"
-            echo "FEX-NIGHTLY already references ${UP_SHORT}. Skipping."
+            echo "Found asset ${filename} in release FEX-NIGHTLY; skipping build."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -120,16 +106,18 @@ jobs:
         if: steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
+          # Build arm64ec
           mkdir -p src/build/arm64ec && cd src/build/arm64ec
           ../../Data/nix/cmake_configure_woa64.sh ../../ -G Ninja -DTUNE_CPU=none
           ninja
           cd ../../..
+          # Build wow64
           mkdir -p src/build/wow64 && cd src/build/wow64
           ../../Data/nix/cmake_configure_woa32.sh ../../ -G Ninja -DTUNE_CPU=none
           ninja
           cd ../../..
 
-      - name: Package Nightly WCP (FEX-Nightly-YYMMDD.wcp)
+      - name: Package Nightly WCP (lowercase filename)
         if: steps.dupe.outputs.skip != 'true'
         env:
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
@@ -137,7 +125,7 @@ jobs:
           set -Eeuo pipefail
           mkdir -p FEXCore_DLLs FEXCore_WCP/system32
 
-          # Collect DLLs (all placed under system32)
+          # Collect DLLs (all placed under system32 per schema)
           cp ./src/build/arm64ec/Bin/libarm64ecfex.dll ./FEXCore_DLLs/
           cp ./src/build/wow64/Bin/libwow64fex.dll   ./FEXCore_DLLs/
           cp ./src/build/arm64ec/Bin/libarm64ecfex.dll ./FEXCore_WCP/system32/
@@ -145,16 +133,14 @@ jobs:
 
           cd FEXCore_WCP
 
-          # List and map into files entries
+          # Build files list → JSON array
           (find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/files.txt
           if [[ ! -s /tmp/files.txt ]]; then
             echo "::error::No DLLs found under FEXCore_WCP/system32"; exit 1
           fi
-
           jq -Rn '[inputs | {source: ("system32/"+.), target: ("${system32}/"+.)}]' \
             < /tmp/files.txt > /tmp/files.json
 
-          # Generate profile.json with commit info
           DESC="${DATECODE} FEXCore build by Ari"
           jq -n \
             --argjson VC "${DATECODE}" \
@@ -168,23 +154,35 @@ jobs:
               files: ($F[0] // [])
             }' > profile.json
 
-          # Package into tar.zst
-          tar --zstd -cf "FEX-Nightly-${DATECODE}.wcp" profile.json system32
-          mv "FEX-Nightly-${DATECODE}.wcp" ../FEXCore_DLLs
+          # Package (lowercase)
+          tar --zstd -cf "fex-nightly-${DATECODE}.wcp" profile.json system32
+          mv "fex-nightly-${DATECODE}.wcp" ../FEXCore_DLLs
           cd ..
 
       - name: Upload packaged artifact
         if: steps.dupe.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: FEX-Nightly-${{ needs.resolve-latest.outputs.datecode }}
-          path: ./FEXCore_DLLs/FEX-Nightly-${{ needs.resolve-latest.outputs.datecode }}.wcp
+          name: fex-nightly-${{ needs.resolve-latest.outputs.datecode }}
+          path: ./FEXCore_DLLs/fex-nightly-${{ needs.resolve-latest.outputs.datecode }}.wcp
           if-no-files-found: error
           retention-days: 7
 
-      - name: Append asset to release (tag = FEX-NIGHTLY)
+      - name: Ensure/Update release (tag = FEX-NIGHTLY) and upload asset
         if: steps.dupe.outputs.skip != 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: "FEX-NIGHTLY"
-          files: ./FEXCore_DLLs/FEX-Nightly-${{ needs.resolve-latest.outputs.datecode }}.wcp
+        env:
+          SHORT: ${{ needs.resolve-latest.outputs.short }}
+          SHA:   ${{ needs.resolve-latest.outputs.sha }}
+          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
+        run: |
+          set -Eeuo pipefail
+          # Create or update fixed-tag release body AFTER build to avoid pre-skip
+          BODY=$'🌙 Automated FEX-NIGHTLY builds. (rolling)\n\nCommit: ['"${SHORT}"'](https://github.com/FEX-Emu/FEX/commit/'"${SHA}"')'
+          if ! gh release view "FEX-NIGHTLY" >/dev/null 2>&1; then
+            gh release create "FEX-NIGHTLY" -t "FEX-NIGHTLY" -n "${BODY}"
+          else
+            gh release edit   "FEX-NIGHTLY" -t "FEX-NIGHTLY" -n "${BODY}"
+          fi
+
+          # Upload asset (lowercase filename), accumulate versions
+          gh release upload "FEX-NIGHTLY" "./FEXCore_DLLs/fex-nightly-${DATECODE}.wcp" --clobber
