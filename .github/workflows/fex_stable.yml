@@ -71,16 +71,15 @@ jobs:
     name: Build & append ${{ needs.resolve-latest.outputs.tag }}
     needs: [resolve-latest, ensure-release]
     runs-on: ubuntu-24.04-arm
-    if: needs.resolve-latest.outputs.tag != ''  # sanity guard
+    if: needs.resolve-latest.outputs.tag != ''
 
     steps:
-      # 0) EARLY EXIT CHECK — if asset exists, mark skip=true and all subsequent steps won't run
       - name: Check if asset already exists (early exit)
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          FILENAME: FEX-Stable-${{ needs.resolve-latest.outputs.clean_tag }}.wcp
+          FILENAME: fex-${{ needs.resolve-latest.outputs.clean_tag }}.wcp   # ← renamed to match actual artifact
         run: |
           set -Eeuo pipefail
           API="https://api.github.com"
