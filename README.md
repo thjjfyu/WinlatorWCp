@@ -1,10 +1,8 @@
 <div align="center">
 <h1>Winlator Resources (.wcp)</h1>
-
-⚠️ Work in Progress
 </div>
-
----
+⚠️ <i>Work in Progress</i>
+<br>
 📌 <i>All resources are automatically built up to the latest official release.</i>
 <br>
 📌 <i>The nightly build uses the YY-MM-DD format.</i>
