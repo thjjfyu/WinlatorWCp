@@ -1,14 +1,9 @@
 <div align="center">
 <h1>Winlator Resources (.wcp)</h1>
 </div>
-⚠️ <i>Work in Progress</i>
+📌<i>All resources are automatically built up to the latest official release.</i>
 <br>
-📌 <i>All resources are automatically built up to the latest official release.</i>
-<br>
-📌 <i>The nightly build uses the YY-MM-DD format.</i>
-<br>
-📌 <i>For more details, please check each</i> 🔗
-
+📌<i>The nightly build uses the YY-MM-DD format.</i>
 
 ---
 + [**FEX-Stable**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Stable) · [**FEX-Nightly**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Nightly) - Emulate x86 Programs on ARM64. (For Proton-arm64ec) [🔗](https://github.com/FEX-Emu/FEX)
