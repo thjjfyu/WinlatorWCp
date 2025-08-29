@@ -1,4 +1,4 @@
-name: Build VKD3D-proton-arm64ec (1.14.1+)
+name: Build VKD3D-proton-arm64ec (2.14.1+)
 
 on:
   workflow_dispatch:
@@ -185,7 +185,7 @@ jobs:
           BASE: ${{ steps.tag.outputs.base }}
         run: |
           set -euo pipefail
-          BODY="🤖 Automated VKD3D-Proton-arm64ec builds. (1.14.1+)\n\nCurrent: ${BASE}"
+          BODY="🤖 Automated VKD3D-Proton-arm64ec builds. (2.14.1+)\n\nCurrent: ${BASE}"
           if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -n "${BODY}"
           else
