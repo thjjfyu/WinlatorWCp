@@ -4,7 +4,7 @@
 
 ---
 
-+ **BOX64-Stable** · **BOX64-Nightly** - for Glibc [🔗](https://github.com/ptitSeb/box64)<br>
++ [**BOX64-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) · [**BOX64-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) - for Glibc [🔗](https://github.com/ptitSeb/box64)<br>
 
 📌 Since box64 for *Bionic* requires a Bionic libc compatibility patch, it will **NOT** be covered here.
 
