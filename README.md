@@ -47,9 +47,7 @@
 - 🚧 It might be that my ignorance broke the build. If that happens, please let me know!
 - 🤖 All builds are automatically generated from the latest official source release
 - 🔗 Official Box64 configuration can be found [here](https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc)
-
-
-✨ All credit goes to the original creators and those who inspired this work. ✨
+- ✨ All credit goes to the original creators and those who inspired this work.
 
 [ptitSeb](https://github.com/ptitSeb)  
 [doitsujin](https://github.com/doitsujin)  
