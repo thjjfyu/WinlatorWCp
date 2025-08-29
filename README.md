@@ -49,7 +49,8 @@
 - 🔗 Official Box64 configuration can be found [here](https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc)
 
 
-## ✨ All credit goes to the original creators and those who inspired this work.
+✨ All credit goes to the original creators and those who inspired this work. ✨
+
 [ptitSeb](https://github.com/ptitSeb)  
 [doitsujin](https://github.com/doitsujin)  
 [pythonlover02](https://github.com/pythonlover02)  
