@@ -42,3 +42,4 @@
 
 
 🔗 Official Box64 configuration can be found [here](https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc)
+
