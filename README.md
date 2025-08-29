@@ -1,10 +1,5 @@
 
-# **Winlator Resources (.wcp)**
-
-All resources are automatically built up to the latest official release.<br>
-The nightly build uses the YYMMDD format.
-
----
+# **Winlator Resources (.wcp)**<br><br>
 
 + [**FEX-Stable**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Stable) · [**FEX-Nightly**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/FEX-Nightly) - for proton-arm64ec [🔗](https://github.com/FEX-Emu/FEX)
 
@@ -23,5 +18,9 @@ The nightly build uses the YYMMDD format.
 + [**DXVK-gplasync-arm64ec**](https://github.com/Arihany/Winlator-Bionic-wcp/releases/tag/DXVK-GPLASYNC-ARM64EC) - A build for FEX with GPL+Async to reduce stutter and improve performance
 
 ---
+
+The nightly build uses the YYMMDD format.
+All resources are automatically built based on the latest release. All rights and credit go to the original creators.
+
 
 https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc
