@@ -1,11 +1,11 @@
 # Winlator Resources (.wcp)
-_All resources are automatically built up to the latest official release._
-nightly use yymmdd
-https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc
-
-
-🗃️ Work in Progress
-For more details, please check each 🔗<br>
+⚠️ Work in Progress
+<br>
+📌 All resources are automatically built up to the latest official release.
+<br>
+📌 The nightly build name uses the YY-MM-DD format.
+<br>
+📌 For more details, please check each 🔗
 
 
 ---
@@ -25,7 +25,7 @@ Turnip Driver
 
 ## Box64 for Glibc
 
-
+https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc
 
 📌 **Note**  
 Since box64 for *Bionic* requires a **Bionic libc compatibility patch**,  
