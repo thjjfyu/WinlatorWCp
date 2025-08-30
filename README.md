@@ -22,11 +22,11 @@ Nightly builds use the YYMMDD filename format
 | Build | Description | Source |
 |-------|-------------|:------:|
 | [**DXVK**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK) | Original source build | <a href="https://github.com/doitsujin/dxvk">🔗</a> |
-| [**DXVK-Sarek**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK) | For low-spec (lower Vulkan support) | <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
-| [**DXVK-Sarek-Async**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK-ASYNC) | Async + For low-spec |  |
-| [**DXVK-GPLAsync**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC) | GPL+Async patch (reduced stutter) | <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
-| [**DXVK-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-ARM64EC) | build for FEX (perf+) | <a href="https://github.com/mstorsjo/llvm-mingw">🔗</a> |
-| [**DXVK-GPLAsync-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) | build for FEX + GPL+Async patch |  |
+| [**DXVK-Sarek**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK) | Build for low-spec GPUs (lower Vulkan) | <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
+| [**DXVK-Sarek-Async**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK-ASYNC) | Async build for low-spec GPUs |  |
+| [**DXVK-GPLAsync**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC) | Build with GPL+Async patch (reduced stutter) | <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
+| [**DXVK-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-ARM64EC) | Build for FEX (perf+) | <a href="https://github.com/mstorsjo/llvm-mingw">🔗</a> |
+| [**DXVK-GPLAsync-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) | Build for FEX with GPL+Async patch |  |
 <br>
 
 ## 🌌 VKD3D-Proton
