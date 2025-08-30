@@ -1,6 +1,6 @@
 # Yet Another Winlator Resources Repo
 <br>
-🤖 Collecting & building necessary items, unified format, auto-built to the latest version<br>
+🤖 Collecting & auto-building necessary items, unified format.<br>
 ✨ All credit goes to the original creators and those who inspired this work<br>
 🚧 WIP<br>
 <br>
