@@ -7,7 +7,7 @@
 - ✨ All credit goes to the original creators and those who inspired this work
 <br>
 
-## ⚙️ x86 Emulation Layer
+## ⚙️ FEXCore & Box64
 Nightly builds use the YYMMDD filename format
 | FEXCore | BOX64-Glibc | BOX64-Bionic | Source |
 |:------:|:------:|:------:|:------:|
