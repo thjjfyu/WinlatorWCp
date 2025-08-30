@@ -3,7 +3,7 @@ name: Build DXVK-Sarek (async)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"
+    - cron: "0 18 * * *" # daily (UTC)
 
 permissions:
   contents: write
@@ -12,20 +12,119 @@ defaults:
   run:
     shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-and-release:
-    runs-on: ubuntu-24.04
+  guard:
+    name: "Fast guard (API-only: async HEAD changed?)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      build:      ${{ steps.decide.outputs.build }}
+      base:       ${{ steps.meta.outputs.base }}
+      head_sha:   ${{ steps.meta.outputs.head_sha }}
+      head_short: ${{ steps.meta.outputs.head_short }}
     env:
-      SAREK_REPO: pythonlover02/DXVK-Sarek
+      GH_TOKEN:    ${{ github.token }}
+      REPO:        ${{ github.repository }}
+      SAREK_REPO:  pythonlover02/DXVK-Sarek
       SAREK_BRANCH: async
-      PREFIX_X64: ${{ github.workspace }}/dist-x64
-      PREFIX_X86: ${{ github.workspace }}/dist-x86
+      RELEASE_TAG: DXVK-SAREK-ASYNC
+    steps:
+      - name: Install jq, curl
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq curl
+
+      - name: Read previous ASYNC_HEAD from release (if exists)
+        id: prev
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com/repos/${REPO}/releases/tags/${RELEASE_TAG}"
+          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$API" || true)"
+          if [ "$HTTP" = "200" ]; then
+            body="$(jq -r '.body // ""' /tmp/rel.json)"
+            prev="$(printf '%s\n' "$body" | sed -nE 's/^ASYNC_HEAD=([0-9a-f]{7,40}).*$/\1/p' | head -n1 || true)"
+            echo "prev=${prev}" >> "$GITHUB_OUTPUT"
+          else
+            echo "prev=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve async branch HEAD + latest base tag (API)
+        id: meta
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+
+          # HEAD of async branch (no clone)
+          head_sha="$(curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${SAREK_REPO}/branches/${SAREK_BRANCH}" | jq -r '.commit.sha')"
+          [ -n "$head_sha" ] || { echo "::error::Failed to resolve ${SAREK_REPO}@${SAREK_BRANCH} HEAD"; exit 1; }
+          head_short="$(printf '%s' "$head_sha" | cut -c1-8)"
+
+          # Latest tag >= 1.10.8 (no clone)
+          min="1.10.8"
+          page=1
+          base=""
+          while :; do
+            json="$(curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${SAREK_REPO}/tags?per_page=100&page=${page}")"
+            count="$(jq 'length' <<<"$json")"
+            [ "$count" -gt 0 ] || break
+            jq -r '.[].name' <<<"$json" >> /tmp/tags.txt
+            page=$((page+1))
+            [ "$count" -lt 100 ] && break
+          done
+          if [ -s /tmp/tags.txt ]; then
+            grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' /tmp/tags.txt | sort -V > /tmp/tags.sorted
+            # walk ascending, keep latest >= min
+            while read -r t; do
+              v="${t#v}"
+              if [ "$(printf '%s\n' "$v" "$min" | sort -V | tail -n1)" = "$v" ]; then
+                base="$v"
+              fi
+            done < /tmp/tags.sorted
+          fi
+          [ -n "$base" ] || base="rolling"
+
+          {
+            echo "base=$base"
+            echo "head_sha=$head_sha"
+            echo "head_short=$head_short"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Decide skip/build
+        id: decide
+        run: |
+          if [ -n "${{ steps.prev.outputs.prev }}" ] && [ "${{ steps.prev.outputs.prev }}" = "${{ steps.meta.outputs.head_sha }}" ]; then
+            echo "No change in async HEAD: ${{ steps.meta.outputs.head_sha }}"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Async HEAD changed (was: '${{ steps.prev.outputs.prev }}', now: '${{ steps.meta.outputs.head_sha }}')"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-and-release:
+    name: Build & release (async)
+    runs-on: ubuntu-24.04
+    needs: guard
+    if: needs.guard.outputs.build == 'true'
+    env:
+      SAREK_REPO:  pythonlover02/DXVK-Sarek
+      SAREK_BRANCH: async
+      PREFIX_X64:  ${{ github.workspace }}/dist-x64
+      PREFIX_X86:  ${{ github.workspace }}/dist-x86
       TOOLCHAIN_DIR: /opt/llvm-mingw
       RELEASE_TAG: DXVK-SAREK-ASYNC
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN:   ${{ github.token }}
+      BASE_VER:   ${{ needs.guard.outputs.base }}
+      HEAD_SHA:   ${{ needs.guard.outputs.head_sha }}
+      HEAD_SHORT: ${{ needs.guard.outputs.head_short }}
 
     steps:
-      - name: "Install host tooling"
+      - name: Install host tooling
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -33,7 +132,7 @@ jobs:
             git meson ninja-build glslang-tools pkg-config \
             build-essential python3 zstd ccache file rsync
 
-      - name: "Ensure glslang (--vn) available"
+      - name: Ensure glslang (--vn) available
         run: |
           cat > /tmp/min.comp <<'GLSL'
           #version 450
@@ -49,7 +148,7 @@ jobs:
             echo "::error::No glslang/glslangValidator with working --vn"; exit 1
           fi
 
-      - name: "Install gh CLI"
+      - name: Install gh CLI
         run: |
           if ! command -v gh >/dev/null 2>&1; then
             curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -61,7 +160,7 @@ jobs:
             sudo apt-get install -y gh
           fi
 
-      - name: "Resolve llvm-mingw (ucrt, ubuntu x86_64)"
+      - name: Resolve llvm-mingw (ucrt, ubuntu x86_64)
         id: llvm
         run: |
           json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
@@ -71,24 +170,24 @@ jobs:
           echo "url=$url"  >> "$GITHUB_OUTPUT"
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
-      - name: "Cache llvm-mingw (extracted)"
+      - name: Cache llvm-mingw (extracted)
         id: cache-llvm
         uses: actions/cache@v4
         with:
           path: ${{ env.TOOLCHAIN_DIR }}
           key: llvm-mingw-${{ steps.llvm.outputs.name }}
 
-      - name: "Fetch llvm-mingw (if cache miss)"
+      - name: Fetch llvm-mingw (if cache miss)
         if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: |
           sudo mkdir -p "$TOOLCHAIN_DIR"
           curl -fL -H "Authorization: Bearer $GH_TOKEN" "${{ steps.llvm.outputs.url }}" -o /tmp/llvm-mingw.tar.xz
           sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
 
-      - name: "Add toolchain to PATH"
+      - name: Add toolchain to PATH
         run: echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
-      - name: "Cache ccache"
+      - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.ccache
@@ -96,69 +195,23 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: "Configure ccache"
+      - name: Configure ccache
         run: |
           echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> $GITHUB_ENV
           echo "CCACHE_MAXSIZE=2G" >> $GITHUB_ENV
           echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
           echo "CCACHE_BASEDIR=${{ github.workspace }}" >> $GITHUB_ENV
 
-      - name: "Clone DXVK-Sarek (async branch + submodules)"
+      - name: Clone DXVK-Sarek (async branch + submodules)
         run: |
           git clone --branch "${SAREK_BRANCH}" --single-branch --recurse-submodules https://github.com/${SAREK_REPO}.git src
           cd src
           git fetch --tags --force
 
-      - name: "Pick base version (>= v1.10.8) and compute HEAD"
-        id: meta
+      - name: Apply minimal compat patches (no retag)
         run: |
+          set -Eeuo pipefail
           cd src
-          all_tags=$(git tag -l 'v[0-9]*' | sort -V)
-          min="1.10.8"
-          latest_ok=""
-          while IFS= read -r t; do
-            v="${t#v}"
-            if [ "$v" = "$(printf '%s\n' "$v" "$min" | sort -V | tail -n1)" ]; then
-              latest_ok="$v"
-            fi
-          done <<< "$all_tags"
-          base="${latest_ok:-rolling}"
-          head_sha=$(git rev-parse HEAD)
-          head_short=$(git rev-parse --short=8 HEAD)
-          {
-            echo "base=$base"
-            echo "head_sha=$head_sha"
-            echo "head_short=$head_short"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: "Check previous async HEAD in release; decide skip or build"
-        id: gate
-        env:
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          body="$(gh api repos/${REPO}/releases/tags/${RELEASE_TAG} --jq .body || echo "")"
-          prev="$(printf '%s\n' "$body" | sed -nE 's/^ASYNC_HEAD=([0-9a-f]{7,40}).*$/\1/p' | head -n1 || true)"
-          curr="${{ steps.meta.outputs.head_sha }}"
-          if [[ -n "$prev" && "$prev" = "$curr" ]]; then
-            echo "same=1" >> "$GITHUB_OUTPUT"
-            echo "No changes on async HEAD ($curr); skipping build."
-          else
-            echo "same=0" >> "$GITHUB_OUTPUT"
-            echo "Async HEAD changed: prev=${prev:-<none>} -> curr=$curr; will build."
-          fi
-
-      - name: "Build async HEAD (DXVK-Sarek → WCP) + compat patches + clean commit"
-        if: steps.gate.outputs.same == '0'
-        env:
-          GITHUB_WORKSPACE: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
-          cd "${GITHUB_WORKSPACE}/src"
-
-          base="${{ steps.meta.outputs.base }}"
-
           hdr="src/d3d9/d3d9_include.h"
           if [[ -f "$hdr" ]]; then
             for sym in _D3DDEVINFO_RESOURCEMANAGER _D3DDEVINFO_D3D9PIPELINETIMINGS _D3DDEVINFO_VCACHE _D3DDEVINFO_PRIVATEDATA _D3DDEVINFO_VERTEXSTATS; do
@@ -170,24 +223,26 @@ jobs:
               fi
             done
           fi
-
           hdr2="src/d3d11/d3d11_texture.h"
           if [[ -f "$hdr2" ]] && grep -qE 'constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource' "$hdr2"; then
             sed -i -E 's/static[[:space:]]+constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource[[:space:]]*=[[:space:]]*D3D11_MAP\(-1u\);/inline static const D3D11_MAP UnmappedSubresource = (D3D11_MAP)0xFFFFFFFFu;/' "$hdr2" || true
           fi
-
           git config user.name  "ci"
           git config user.email "ci@local"
-          git config --global --add safe.directory "$(pwd)"
           git add -A
-          git commit -m "local compat patches for async (${{ steps.meta.outputs.base }} @ ${{ steps.meta.outputs.head_short }})" || true
+          git commit -m "local compat patches for async (${BASE_VER} @ ${HEAD_SHORT})" || true
           git reset --hard HEAD
           git clean -xdf
-          if [[ -n "$(git status --porcelain)" ]]; then
-            echo "::error::Repo is dirty after local commit"; git status; exit 1
-          fi
 
-          # ---- Clean previous artifacts ------------------------------------
+      - name: Build (x64 + x86) and stage WCP
+        env:
+          PREFIX_X64: ${{ env.PREFIX_X64 }}
+          PREFIX_X86: ${{ env.PREFIX_X86 }}
+        run: |
+          set -Eeuo pipefail
+          OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
+          cd "${GITHUB_WORKSPACE}/src"
+
           rm -rf "${GITHUB_WORKSPACE}/build.w64" "${GITHUB_WORKSPACE}/build.w32" \
                  "${GITHUB_WORKSPACE}/dist-x64"  "${GITHUB_WORKSPACE}/dist-x86" \
                  "${GITHUB_WORKSPACE}/DXVK_WCP"
@@ -212,24 +267,23 @@ jobs:
           ninja -C "${GITHUB_WORKSPACE}/build.w32" -j"$(nproc)"
           meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.w32"
 
-          # Layout WCP (64→system32, 32→syswow64)
           mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
           cp -v "${PREFIX_X64}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
           cp -v "${PREFIX_X86}/bin/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
 
-          (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x64.txt || true
-          (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x86.txt || true
+          (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32  -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x64.txt || true
+          (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64  -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x86.txt || true
           if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
             echo "::error::No DLLs discovered"; exit 1; fi
 
           jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
           jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
 
-          VN="sarek-async-${{ steps.meta.outputs.base }}"
+          VN="sarek-async-${BASE_VER}"
           jq -n \
             --arg VN "${VN}" \
             --argjson VC 0 \
-            --arg DESC "DXVK-Sarek async build by Ari (@${{ steps.meta.outputs.head_short }})" \
+            --arg DESC "DXVK-Sarek async build by Ari (@${HEAD_SHORT})" \
             --arg SYS '${system32}/' \
             --arg WOW '${syswow64}/' \
             --slurpfile x64 /tmp/x64.json \
@@ -249,52 +303,33 @@ jobs:
             }' > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
 
           mkdir -p "${GITHUB_WORKSPACE}/out"
-          wcp="dxvk-sarek-async-${{ steps.meta.outputs.base }}.wcp"
           tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd \
               --format=gnu --owner=0 --group=0 --numeric-owner \
-              -cf "${GITHUB_WORKSPACE}/out/${wcp}" profile.json system32 syswow64
+              -cf "${GITHUB_WORKSPACE}/out/dxvk-sarek-async-${BASE_VER}.wcp" profile.json system32 syswow64
 
-      - name: "Build release notes (with Current)"
-        if: steps.gate.outputs.same == '0'
-        run: |
-          set -Eeuo pipefail
-          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          # Always write header only (no Current here)
-          {
-            echo "🤖 Automated DXVK-Sarek (async branch) builds."
-            echo
-          } > "$NOTES"
-          cat "$NOTES"
-
-      - name: "Create/Update GitHub Release (DXVK-SAREK-ASYNC) + upload/overwrite WCP"
-        if: steps.gate.outputs.same == '0'
+      - name: Create/Update GitHub Release (DXVK-SAREK-ASYNC) + upload (overwrite)
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          RELEASE_TAG="${RELEASE_TAG}"
-
-          # Rebuild body header and append Current line here (release-body only)
           {
             echo "🤖 Automated DXVK-Sarek (async branch) builds."
             echo
-            echo "Current: sarek-async-${{ steps.meta.outputs.base }} @ [${{ steps.meta.outputs.head_short }}](https://github.com/${{ env.SAREK_REPO }}/commit/${{ steps.meta.outputs.head_sha }})"
+            echo "Current: sarek-async-${BASE_VER} @ [${HEAD_SHORT}](https://github.com/${SAREK_REPO}/commit/${HEAD_SHA})"
           } > "$NOTES"
 
-          # Create or update release with updated body
           if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           else
             gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           fi
 
-          # Upload asset (overwrite same filename)
           gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
 
-          # Append/refresh ASYNC_HEAD line without duplicating old
+          # Ensure single ASYNC_HEAD= line (replace if existed)
           body="$(gh api repos/${REPO}/releases/tags/${RELEASE_TAG} --jq .body || echo "")"
           body_no_old="$(printf '%s\n' "$body" | sed '/^ASYNC_HEAD=/d')"
-          printf '%s\nASYNC_HEAD=%s\n' "$body_no_old" "${{ steps.meta.outputs.head_sha }}" > /tmp/newbody.txt
+          printf '%s\nASYNC_HEAD=%s\n' "$body_no_old" "${HEAD_SHA}" > /tmp/newbody.txt
           gh release edit "${RELEASE_TAG}" --repo "${REPO}" -F /tmp/newbody.txt
