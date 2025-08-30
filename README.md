@@ -33,7 +33,7 @@ Nightly builds use the YYMMDD filename format
 <br>
 
 ## 🌌 VKD3D-Proton
-| Build |  |
+| Build | 📜 |
 |-------|:------:|
 | [**VKD3D-Proton**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON) |  <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
 | [**VKD3D-Proton-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) |   |
