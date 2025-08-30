@@ -183,15 +183,6 @@ jobs:
           mv "fex-nightly-${DATECODE}.wcp" ../FEXCore_DLLs
           cd ..
 
-      - name: Upload packaged artifact
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: fex-nightly-${{ needs.resolve-latest.outputs.datecode }}
-          path: ./FEXCore_DLLs/fex-nightly-${{ needs.resolve-latest.outputs.datecode }}.wcp
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Ensure/Update release (tag = FEX-NIGHTLY) and upload asset
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
