@@ -3,7 +3,7 @@ name: Build DXVK gplasync
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"
+    - cron: "0 18 * * *"   # daily (UTC)
 
 permissions:
   contents: write
@@ -12,9 +12,129 @@ defaults:
   run:
     shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  guard:
+    name: Fast guard (detect new DXVK tag + GPLAsync patch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RELEASE_TAG: DXVK-GPLASYNC
+      GPLASYNC_BASE_URL: https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/patches
+      DXVK_REPO: doitsujin/dxvk
+    steps:
+      - name: Install jq, curl
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq curl
+
+      - name: Collect already-published (base,rev)
+        id: have
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+                  "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
+          if [ "$HTTP" = "200" ]; then
+            jq -r '.assets[].name' /tmp/rel.json \
+              | sed -n -E 's/^dxvk-gplasync-([0-9]+\.[0-9]+(\.[0-9]+)?)-([0-9]+)\.wcp$/\1 \3/p' \
+              | sort -V > /tmp/exist.txt
+          else
+            : > /tmp/exist.txt
+          fi
+          echo "Existing base/rev:"
+          cat /tmp/exist.txt || true
+
+      - name: Detect any missing candidate (API-only)
+        id: detect
+        env:
+          GH_TOKEN: ${{ env.GH_TOKEN }}
+          DXVK_REPO: ${{ env.DXVK_REPO }}
+          GPLASYNC_BASE_URL: ${{ env.GPLASYNC_BASE_URL }}
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+          # Fetch up to 100 tags, filter semver v*, keep >= 2.3.1
+          curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${DXVK_REPO}/tags?per_page=100" \
+            | jq -r '.[].name' \
+            | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            | sort -V > /tmp/tags.txt
+
+          awk '
+            function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,"."); for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1} return 0}
+            { base=substr($0,2); if (cmp(base,"2.3.1")>=0) print $0 }
+          ' /tmp/tags.txt > /tmp/candidates.txt
+
+          echo "Candidate tags (>= v2.3.1):"
+          cat /tmp/candidates.txt || true
+
+          touch /tmp/missing.flag
+          : > /tmp/missing.flag
+
+          while read -r tag; do
+            [ -n "$tag" ] || continue
+            base="${tag#v}"
+            mm="${base%.*}"
+
+            found_rev=""
+            # exact base first
+            for n in 9 8 7 6 5 4 3 2 1; do
+              url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${base}-${n}.patch"
+              if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; break; fi
+            done
+            # fallback to major.minor if base has 3 parts
+            if [ -z "$found_rev" ] && [ "$mm" != "$base" ]; then
+              case "$mm" in
+                ''|*[!0-9.]*|*..* ) : ;;  # not x.y
+                * )
+                  for n in 9 8 7 6 5 4 3 2 1; do
+                    url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${mm}-${n}.patch"
+                    if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; break; fi
+                  done
+                ;;
+              esac
+            fi
+
+            if [ -n "$found_rev" ]; then
+              if ! grep -Fq "${base} ${found_rev}" /tmp/exist.txt; then
+                echo "MISSING: ${base}-${found_rev}"
+                echo "yes" > /tmp/missing.flag
+                break
+              fi
+            fi
+          done < /tmp/candidates.txt
+
+          if [ "$(cat /tmp/missing.flag 2>/dev/null)" = "yes" ]; then
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Decide build
+        id: decide
+        run: |
+          if [ "${{ steps.detect.outputs.missing }}" = "true" ]; then
+            echo "build=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "build=${{ steps.detect.outputs.missing == 'true' && 'true' || 'false' }}"
+
   build-and-release:
     runs-on: ubuntu-24.04
+    needs: guard
+    if: needs.guard.outputs.build == 'true'
     env:
       DXVK_REPO: doitsujin/dxvk
       GPLASYNC_BASE_URL: https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/patches
@@ -154,11 +274,15 @@ jobs:
               ' > "${GITHUB_WORKSPACE}/versions.txt"
           echo "Candidates:"; cat "${GITHUB_WORKSPACE}/versions.txt"
 
-          # Already published: dxvk-gplasync-<base>-<rev>.wcp  (no arch suffix)
+          # Already published: dxvk-gplasync-<base>-<rev>.wcp
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
           EXIST="/tmp/exist.txt"; : > "$EXIST"
-          if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-            gh api repos/"${REPO}"/releases/tags/"${RELEASE_TAG}" \
-              | jq -r '.assets[].name' \
+          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+                  "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
+          if [ "$HTTP" = "200" ]; then
+            jq -r '.assets[].name' /tmp/rel.json \
               | sed -n -E 's/^dxvk-gplasync-([0-9]+\.[0-9]+(\.[0-9]+)?)-([0-9]+)\.wcp$/\1 \3/p' \
               | sort -V > "$EXIST" || true
           fi
@@ -166,38 +290,27 @@ jobs:
 
           : > "${GITHUB_WORKSPACE}/to_build.txt"
           while IFS= read -r tag; do
-            base="${tag#v}"                  # e.g. 2.4.1
-            mm="${base%.*}"                  # major.minor, e.g. 2.4 (if base has 3 parts)
+            base="${tag#v}"; mm="${base%.*}"
             found_rev=""; patch_base=""
-
-            # 1) exact base (e.g. 2.4.1)
             for n in 9 8 7 6 5 4 3 2 1; do
               url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${base}-${n}.patch"
               if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; patch_base="$base"; break; fi
             done
-
-            # 2) fallback to major.minor (e.g. 2.4) if needed
-            if [[ -z "$found_rev" && "$mm" != "$base" && "$mm" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            if [[ -z "$found_rev" && "$mm" != "$base" ]]; then
               for n in 9 8 7 6 5 4 3 2 1; do
                 url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${mm}-${n}.patch"
                 if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; patch_base="$mm"; break; fi
               done
             fi
-
             if [[ -z "$found_rev" ]]; then
               echo "::notice::No gplasync patch for ${base} (or ${mm}); skipping"
               continue
             fi
-
-            # skip if (base,found_rev) already built
             if grep -Fq "${base} ${found_rev}" "$EXIST"; then
               echo "Skip ${base}-${found_rev} (already built)"; continue
             fi
-
-            # write: upstream_tag  base  rev  patch_base_used
             echo "${tag} ${base} ${found_rev} ${patch_base}" >> "${GITHUB_WORKSPACE}/to_build.txt"
           done < "${GITHUB_WORKSPACE}/versions.txt"
-
           echo "To build (tag base rev patch_base):"
           cat "${GITHUB_WORKSPACE}/to_build.txt" || true
 
@@ -220,7 +333,6 @@ jobs:
             git checkout -f "$tag"
             git submodule update --init --recursive
 
-            # ── Apply exact/fallback GPLASYNC patch
             url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${patch_base}-${rev}.patch"
             curl -fL "$url" -o /tmp/gpl.patch
             git config user.name  ci
@@ -228,7 +340,6 @@ jobs:
             if git am -3 /tmp/gpl.patch; then :; else git am --abort || true; git apply -p1 --reject /tmp/gpl.patch; fi
             grep -q "enableAsync" src/dxvk/dxvk_options.h || { echo "::error::Patch not applied cleanly for ${base} (using ${patch_base}-${rev})"; git status -sb; exit 1; }
 
-            # ── Minimal compat fixes
             hdr="src/d3d9/d3d9_include.h"
             if [[ -f "$hdr" ]]; then
               for sym in _D3DDEVINFO_RESOURCEMANAGER _D3DDEVINFO_D3D9PIPELINETIMINGS _D3DDEVINFO_VCACHE _D3DDEVINFO_PRIVATEDATA _D3DDEVINFO_VERTEXSTATS; do
@@ -246,23 +357,19 @@ jobs:
               fi
             fi
 
-            # ── HUD tag (NO patch number). Let gplasync stringify itself.
-            HUD_TAG="v${base}"        # e.g. v2.4.1
+            HUD_TAG="v${base}"
             git tag -d "$HUD_TAG" 2>/dev/null || true
             git tag -a "$HUD_TAG" -m "HUD tag $HUD_TAG"
 
-            # ── Detect optional features
             MESON_D3D8=""
             if [[ -f meson_options.txt ]] && grep -qE "option\(['\"]enable_d3d8['\"]" meson_options.txt; then
               MESON_D3D8="-Denable_d3d8=true"
             fi
 
-            # ── Clean previous artifacts
             rm -rf "${GITHUB_WORKSPACE}/build.x64" "${GITHUB_WORKSPACE}/build.x86" \
                    "${GITHUB_WORKSPACE}/dist-x64" "${GITHUB_WORKSPACE}/dist-x86" \
                    "${GITHUB_WORKSPACE}/DXVK_WCP"
 
-            # ── x64
             meson setup "${GITHUB_WORKSPACE}/build.x64" \
               --cross-file "${GITHUB_WORKSPACE}/x86_64.cross" \
               --buildtype release \
@@ -272,7 +379,6 @@ jobs:
             ninja -C "${GITHUB_WORKSPACE}/build.x64" -j"$(nproc)"
             meson install -C "${GITHUB_WORKSPACE}/build.x64"
 
-            # ── x86
             meson setup "${GITHUB_WORKSPACE}/build.x86" \
               --cross-file "${GITHUB_WORKSPACE}/i686.cross" \
               --buildtype release \
@@ -282,7 +388,6 @@ jobs:
             ninja -C "${GITHUB_WORKSPACE}/build.x86" -j"$(nproc)"
             meson install -C "${GITHUB_WORKSPACE}/build.x86"
 
-            # ── Layout WCP (64→system32, 32→syswow64)
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
             cp -v "${PREFIX_X64}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
             cp -v "${PREFIX_X86}/bin/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
@@ -313,8 +418,8 @@ jobs:
               ($x86[0] // []) as $B |
               {
                 type: "DXVK",
-                versionName: $VN,      # e.g. gplasync-2.4.1
-                versionCode: $VC,      # e.g. 1
+                versionName: $VN,
+                versionCode: $VC,
                 description: $DESC,
                 files: [
                   ($A[]? | {source: ("system32/"+.), target: ($SYS + .)}),
@@ -334,7 +439,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          # Always reset body header only
           printf '🤖 Automated gplasync builds (2.3.1+)\n\n' > "$NOTES"
           cat "$NOTES"
 
@@ -346,40 +450,37 @@ jobs:
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
 
-          # Detect latest current version (from out/ or release assets)
           cur=""
           if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-gplasync-*.wcp" > /dev/null; then
             latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-gplasync-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
             cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"
           else
-            if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-              assets_json="$(gh api repos/${REPO}/releases/tags/${RELEASE_TAG})"
-              mapfile -t list < <(
-                echo "$assets_json" \
-                | jq -r '.assets[].name' \
-                | grep -E '^dxvk-gplasync-.*\.wcp$' \
-                | LC_ALL=C sort -V
-              )
+            API="https://api.github.com"
+            auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+            ver=(-H "Accept: application/vnd.github+json")
+            HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+                    "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
+            if [ "$HTTP" = "200" ]; then
+              mapfile -t list < <(jq -r '.assets[].name' /tmp/rel.json | grep -E '^dxvk-gplasync-.*\.wcp$' | LC_ALL=C sort -V || true)
               if ((${#list[@]} > 0)); then
-                latest="${list[-1]}"
-                cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"
+                latest="${list[-1]}"; cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"
               fi
             fi
           fi
 
-          # Append Current line only for release body
-          if [[ -n "$cur" ]]; then
-            echo "Current: ${cur}" >> "$NOTES"
-          fi
+          [[ -n "$cur" ]] && echo "Current: ${cur}" >> "$NOTES"
 
-          # Create or edit release with updated notes
-          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+          RELEASE_TAG="DXVK-GPLASYNC"
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+          # Create or edit release
+          if ! curl -fsS "${auth[@]}" "${ver[@]}" "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           else
             gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           fi
 
-          # Upload assets if new
           if compgen -G "out/*.wcp" > /dev/null; then
             gh release upload "${RELEASE_TAG}" out/*.wcp --repo "${REPO}" --clobber
           else
