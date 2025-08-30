@@ -21,6 +21,7 @@ Nightly builds use the YYMMDD filename format
 | [**DXVK**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK) | Original source build | <a href="https://github.com/doitsujin/dxvk">🔗</a> |
 | [**DXVK-Sarek**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK) | Build for low-spec GPUs (lower Vulkan) | <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
 | [**DXVK-Sarek-Async**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK-ASYNC) | Build for low-spec GPUs (+Async patch) |  |
+| 🚧Sarek-arm64ec |  |  |
 | [**DXVK-GPLAsync**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC) | Build with GPL-Async patch (async shader compilation, less stutter) | <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
 | [**DXVK-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-ARM64EC) | Build for FEX (Performance boost) | <a href="https://github.com/mstorsjo/llvm-mingw">🔗</a> |
 | [**DXVK-GPLAsync-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) | Build for FEX (+GPL-Async patch) |  |
@@ -48,7 +49,7 @@ May require the official .NET Framework instead of Mono
 | [**PhysX Legacy**](https://www.nvidia.com/content/DriverDownload-March2009/confirmation.php?url=/Windows/9.13.0604/PhysX-9.13.0604-SystemSoftware-Legacy.msi&lang=us&type=Other) | Install ONLY if a old game requests PhysX DLL |
 <br>
 
-
+Turnip(Stable, A750 Exp) Proton.., Wine.., Extra Patches.., Adreno 830 driverset.
 
 
 [ptitSeb](https://github.com/ptitSeb)  
