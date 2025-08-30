@@ -30,7 +30,7 @@ Nightly builds use the YYMMDD filename format
 | Build | Description | Source |
 |-------|-------------|:------:|
 | [**VKD3D-Proton**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON) | Original source build | <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
-| [**VKD3D-Proton-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) | FEX build for performance |  |
+| [**VKD3D-Proton-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) | Build for FEX (Performance boost) |  |
 <br>
 
 ## 📦 Runtime Packages
