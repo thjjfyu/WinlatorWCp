@@ -1,4 +1,12 @@
 # 🤖 Winlator Resources 🚧 WIP
+<br>
+
+## ℹ️Notes
+- 🚧 If I broke the build, please let me know!
+- 🤖 All builds are automatically generated from the latest official source release
+- 🔗 Official Box64 configuration can be found [here](https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc)
+- ✨ All credit goes to the original creators and those who inspired this work
+<br>
 
 ## ⚙️ x86 Emulation Layer
 Nightly builds use the YYMMDD filename format
@@ -45,11 +53,6 @@ May require the official .NET Framework instead of Mono
 ## Proton
 
 
-## ℹ️Notes
-- 🚧 If I broke the build, please let me know!
-- 🤖 All builds are automatically generated from the latest official source release
-- 🔗 Official Box64 configuration can be found [here](https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc)
-- ✨ All credit goes to the original creators and those who inspired this work
 
 
 [ptitSeb](https://github.com/ptitSeb)  
