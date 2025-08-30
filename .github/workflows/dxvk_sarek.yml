@@ -3,7 +3,7 @@ name: Build DXVK-Sarek
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"
+    - cron: "0 18 * * *"  # daily (UTC)
 
 permissions:
   contents: write
@@ -12,9 +12,93 @@ defaults:
   run:
     shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  guard:
+    name: Fast guard (new Sarek tag?)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      SAREK_REPO: pythonlover02/DXVK-Sarek
+      RELEASE_TAG: DXVK-SAREK
+    steps:
+      - name: Install jq, curl
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq curl
+      - name: Collect already-published versions
+        id: have
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+                  "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
+          if [ "$HTTP" = "200" ]; then
+            jq -r '.assets[].name' /tmp/rel.json \
+              | sed -n -E 's/^dxvk-sarek-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
+              | sort -V > /tmp/exist.txt
+          else
+            : > /tmp/exist.txt
+          fi
+          echo "Existing:"; cat /tmp/exist.txt || true
+      - name: Detect any missing tag (API-only)
+        id: detect
+        env:
+          MIN_VER: "1.10.8"
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+
+          # Fetch tags (first pages are enough for new releases)
+          curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${SAREK_REPO}/tags?per_page=100" \
+            | jq -r '.[].name' \
+            | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            | sort -V > /tmp/tags.txt
+
+          awk -v MIN="${MIN_VER}" '
+            function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
+              for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1}return 0}
+            { base=substr($0,2); if (cmp(base,MIN)>=0) print base }
+          ' /tmp/tags.txt > /tmp/candidates.txt
+
+          echo "Candidates (>= ${MIN_VER}):"; cat /tmp/candidates.txt || true
+
+          echo -n "no" > /tmp/missing.flag
+          while read -r base; do
+            [ -n "$base" ] || continue
+            if ! grep -Fxq "$base" /tmp/exist.txt; then
+              echo "MISSING: $base"
+              echo -n "yes" > /tmp/missing.flag
+              break
+            fi
+          done < /tmp/candidates.txt
+
+          [ "$(cat /tmp/missing.flag)" = "yes" ] && echo "missing=true"  >> "$GITHUB_OUTPUT" || echo "missing=false" >> "$GITHUB_OUTPUT"
+      - name: Decide build
+        id: decide
+        run: |
+          if [ "${{ steps.detect.outputs.missing }}" = "true" ]; then
+            echo "build=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build-and-release:
+    name: Build & release DXVK-Sarek
     runs-on: ubuntu-24.04
+    needs: guard
+    if: needs.guard.outputs.build == 'true'
     env:
       SAREK_REPO: pythonlover02/DXVK-Sarek
       PREFIX_X64: ${{ github.workspace }}/dist-x64
@@ -24,7 +108,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
     steps:
-      - name: "Install host tooling"
+      - name: Install host tooling
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -32,7 +116,7 @@ jobs:
             git meson ninja-build glslang-tools pkg-config \
             build-essential python3 zstd ccache file rsync
 
-      - name: "Ensure glslang (--vn) available"
+      - name: Ensure glslang (--vn) available
         run: |
           cat > /tmp/min.comp <<'GLSL'
           #version 450
@@ -48,7 +132,7 @@ jobs:
             echo "::error::No glslang/glslangValidator with working --vn"; exit 1
           fi
 
-      - name: "Install gh CLI"
+      - name: Install gh CLI
         run: |
           if ! command -v gh >/dev/null 2>&1; then
             curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -60,7 +144,7 @@ jobs:
             sudo apt-get install -y gh
           fi
 
-      - name: "Resolve llvm-mingw (ucrt, ubuntu x86_64)"
+      - name: Resolve llvm-mingw (ucrt, ubuntu x86_64)
         id: llvm
         run: |
           json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
@@ -70,24 +154,24 @@ jobs:
           echo "url=$url"  >> "$GITHUB_OUTPUT"
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
-      - name: "Cache llvm-mingw (extracted)"
+      - name: Cache llvm-mingw (extracted)
         id: cache-llvm
         uses: actions/cache@v4
         with:
           path: ${{ env.TOOLCHAIN_DIR }}
           key: llvm-mingw-${{ steps.llvm.outputs.name }}
 
-      - name: "Fetch llvm-mingw (if cache miss)"
+      - name: Fetch llvm-mingw (if cache miss)
         if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: |
           sudo mkdir -p "$TOOLCHAIN_DIR"
           curl -fL -H "Authorization: Bearer $GH_TOKEN" "${{ steps.llvm.outputs.url }}" -o /tmp/llvm-mingw.tar.xz
           sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
 
-      - name: "Add toolchain to PATH"
+      - name: Add toolchain to PATH
         run: echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
-      - name: "Cache ccache"
+      - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.ccache
@@ -95,20 +179,20 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: "Configure ccache"
+      - name: Configure ccache
         run: |
           echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> $GITHUB_ENV
           echo "CCACHE_MAXSIZE=2G" >> $GITHUB_ENV
           echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
           echo "CCACHE_BASEDIR=${{ github.workspace }}" >> $GITHUB_ENV
 
-      - name: "Clone DXVK-Sarek (main + submodules)"
+      - name: Clone DXVK-Sarek (main + submodules)
         run: |
           git clone --recurse-submodules https://github.com/${SAREK_REPO}.git src
           cd src
           git fetch --tags --force
 
-      - name: "Resolve Sarek tags (v1.10.8 → latest) & compute NEW to build"
+      - name: Resolve Sarek tags (v1.10.8 → latest) & compute NEW to build
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
@@ -144,7 +228,7 @@ jobs:
           echo "Already uploaded:"; cat "$EXIST" || true
           echo "To build:";         cat "${GITHUB_WORKSPACE}/to_build.txt" || true
 
-      - name: "Build NEW versions only (DXVK-Sarek → WCP) + compat patches + clean retag"
+      - name: Build NEW versions only (DXVK-Sarek → WCP) + compat patches + clean retag
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
@@ -161,6 +245,7 @@ jobs:
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
 
+            # Minimal compat fixes
             hdr="src/d3d9/d3d9_include.h"
             if [[ -f "$hdr" ]]; then
               for sym in _D3DDEVINFO_RESOURCEMANAGER _D3DDEVINFO_D3D9PIPELINETIMINGS _D3DDEVINFO_VCACHE _D3DDEVINFO_PRIVATEDATA _D3DDEVINFO_VERTEXSTATS; do
@@ -178,6 +263,7 @@ jobs:
               sed -i -E 's/static[[:space:]]+constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource[[:space:]]*=[[:space:]]*D3D11_MAP\(-1u\);/inline static const D3D11_MAP UnmappedSubresource = (D3D11_MAP)0xFFFFFFFFu;/' "$hdr2" || true
             fi
 
+            # HUD retag (keep upstream tag name, clean tree)
             git config user.name  "ci"
             git config user.email "ci@local"
             git config --global --add safe.directory "$(pwd)"
@@ -191,7 +277,7 @@ jobs:
               echo "::error::Repo is dirty after retag"; git status; exit 1
             fi
 
-            # ---- Clean previous artifacts ------------------------------------
+            # Clean previous artifacts
             rm -rf "${GITHUB_WORKSPACE}/build.w64" "${GITHUB_WORKSPACE}/build.w32" \
                    "${GITHUB_WORKSPACE}/dist-x64"  "${GITHUB_WORKSPACE}/dist-x86" \
                    "${GITHUB_WORKSPACE}/DXVK_WCP"
@@ -205,9 +291,7 @@ jobs:
               -Dc_args='-Wno-nontrivial-memcall' \
               -Dcpp_args='-Wno-nontrivial-memcall'
             ninja -C "${GITHUB_WORKSPACE}/build.w64" -j"$(nproc)"
-            echo "::group::Install x64"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.w64"
-            echo "::endgroup::"
 
             # 32-bit
             meson setup "${GITHUB_WORKSPACE}/build.w32" \
@@ -218,9 +302,7 @@ jobs:
               -Dc_args='-Wno-nontrivial-memcall' \
               -Dcpp_args='-Wno-nontrivial-memcall'
             ninja -C "${GITHUB_WORKSPACE}/build.w32" -j"$(nproc)"
-            echo "::group::Install x86"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.w32"
-            echo "::endgroup::"
 
             # Layout WCP (64→system32, 32→syswow64)
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
@@ -235,9 +317,8 @@ jobs:
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
 
-            VN="sarek-${base}"
             jq -n \
-              --arg VN "${VN}" \
+              --arg VN "sarek-${base}" \
               --argjson VC 0 \
               --arg DESC "DXVK-Sarek build by Ari" \
               --arg SYS '${system32}/' \
@@ -266,15 +347,14 @@ jobs:
             echo "::endgroup::"
           done < "$LIST"
 
-      - name: "Build release notes (with Current)"
+      - name: Build release notes (with Current)
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          # Always reset body header only
           printf '🤖 Automated DXVK-Sarek builds (1.10.8+).\n\n' > "$NOTES"
           cat "$NOTES"
 
-      - name: "Create/Update GitHub Release (DXVK-SAREK) + upload new WCPs"
+      - name: Create/Update GitHub Release (DXVK-SAREK) + upload new WCPs
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
@@ -283,10 +363,8 @@ jobs:
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           RELEASE_TAG="${RELEASE_TAG}"
 
-          # Rebuild body header
+          # Rebuild body header and compute "Current" for display
           printf '🤖 Automated DXVK-Sarek builds (1.10.8+).\n\n' > "$NOTES"
-
-          # Compute Current only for release body
           cur=""
           if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-sarek-*.wcp" > /dev/null; then
             latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-sarek-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
@@ -306,17 +384,16 @@ jobs:
               fi
             fi
           fi
-
           [[ -n "$cur" ]] && echo "Current: ${cur}" >> "$NOTES"
 
-          # Create or update release
+          # Create or update the release
           if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           else
             gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           fi
 
-          # Upload new artifacts if any
+          # Upload artifacts (append)
           if compgen -G "${GITHUB_WORKSPACE}/out/*.wcp" > /dev/null; then
             gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
           else
