@@ -53,7 +53,7 @@ May require the official .NET Framework instead of Mono
 | [**PhysX Legacy**](https://www.nvidia.com/content/DriverDownload-March2009/confirmation.php?url=/Windows/9.13.0604/PhysX-9.13.0604-SystemSoftware-Legacy.msi&lang=us&type=Other) | Install ONLY if a old game requests PhysX DLL |
 <br>
 
-## Adrenotools GPU Drivers
+
 ## Proton
 ## Minor Fix..
 
