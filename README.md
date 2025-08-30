@@ -7,7 +7,7 @@
 
 ## ⚙️ FEXCore & Box64
 Nightly builds use the YYMMDD filename format
-| FEXCore | BOX64-Glibc | BOX64-Bionic | Source |
+| FEXCore | BOX64-Glibc | BOX64-Bionic |  |
 |:------:|:------:|:------:|:------:|
 | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) | 🚧 | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
 | [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
@@ -18,7 +18,7 @@ Nightly builds use the YYMMDD filename format
 Sarek - backports DXVK updates for older GPUs lacking Vulkan 1.3 support <br>
 GPLAsync (Async) - Reduces stuttering by rendering frames before shaders compile <br>
 Arm64ec - Optimized for FEX to enhance performance (Use with FEX only) <br>
-| Build | Source |
+| Build |  |
 |-------|:------:|
 | [**DXVK**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK) |  <a href="https://github.com/doitsujin/dxvk">🔗</a> |
 | [**DXVK-Sarek**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK) |  <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
@@ -31,7 +31,7 @@ Arm64ec - Optimized for FEX to enhance performance (Use with FEX only) <br>
 <br>
 
 ## 🌌 VKD3D-Proton
-| Build | Source |
+| Build |  |
 |-------|:------:|
 | [**VKD3D-Proton**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON) |  <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
 | [**VKD3D-Proton-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) |   |
