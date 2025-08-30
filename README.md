@@ -14,10 +14,12 @@ Nightly builds use the YYMMDD filename format
 <br>
 
 ## 🧩 DXVK
+| Build        | Description                                                   |
+|--------------|---------------------------------------------------------------|
+| **Sarek**    | Backports DXVK updates for older GPUs lacking Vulkan 1.3 support |
+| **GPLAsync (Async)** | Reduces stuttering by rendering frames before shaders compile |
+| **Arm64ec**  | Optimized for FEX to enhance performance (Use with FEX only)   |
 
-Sarek - backports DXVK updates for older GPUs lacking Vulkan 1.3 support <br>
-GPLAsync (Async) - Reduces stuttering by rendering frames before shaders compile <br>
-Arm64ec - Optimized for FEX to enhance performance (Use with FEX only) <br>
 | Build |  |
 |-------|:------:|
 | [**DXVK**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK) |  <a href="https://github.com/doitsujin/dxvk">🔗</a> |
