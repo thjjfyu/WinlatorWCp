@@ -192,15 +192,6 @@ jobs:
 
           (cd Box64_WCP && tar --zstd -cf "../artifacts/box64-bionic-nightly-${DATECODE}.wcp" profile.json box64)
 
-      - name: Upload artifact
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: box64-bionic-nightly-${{ needs.resolve-latest.outputs.datecode }}
-          path: ./artifacts/box64-bionic-nightly-${{ needs.resolve-latest.outputs.datecode }}.wcp
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Ensure/Update release (BOX64-BIONIC-NIGHTLY)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
