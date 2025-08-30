@@ -3,15 +3,24 @@ name: Build FEX Stable
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"
+    - cron: "0 18 * * *" # daily (UTC)
 
 permissions:
   contents: write
 
+defaults:
+  run:
+    shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   resolve-latest:
-    name: Resolve latest stable tag
+    name: Resolve latest stable tag (API-only, fast)
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       clean_tag: ${{ steps.tag.outputs.clean_tag }}
@@ -36,11 +45,10 @@ jobs:
           tag="$(fetch "$API/repos/$OWNER/$REPO/releases/latest" | jq -r .tag_name)"
           # 2) Fallback: newest non-prerelease
           if [[ -z "$tag" || "$tag" == "null" ]]; then
-            tag="$(fetch "$API/repos/$OWNER/$REPO/releases?per_page=10" \
+            tag="$(fetch "$API/repos/$OWNER/$REPO/releases?per_page=20" \
                    | jq -r '[ .[] | select(.prerelease==false) ][0].tag_name // empty')"
           fi
-
-          [[ -z "$tag" ]] && { echo "::error::Failed to resolve latest stable tag"; exit 1; }
+          [[ -z "$tag" ]] && { echo "::notice::No stable release found"; exit 0; }
 
           # Clean version (drop leading 'FEX-' or similar)
           clean_tag="$(sed -E 's/^[Ff][Ee][Xx]-//' <<< "$tag")"
@@ -50,8 +58,9 @@ jobs:
           echo "Latest stable: tag=$tag clean=$clean_tag"
 
   ensure-release:
-    name: Ensure FEX-STABLE release body is latest
+    name: Ensure FEX-STABLE release (header only)
     needs: resolve-latest
+    if: needs.resolve-latest.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - name: Create/Update Release (tag = FEX-STABLE)
@@ -61,17 +70,17 @@ jobs:
           tag_name: "FEX-STABLE"
           prerelease: false
           make_latest: true
-          # Minimal body (example)
           body: |
             🤖 Automated FEX-STABLE builds. (2508.1+)
-            
+
             Current: ${{ needs.resolve-latest.outputs.clean_tag }}
 
   build-and-append:
     name: Build & append ${{ needs.resolve-latest.outputs.tag }}
     needs: [resolve-latest, ensure-release]
-    runs-on: ubuntu-24.04-arm
     if: needs.resolve-latest.outputs.tag != ''
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
 
     steps:
       - name: Check if asset already exists (early exit)
@@ -79,7 +88,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          FILENAME: fex-${{ needs.resolve-latest.outputs.clean_tag }}.wcp   # ← renamed to match actual artifact
+          FILENAME: fex-${{ needs.resolve-latest.outputs.clean_tag }}.wcp
         run: |
           set -Eeuo pipefail
           API="https://api.github.com"
@@ -91,7 +100,7 @@ jobs:
 
           if [ "$HTTP" = "200" ] && jq -e --arg N "$FILENAME" '.assets[]?.name == $N' /tmp/rel.json >/dev/null; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Found asset $FILENAME in release FEX-STABLE; skipping job."
+            echo "::notice::Found asset $FILENAME in FEX-STABLE; skipping job."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -117,8 +126,9 @@ jobs:
           ref: ${{ needs.resolve-latest.outputs.tag }}
           submodules: recursive
           path: src
+          fetch-depth: 1
 
-      - name: Compile FEXCore
+      - name: Compile FEXCore (arm64ec + wow64)
         if: steps.check.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
@@ -163,7 +173,7 @@ jobs:
           tar --zstd -cf "fex-${CLEAN_TAG}.wcp" -C FEXCore_WCP profile.json system32
           mv "fex-${CLEAN_TAG}.wcp" FEXCore_DLLs/
 
-      - name: Upload packaged artifact
+      - name: Upload packaged artifact (CI artifact)
         if: steps.check.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
