@@ -3,7 +3,7 @@ name: Build DXVK
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"
+    - cron: "0 18 * * *"   # daily (UTC)
 
 permissions:
   contents: write
@@ -12,8 +12,78 @@ defaults:
   run:
     shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  guard:
+    name: Fast guard (detect new upstream tag)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      build:   ${{ steps.decide.outputs.build }}
+    steps:
+      - name: Resolve upstream latest tag (DXVK)
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com"
+          OWNER="doitsujin"; REPO="dxvk"
+          # 최신 릴리즈 태그 우선, 없으면 태그 refs에서 최댓값
+          LATEST="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                   "$API/repos/$OWNER/$REPO/releases/latest" | jq -r .tag_name)"
+          if [[ -z "$LATEST" || "$LATEST" == "null" ]]; then
+            LATEST="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                     "$API/repos/$OWNER/$REPO/tags?per_page=100" \
+                     | jq -r '.[].name' | grep -E '^v[0-9]+' | sort -V | tail -n1)"
+          fi
+          [[ -z "$LATEST" ]] && { echo "::error::No upstream tag found"; exit 1; }
+          echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve current mirrored highest version in DXVK release
+        id: local
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          CUR=""
+          if gh release view "DXVK" --repo "$REPO" >/dev/null 2>&1; then
+            CUR="$(gh api repos/$REPO/releases/tags/DXVK \
+                 | jq -r '.assets[].name' \
+                 | sed -n -E 's/^dxvk-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
+                 | sort -V | tail -n1)"
+          fi
+          echo "cur=${CUR}" >> "$GITHUB_OUTPUT"
+          echo "Current: ${CUR:-<none>}"
+
+      - name: Decide build
+        id: decide
+        run: |
+          set -Eeuo pipefail
+          UP="${{ steps.upstream.outputs.tag }}"
+          CUR="${{ steps.local.outputs.cur }}"
+          # v 접두 제거 후 비교
+          up_base="${UP#v}"
+          if [[ -z "$CUR" ]]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          vercmp() { dpkg --compare-versions "$1" gt "$2"; }
+          if vercmp "$up_base" "$CUR"; then
+            echo "build=true"  >> "$GITHUB_OUTPUT"
+            echo "New upstream ($up_base) > current ($CUR): build"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "No newer upstream: skip"
+          fi
+
   build-and-release:
+    name: Build & release missing DXVK versions
+    needs: guard
+    if: needs.guard.outputs.build == 'true'
     runs-on: ubuntu-24.04
     env:
       DXVK_REPO: doitsujin/dxvk
@@ -22,8 +92,8 @@ jobs:
       TOOLCHAIN_DIR: /opt/llvm-mingw
       RELEASE_TAG: DXVK
       GH_TOKEN: ${{ github.token }}
-
     steps:
+      # ↓↓↓ 이하 원래 스텝 그대로 (순서만 가드 뒤로 이동) ↓↓↓
       - name: "Install host tooling"
         run: |
           sudo apt-get update
@@ -196,8 +266,8 @@ jobs:
             echo "::group::Build ${tag} (dxvk)"
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
-
-            # ---- (선택적) 호환 패치들: 필요한 태그에만 적용 -------------------
+            # (이하 원문 그대로)
+            # ---- (선택적) 호환 패치들 ...
             hdr="src/d3d9/d3d9_include.h"
             if [[ -f "$hdr" ]]; then
               for sym in _D3DDEVINFO_RESOURCEMANAGER _D3DDEVINFO_D3D9PIPELINETIMINGS _D3DDEVINFO_VCACHE _D3DDEVINFO_PRIVATEDATA _D3DDEVINFO_VERTEXSTATS; do
@@ -206,13 +276,10 @@ jobs:
                 fi
               done
             fi
-
             hdr2="src/d3d11/d3d11_texture.h"
             if [[ -f "$hdr2" ]] && grep -qE 'constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource' "$hdr2"; then
               sed -i -E 's/static[[:space:]]+constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource[[:space:]]*=[[:space:]]*D3D11_MAP\(-1u\);/inline static const D3D11_MAP UnmappedSubresource = (D3D11_MAP)0xFFFFFFFFu;/' "$hdr2" || true
             fi
-
-            # ---- HUD 버전의 '+' 제거: 로컬 커밋 + 원태그 재지정 ---------------
             ver="${tag#v}"
             git config user.name  "ci"
             git config user.email "ci@local"
@@ -221,84 +288,38 @@ jobs:
             git commit -m "local patches for ${ver}" || true
             git tag -d "$tag" || true
             git tag -a "$tag" -m "clean retag for HUD"
-
-            # 작업트리 클린 보장 (dirty 방지)
             git reset --hard HEAD
             git clean -xdf
             if [[ -n "$(git status --porcelain)" ]]; then
               echo "::error::Repo is dirty after retag"; git status; exit 1
             fi
-
-            # ---- Clean previous artifacts ------------------------------------
             rm -rf "${GITHUB_WORKSPACE}/build.x64" "${GITHUB_WORKSPACE}/build.x86" \
                    "${GITHUB_WORKSPACE}/dist-x64"  "${GITHUB_WORKSPACE}/dist-x86" \
                    "${GITHUB_WORKSPACE}/DXVK_WCP"
-
-            # x64
-            meson setup "${GITHUB_WORKSPACE}/build.x64" \
-              --cross-file "${GITHUB_WORKSPACE}/x86_64.cross" \
-              --buildtype release \
-              --prefix "${PREFIX_X64}" \
-              -Dbuild_id=false -Dstrip=true \
-              -Dc_args='-Wno-nontrivial-memcall' \
-              -Dcpp_args='-Wno-nontrivial-memcall'
+            meson setup "${GITHUB_WORKSPACE}/build.x64" --cross-file "${GITHUB_WORKSPACE}/x86_64.cross" --buildtype release --prefix "${PREFIX_X64}" -Dbuild_id=false -Dstrip=true -Dc_args='-Wno-nontrivial-memcall' -Dcpp_args='-Wno-nontrivial-memcall'
             ninja -C "${GITHUB_WORKSPACE}/build.x64" -j"$(nproc)"
-            echo "::group::Install x64"
-            meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x64"
-            echo "::endgroup::"
-
-            # x86
-            meson setup "${GITHUB_WORKSPACE}/build.x86" \
-              --cross-file "${GITHUB_WORKSPACE}/i686.cross" \
-              --buildtype release \
-              --prefix "${PREFIX_X86}" \
-              -Dbuild_id=false -Dstrip=true \
-              -Dc_args='-Wno-nontrivial-memcall' \
-              -Dcpp_args='-Wno-nontrivial-memcall'
+            echo "::group::Install x64"; meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x64"; echo "::endgroup::"
+            meson setup "${GITHUB_WORKSPACE}/build.x86" --cross-file "${GITHUB_WORKSPACE}/i686.cross" --buildtype release --prefix "${PREFIX_X86}" -Dbuild_id=false -Dstrip=true -Dc_args='-Wno-nontrivial-memcall' -Dcpp_args='-Wno-nontrivial-memcall'
             ninja -C "${GITHUB_WORKSPACE}/build.x86" -j"$(nproc)"
-            echo "::group::Install x86"
-            meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x86"
-            echo "::endgroup::"
-
-            # Layout WCP (64→system32, 32→syswow64)
+            echo "::group::Install x86"; meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x86"; echo "::endgroup::"
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
             cp -v "${PREFIX_X64}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
             cp -v "${PREFIX_X86}/bin/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
-
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x64.txt || true
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x86.txt || true
             if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
               echo "::error::No DLLs discovered for ${base}"; exit 1; fi
-
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
-
-            jq -n \
-              --arg VN "${base}" \
-              --argjson VC 0 \
-              --arg DESC "DXVK build by Ari" \
-              --arg SYS '${system32}/' \
-              --arg WOW '${syswow64}/' \
-              --slurpfile x64 /tmp/x64.json \
-              --slurpfile x86 /tmp/x86.json \
-              '
-              ($x64[0] // []) as $A |
-              ($x86[0] // []) as $B |
-              {
-                type: "DXVK",
-                versionName: $VN,
-                versionCode: $VC,
-                description: $DESC,
-                files: [
-                  ($A[]? | {source: ("system32/"+.), target: ($SYS + .)}),
-                  ($B[]? | {source: ("syswow64/"+.), target: ($WOW + .)})
-                ]
-              }' > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
-
+            jq -n --arg VN "${base}" --argjson VC 0 --arg DESC "DXVK build by Ari" --arg SYS '${system32}/' --arg WOW '${syswow64}/' --slurpfile x64 /tmp/x64.json --slurpfile x86 /tmp/x86.json '
+              ($x64[0] // []) as $A | ($x86[0] // []) as $B |
+              { type:"DXVK", versionName:$VN, versionCode:$VC, description:$DESC,
+                files: [ ($A[]? | {source:("system32/"+.), target:($SYS+.)}),
+                         ($B[]? | {source:("syswow64/"+.), target:($WOW+.)}) ] }' \
+              > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
             mkdir -p "${GITHUB_WORKSPACE}/out"
             wcp="dxvk-${base}.wcp"
-            tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd \
-                --format=gnu --owner=0 --group=0 --numeric-owner \
+            tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
                 -cf "${GITHUB_WORKSPACE}/out/${wcp}" profile.json system32 syswow64
             echo "::endgroup::"
           done < "$LIST"
@@ -306,7 +327,6 @@ jobs:
       - name: "Build release notes (minimal)"
         run: |
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          # Always reset body header only (no Current here)
           printf '🤖 Automated DXVK builds (2.3.1+).\n\n' > "$NOTES"
           cat "$NOTES"
 
@@ -317,47 +337,26 @@ jobs:
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          RELEASE_TAG="${RELEASE_TAG}"
-
-          # Rebuild body header (keeps logs clean and ensures idempotency)
+          RELEASE_TAG="DXVK"
           printf '🤖 Automated DXVK builds (2.3.1+).\n\n' > "$NOTES"
-
-          # Compute "Current" only for the release body
           cur=""
-          # 1) Prefer local artifacts from this run
           if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-*.wcp" > /dev/null; then
             latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
             ver="${latest#dxvk-}"; ver="${ver%.wcp}"
             cur="$ver"
           else
-            # 2) Fallback: inspect existing release assets to preserve Current
             if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
               assets_json="$(gh api repos/${REPO}/releases/tags/${RELEASE_TAG})"
-              mapfile -t list < <(
-                echo "$assets_json" \
-                | jq -r '.assets[].name' \
-                | grep -E '^dxvk-.*\.wcp$' \
-                | LC_ALL=C sort -V
-              )
-              if ((${#list[@]} > 0)); then
-                latest="${list[-1]}"
-                ver="${latest#dxvk-}"; ver="${ver%.wcp}"
-                cur="$ver"
-              fi
+              mapfile -t list < <(echo "$assets_json" | jq -r '.assets[].name' | grep -E '^dxvk-.*\.wcp$' | LC_ALL=C sort -V)
+              if ((${#list[@]} > 0)); then latest="${list[-1]}"; ver="${latest#dxvk-}"; ver="${ver%.wcp}"; cur="$ver"; fi
             fi
           fi
-
-          # Append Current line only to the release body
           [[ -n "$cur" ]] && echo "Current: ${cur}" >> "$NOTES"
-
-          # Create or update the release with the computed body
           if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           else
             gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           fi
-
-          # Upload new artifacts if present
           if compgen -G "${GITHUB_WORKSPACE}/out/*.wcp" > /dev/null; then
             gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
           else
