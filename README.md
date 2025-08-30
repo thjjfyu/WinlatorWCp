@@ -1,4 +1,4 @@
-# Yet another Winlator resources repo
+# Yet Another Winlator Resources Repo
 <br>
 🤖 Collecting & building necessary items, unified format, auto-built to the latest version<br>
 ✨ All credit goes to the original creators and those who inspired this work<br>
