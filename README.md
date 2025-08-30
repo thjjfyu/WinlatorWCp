@@ -36,7 +36,7 @@ Nightly builds use the YYMMDD filename format
 ## 📦 Runtime Packages
 If older VC++ is needed, try an AIO package<br>
 May require the official .NET Framework instead of Mono
-| Build | Description |
+| Packages | Description |
 |-------|-------------|
 | [**Visual C++ x64**](https://aka.ms/vs/17/release/vc_redist.x64.exe) | 2015–2022 Redistributable |
 | [**Visual C++ x86**](https://aka.ms/vs/17/release/vc_redist.x86.exe) | 2015–2022 Redistributable |
