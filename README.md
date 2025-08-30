@@ -7,7 +7,7 @@
 
 
 ## ⚙️ FEXCore & Box64
-Nightly builds use the YYMMDD filename format
+Nightly - YYMMDD filename format
 | Type | Build | 📜 |
 |:------:|:------:|:------:|
 | FEXCore | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
