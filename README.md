@@ -2,7 +2,7 @@
 <br>
 🤖 Collecting & building necessary items, unified format, auto-built to the latest version<br>
 ✨ All credit goes to the original creators and those who inspired this work<br>
-🚧 WIP. If I broke the build, please let me know!<br>
+🚧 WIP<br>
 <br>
 
 ## ⚙️ FEXCore & Box64
