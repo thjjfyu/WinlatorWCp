@@ -33,11 +33,6 @@ Nightly builds use the YYMMDD filename format
 | [**VKD3D-Proton-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) | FEX build for performance |  |
 <br>
 
-## 🖥️ Turnip Driver
-
-
-<br>
-
 ## 📦 Runtime Packages
 If older VC++ is needed, try an AIO package<br>
 May require the official .NET Framework instead of Mono
@@ -52,10 +47,6 @@ May require the official .NET Framework instead of Mono
 | [**DirectX (June 2010)**](https://download.microsoft.com/download/8/4/a/84a35bf1-dafe-4ae8-82af-ad2ae20b6b14/directx_Jun2010_redist.exe) | Install ONLY if missing DLL (d3dx9_43.dll...) |
 | [**PhysX Legacy**](https://www.nvidia.com/content/DriverDownload-March2009/confirmation.php?url=/Windows/9.13.0604/PhysX-9.13.0604-SystemSoftware-Legacy.msi&lang=us&type=Other) | Install ONLY if a old game requests PhysX DLL |
 <br>
-
-
-## Proton
-## Minor Fix..
 
 
 
