@@ -8,12 +8,13 @@
 <br>
 
 ## 📦 BOX64
+Nightly builds use the YYMMDD filename format
 | Build | Description | Source |
 |-------|-------------|:------:|
 | [**Glibc-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) | Stable | <a href="https://github.com/ptitSeb/box64">🔗</a> |
-| [**Glibc-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | Nightly (YYMMDD) |  |
+| [**Glibc-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | Nightly |  |
 | **Bionic-Stable** | Stable | <a href="https://github.com/ptitSeb/box64">🔗</a> |
-| [**Bionic-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) | Nightly (YYMMDD) |  |
+| [**Bionic-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) | Nightly |  |
 <br>
 
 ## 🧩 DXVK
