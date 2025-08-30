@@ -2,20 +2,17 @@
 
 ## ⚙️ FEX
 Nightly builds use the YYMMDD filename format
-| Build | Source |
-|-------|:------:|
-| [**FEX-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) |  <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
-| [**FEX-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) |  |
+| 🟢 | 🌙 | Source |
+|:------:|:------:|:------:|
+| [**FEX-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) | [**FEX-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
 <br>
 
 ## 📦 BOX64
 Nightly builds use the YYMMDD filename format
-| Build | Source |
-|-------|:------:|
-| [**Glibc-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) |  <a href="https://github.com/ptitSeb/box64">🔗</a> |
-| [**Glibc-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) |  |
-| **Bionic-Stable** |  |
-| [**Bionic-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) |  |
+| 🟢 | 🌙 | Source |
+|:------:|:------:|:------:|
+| [**Glibc-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) | [**Glibc-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| **Bionic-Stable** | [**Bionic-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) |  |
 <br>
 
 ## 🧩 DXVK
