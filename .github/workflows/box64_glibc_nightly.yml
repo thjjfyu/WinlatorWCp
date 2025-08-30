@@ -3,10 +3,14 @@ name: Build Box64 Glibc Nightly
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"
+    - cron: "0 18 * * 0"   # weekly (UTC, every Sunday)
 
 permissions:
   contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   resolve-latest:
@@ -29,7 +33,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          # Resolve latest commit SHA on default branch via GitHub API
           API="https://api.github.com"
           OWNER="ptitSeb"
           REPO="box64"
@@ -59,15 +62,27 @@ jobs:
     runs-on: ubuntu-24.04-arm
 
     steps:
-      - name: Install build tools
+      # --- 초경량 가드: 커밋 동일 시 즉시 종료 (설치 전에) ---
+      - name: Skip if same upstream commit already released
+        id: guard_commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:     ${{ github.repository }}
+          SHA:      ${{ needs.resolve-latest.outputs.sha }}
         run: |
           set -Eeuo pipefail
-          sudo apt-get update
-          sudo apt-get install -y jq zstd wget curl git cmake ninja-build build-essential gh
+          BODY="$(gh release view BOX64-NIGHTLY --repo "$REPO" --json body --jq '.body' 2>/dev/null || true)"
+          if echo "$BODY" | grep -q "commit/${SHA}"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Same upstream commit already released; skipping."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      # Skip if same-date asset already exists (lowercase filename)
+      # 동일 날짜 자산 중복 방지(보호막)
       - name: Skip if same-date asset exists
         id: dupe
+        if: steps.guard_commit.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -78,19 +93,24 @@ jobs:
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
           FILENAME="box64-nightly-${DATECODE}.wcp"
-
           HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
                   "$API/repos/${REPO}/releases/tags/BOX64-NIGHTLY" || true)"
-
           if [ "$HTTP" = "200" ] && jq -e --arg N "$FILENAME" '.assets[]?.name == $N' /tmp/nightly.json >/dev/null; then
             echo "skip=true"  >> "$GITHUB_OUTPUT"
-            echo "Found asset ${FILENAME} in release BOX64-NIGHTLY; skipping build."
+            echo "Found asset ${FILENAME}; skipping build."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Install build tools
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq zstd wget curl git cmake ninja-build build-essential gh
+
       - name: Checkout upstream Box64 (exact commit)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           repository: ptitSeb/box64
@@ -100,7 +120,7 @@ jobs:
           fetch-depth: 1
 
       - name: Compile Box64 (glibc)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
           cd src
@@ -109,7 +129,7 @@ jobs:
           cd ..
 
       - name: Package WCP (lowercase filename)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
@@ -139,7 +159,7 @@ jobs:
           (cd Box64_WCP && tar --zstd -cf "../artifacts/box64-nightly-${VER}.wcp" profile.json box64)
 
       - name: Upload packaged artifact
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: box64-nightly-${{ needs.resolve-latest.outputs.datecode }}
@@ -148,54 +168,45 @@ jobs:
           retention-days: 7
 
       - name: Ensure/Update release (tag = BOX64-NIGHTLY) and upload asset
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          REPO:     ${{ github.repository }}                   # ← add
+          REPO:     ${{ github.repository }}
           SHORT:    ${{ needs.resolve-latest.outputs.short }}
           SHA:      ${{ needs.resolve-latest.outputs.sha }}
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
           set -Eeuo pipefail
           BODY=$'🌙 Automated BOX64-NIGHTLY builds (rolling)\n\nCommit: ['"${SHORT}"'](https://github.com/ptitSeb/box64/commit/'"${SHA}"')'
-      
-          # Use explicit --repo to avoid relying on .git presence
+
           if ! gh release view "BOX64-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "BOX64-NIGHTLY" --repo "$REPO" -t "BOX64-NIGHTLY" -n "${BODY}"
           else
             gh release edit   "BOX64-NIGHTLY" --repo "$REPO" -t "BOX64-NIGHTLY" -n "${BODY}"
           fi
-      
-          # Upload asset (lowercase filename), accumulate versions
+
           gh release upload "BOX64-NIGHTLY" \
             "./artifacts/box64-nightly-${DATECODE}.wcp" \
             --repo "$REPO" --clobber
 
       - name: Trim old assets (keep latest 5)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -Eeuo pipefail
           API="https://api.github.com/repos/${REPO}/releases/tags/BOX64-NIGHTLY"
-
-          assets="$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
-                          -H "Accept: application/vnd.github+json" "$API" \
-                    | jq -c '.assets | sort_by(.created_at)')"
-
+          assets="$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API" | jq -c '.assets | sort_by(.created_at)')"
           count="$(echo "$assets" | jq 'length')"
           if [ "$count" -gt 5 ]; then
             delcount=$((count-5))
             echo "::notice::Found $count assets, will delete $delcount oldest."
             echo "$assets" | jq -r ".[0:$delcount][] | .id" | while read -r id; do
-              curl -s -X DELETE \
-                   -H "Authorization: Bearer $GH_TOKEN" \
-                   -H "Accept: application/vnd.github+json" \
+              curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
                    "https://api.github.com/repos/${REPO}/releases/assets/${id}"
               echo "Deleted asset id=$id"
             done
           else
             echo "::notice::Asset count $count (<=5); nothing to delete."
           fi
-           
