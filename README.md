@@ -29,7 +29,7 @@ Nightly builds use the YYMMDD filename format
 |--------------|---------------------------------------------------------------|
 | **Sarek**    | Backports DXVK updates for older GPUs lacking Vulkan 1.3 support |
 | **GPLAsync (Async)** | Reduces stuttering by rendering frames before shaders compile |
-| **Arm64ec**  | Optimized for FEX to enhance performance (Use with FEX only)   |
+| **Arm64ec**  | Optimized for FEX to enhance performance <br>(Use with FEX only)   |
 <br>
 
 ## 🌌 VKD3D-Proton
@@ -40,7 +40,7 @@ Nightly builds use the YYMMDD filename format
 
 | Type       | Description                                                   |
 |--------------|---------------------------------------------------------------|
-| **Arm64ec**  | Optimized for FEX to enhance performance (Use with FEX only)   |
+| **Arm64ec**  | Optimized for FEX to enhance performance <br>(Use with FEX only)   |
 <br>
 
 ## 📦 Runtime Packages
