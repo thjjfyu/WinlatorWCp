@@ -1,8 +1,6 @@
 # Yet Another Winlator Resources Repo
 <br>
-🤖 Auto-built essentials, unified format.<br>
-✨ All credit goes to the original creators and those who inspired this work<br>
-🚧 WIP<br>
+🤖 Auto-built essentials, unified format. 🚧 WIP<br>
 <br>
 
 
