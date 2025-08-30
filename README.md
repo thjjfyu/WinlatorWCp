@@ -30,7 +30,7 @@ Nightly builds use the YYMMDD filename format
 | Type       | Description                                                   |
 |--------------|---------------------------------------------------------------|
 | **Sarek**    | Backports DXVK updates for older GPUs lacking Vulkan 1.3 support |
-| **GPLAsync (Async)** | Reduces stuttering by rendering frames before shaders compile |
+| **GPLAsync** | Reduces stuttering by rendering frames before shaders compile |
 | **Arm64ec**  | Optimized for FEX to enhance performance <br>(Use with FEX only)   |
 <br>
 
