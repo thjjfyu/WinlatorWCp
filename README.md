@@ -14,7 +14,7 @@ Nightly builds use the YYMMDD filename format
 |-------|:-----------:|:------:|
 | [**Glibc-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) | Stable | <a href="https://github.com/ptitSeb/box64">🔗</a> |
 | [**Glibc-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | Nightly |  |
-| **Bionic-Stable** | Stable | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| **Bionic-Stable** | Stable |  |
 | [**Bionic-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) | Nightly |  |
 <br>
 
