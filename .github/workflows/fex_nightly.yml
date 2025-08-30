@@ -3,28 +3,37 @@ name: Build FEX Nightly
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"
+    - cron: "0 18 * * 0"   # weekly (UTC, every Sunday)
 
 permissions:
   contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   resolve-latest:
     name: Resolve upstream HEAD (commit)
     runs-on: ubuntu-latest
     outputs:
-      branch: ${{ steps.upstream.outputs.branch }}
-      sha: ${{ steps.upstream.outputs.sha }}
-      short: ${{ steps.upstream.outputs.short }}
+      branch:   ${{ steps.upstream.outputs.branch }}
+      sha:      ${{ steps.upstream.outputs.sha }}
+      short:    ${{ steps.upstream.outputs.short }}
       datecode: ${{ steps.datecode.outputs.code }}
     steps:
+      - name: Install tools (jq, curl)
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+
       - name: Resolve upstream FEX HEAD SHA (robust)
         id: upstream
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          # Resolve latest commit SHA on default branch via GitHub API
           API="https://api.github.com"
           OWNER="FEX-Emu"
           REPO="FEX"
@@ -56,20 +65,27 @@ jobs:
     runs-on: ubuntu-24.04-arm
 
     steps:
-      - name: Install Nix
-        uses: cachix/install-nix-action@v31
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
-      - name: Install tools
+      # --- 초경량 가드: 같은 커밋이면 즉시 종료 (설치 전에) ---
+      - name: Skip if same upstream commit already released
+        id: guard_commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:     ${{ github.repository }}
+          SHA:      ${{ needs.resolve-latest.outputs.sha }}
         run: |
           set -Eeuo pipefail
-          sudo apt-get update
-          sudo apt-get install -y jq zstd curl wget git cmake ninja-build build-essential gh
+          BODY="$(gh release view FEX-NIGHTLY --repo "$REPO" --json body --jq '.body' 2>/dev/null || true)"
+          if echo "$BODY" | grep -q "commit/${SHA}"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Same upstream commit already released; skipping."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      # Skip if same-date asset already exists (lowercase filename)
+      # 선택적 보호막: 같은 날짜 자산 중복 업로드 방지
       - name: Skip if same-date asset exists
         id: dupe
+        if: steps.guard_commit.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -91,8 +107,21 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Install Nix
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Install tools
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq zstd curl wget git cmake ninja-build build-essential gh
+
       - name: Checkout upstream FEX (exact commit)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           repository: FEX-Emu/FEX
@@ -102,7 +131,7 @@ jobs:
           fetch-depth: 1
 
       - name: Compile FEXCore
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
           # Build arm64ec
@@ -117,22 +146,19 @@ jobs:
           cd ../../..
 
       - name: Package Nightly WCP (lowercase filename)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
           set -Eeuo pipefail
           mkdir -p FEXCore_DLLs FEXCore_WCP/system32
 
-          # Collect DLLs (all placed under system32 per schema)
           cp ./src/build/arm64ec/Bin/libarm64ecfex.dll ./FEXCore_DLLs/
           cp ./src/build/wow64/Bin/libwow64fex.dll   ./FEXCore_DLLs/
           cp ./src/build/arm64ec/Bin/libarm64ecfex.dll ./FEXCore_WCP/system32/
           cp ./src/build/wow64/Bin/libwow64fex.dll   ./FEXCore_WCP/system32/
 
           cd FEXCore_WCP
-
-          # Build files list → JSON array
           (find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/files.txt
           if [[ ! -s /tmp/files.txt ]]; then
             echo "::error::No DLLs found under FEXCore_WCP/system32"; exit 1
@@ -153,13 +179,12 @@ jobs:
               files: ($F[0] // [])
             }' > profile.json
 
-          # Package (lowercase)
           tar --zstd -cf "fex-nightly-${DATECODE}.wcp" profile.json system32
           mv "fex-nightly-${DATECODE}.wcp" ../FEXCore_DLLs
           cd ..
 
       - name: Upload packaged artifact
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: fex-nightly-${{ needs.resolve-latest.outputs.datecode }}
@@ -168,25 +193,23 @@ jobs:
           retention-days: 7
 
       - name: Ensure/Update release (tag = FEX-NIGHTLY) and upload asset
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          REPO:     ${{ github.repository }}                 # ← add this
+          REPO:     ${{ github.repository }}
           SHORT:    ${{ needs.resolve-latest.outputs.short }}
           SHA:      ${{ needs.resolve-latest.outputs.sha }}
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
           set -Eeuo pipefail
           BODY=$'🌙 Automated FEX-NIGHTLY builds (rolling)\n\nCommit: ['"${SHORT}"'](https://github.com/FEX-Emu/FEX/commit/'"${SHA}"')'
-      
-          # Use explicit --repo to avoid relying on .git presence
+
           if ! gh release view "FEX-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "FEX-NIGHTLY" --repo "$REPO" -t "FEX-NIGHTLY" -n "${BODY}"
           else
             gh release edit   "FEX-NIGHTLY" --repo "$REPO" -t "FEX-NIGHTLY" -n "${BODY}"
           fi
-      
-          # Upload asset (lowercase filename), accumulate versions
+
           gh release upload "FEX-NIGHTLY" \
             "./FEXCore_DLLs/fex-nightly-${DATECODE}.wcp" \
             --repo "$REPO" --clobber
