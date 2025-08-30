@@ -3,11 +3,15 @@ name: Build Box64 Bionic Nightly
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"   # daily (UTC)
+    - cron: "0 18 * * 0"   # weekly (UTC, every Sunday)
 
 permissions:
   contents: write
   pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   resolve-latest:
@@ -62,14 +66,26 @@ jobs:
       BUILD_TYPE:  Release
 
     steps:
-      - name: Install build deps
+      # --- 초경량 가드: 커밋 동일 시 즉시 종료 (설치 전에) ---
+      - name: Skip if already built same commit
+        id: guard_commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:     ${{ github.repository }}
+          SHA:      ${{ needs.resolve-latest.outputs.sha }}
         run: |
           set -Eeuo pipefail
-          sudo apt-get update
-          sudo apt-get install -y git cmake make ninja-build python3 patchelf zstd file jq wget curl gh binutils
+          BODY="$(gh release view BOX64-BIONIC-NIGHTLY --repo "$REPO" --json body --jq '.body' 2>/dev/null || true)"
+          if echo "$BODY" | grep -q "commit/${SHA}"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Same upstream commit already released; skipping."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Skip if same-date asset exists
         id: dupe
+        if: steps.guard_commit.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -89,8 +105,16 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # --- 여기서부터 무거운 작업: 변화 있을 때만 실행 ---
+      - name: Install build deps
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y git cmake make ninja-build python3 patchelf zstd file jq wget curl gh binutils
+
       - name: Checkout upstream Box64 (exact commit)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           repository: ptitSeb/box64
@@ -99,9 +123,8 @@ jobs:
           path: src
           fetch-depth: 1
 
-      # Upstream style: use NDK r26b and directly point to the aarch64 Android 31 clang
       - name: Prepare Android NDK r26b (upstream style)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
           curl -fsSL -o ndk.zip https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip
@@ -111,7 +134,7 @@ jobs:
           echo "BOX64_PLATFORM_MACRO=-DANDROID=1 -DARM_DYNAREC=1 -DBAD_SIGNAL=1" >> $GITHUB_ENV
 
       - name: Configure (upstream-like CMake)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
           cd src
@@ -127,11 +150,11 @@ jobs:
           cd -
 
       - name: Build
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: cmake --build src/build -j"$(nproc)"
 
       - name: Verify ELF (Bionic traits)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
           echo "---- INTERP ----"
@@ -142,7 +165,7 @@ jobs:
           readelf -nW src/build/box64 | sed -n '/.note.android.ident/,/Displaying/p'
 
       - name: Package WCP (commit-based versionName, date-based versionCode)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
           SHORT:    ${{ needs.resolve-latest.outputs.short }}
@@ -170,7 +193,7 @@ jobs:
           (cd Box64_WCP && tar --zstd -cf "../artifacts/box64-bionic-nightly-${DATECODE}.wcp" profile.json box64)
 
       - name: Upload artifact
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: box64-bionic-nightly-${{ needs.resolve-latest.outputs.datecode }}
@@ -179,7 +202,7 @@ jobs:
           retention-days: 7
 
       - name: Ensure/Update release (BOX64-BIONIC-NIGHTLY)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO:     ${{ github.repository }}
@@ -189,7 +212,6 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          # Option A) printf -v: build a multiline string with real newlines
           printf -v BODY '%s\n\n%s\n%s' \
             '🌙 Automated BOX64-BIONIC-NIGHTLY builds (rolling)' \
             "Commit: [${SHORT}](https://github.com/ptitSeb/box64/commit/${SHA})" \
@@ -208,34 +230,26 @@ jobs:
             --repo "$REPO" --clobber
 
       - name: Trim old assets (keep latest 5)
-        if: steps.dupe.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -Eeuo pipefail
           API="https://api.github.com/repos/${REPO}/releases/tags/BOX64-BIONIC-NIGHTLY"
-
-          # Fetch asset list (JSON)
-          assets="$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
-                          -H "Accept: application/vnd.github+json" "$API" \
-                    | jq -c '.assets | sort_by(.created_at)')"
-
+          assets="$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API" | jq -c '.assets | sort_by(.created_at)')"
           count="$(echo "$assets" | jq 'length')"
           if [ "$count" -gt 5 ]; then
-            # compute how many to delete
             delcount=$((count-5))
             echo "::notice::Found $count assets, will delete $delcount oldest."
-            # delete oldest assets (by creation time)
             echo "$assets" | jq -r ".[0:$delcount][] | .id" | while read -r id; do
-              curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
-                   -H "Accept: application/vnd.github+json" \
+              curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
                    "https://api.github.com/repos/${REPO}/releases/assets/${id}"
               echo "Deleted asset id=$id"
             done
           else
             echo "::notice::Asset count $count (≤5), nothing to delete."
-          fi            
+          fi
 
   watch-upstream-workflow:
     name: Watch upstream workflow changes
