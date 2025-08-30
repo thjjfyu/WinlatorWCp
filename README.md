@@ -1,11 +1,9 @@
-# Winlator Resources
+# Yet another Winlator resources repo
 <br>
-
-## ℹ️ Notes
+🤖 Collecting & building necessary items, unified format, auto-built to the latest version<br>
+✨ All credit goes to the original creators and those who inspired this work<br>
 🚧 WIP. If I broke the build, please let me know!<br>
-🤖 All builds are automatically generated from the latest official source release<br>
-✨ All credit goes to the original creators and those who inspired this work
-<br><br><br><br>
+<br>
 
 ## ⚙️ FEXCore & Box64
 Nightly builds use the YYMMDD filename format
