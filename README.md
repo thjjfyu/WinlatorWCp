@@ -1,8 +1,8 @@
-# 🤖 Winlator Resources 🚧 WIP
+# Winlator Resources
 <br>
 
 ## ℹ️Notes
-- 🚧 If I broke the build, please let me know!
+- 🚧 WIP. If I broke the build, please let me know!
 - 🤖 All builds are automatically generated from the latest official source release
 - ✨ All credit goes to the original creators and those who inspired this work
 <br>
