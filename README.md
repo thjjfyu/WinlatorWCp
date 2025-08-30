@@ -9,7 +9,7 @@
 Nightly builds use the YYMMDD filename format
 | FEXCore | 📜 | BOX64-Glibc | BOX64-Bionic | 📜 |
 |:------:|:------:|:------:|:------:|:------:|
-| [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) | 🚧 | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) | 🚧 Stable | <a href="https://github.com/ptitSeb/box64">🔗</a> |
 | [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | | [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) |  |
 <br>
 
@@ -19,8 +19,8 @@ Nightly builds use the YYMMDD filename format
 | [**DXVK**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK) |  <a href="https://github.com/doitsujin/dxvk">🔗</a> |
 | [**DXVK-Sarek**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK) |  <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
 | [**DXVK-Sarek-Async**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK-ASYNC) |   |
-| DXVK-Sarek-ARM64EC | 🚧 |
-| DXVK-Sarek-Async-ARM64EC | 🚧 |
+| 🚧 DXVK-Sarek-ARM64EC |  |
+| 🚧 DXVK-Sarek-Async-ARM64EC |  |
 | [**DXVK-GPLAsync**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC) |  <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
 | [**DXVK-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-ARM64EC) |   |
 | [**DXVK-GPLAsync-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) |   |
