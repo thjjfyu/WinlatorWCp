@@ -16,6 +16,7 @@ Nightly builds use the YYMMDD filename format
 <br>
 
 ## 🧩 DXVK
+Sarek is based on old code, so no arm64ec build
 | Build | Description | Source |
 |-------|-------------|:------:|
 | [**DXVK**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK) | Original source build | <a href="https://github.com/doitsujin/dxvk">🔗</a> |
