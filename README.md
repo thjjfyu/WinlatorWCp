@@ -33,6 +33,15 @@
 | [**VKD3D-Proton**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON) | Original source build | <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
 | [**VKD3D-Proton-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) | FEX build for performance | <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a><a href="https://wiki.fex-emu.com/index.php/Development:ARM64EC">🔗</a> |
 
+## 🖥️ Runtime Packages
+| Build | Description |
+|-------|-------------|
+| [**Visual C++ X64**](https://aka.ms/vs/17/release/vc_redist.x64.exe) | 2015–2022 |
+| [**Visual C++ X86**](https://aka.ms/vs/17/release/vc_redist.x86.exe) | 2015–2022 |
+| [**Visual C++ ARM64**](https://aka.ms/vs/17/release/vc_redist.arm64.exe) | 2015–2022 |
+| [**Mono**](https://github.com/wine-mono/wine-mono/releases) | .NET runtime for Wine (*.msi) |
+| [**Gecko**](https://dl.winehq.org/wine/wine-gecko/) | HTML engine for Wine (*.msi) |
+
 
 ## Adrenotools GPU Drivers
 ## Proton
