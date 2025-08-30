@@ -36,8 +36,8 @@
 ## 🖥️ Runtime Packages
 | Build | Description |
 |-------|-------------|
-| [**Visual C++ X64**](https://aka.ms/vs/17/release/vc_redist.x64.exe) | 2015–2022 |
-| [**Visual C++ X86**](https://aka.ms/vs/17/release/vc_redist.x86.exe) | 2015–2022 |
+| [**Visual C++ x64**](https://aka.ms/vs/17/release/vc_redist.x64.exe) | 2015–2022 |
+| [**Visual C++ x86**](https://aka.ms/vs/17/release/vc_redist.x86.exe) | 2015–2022 |
 | [**Visual C++ ARM64**](https://aka.ms/vs/17/release/vc_redist.arm64.exe) | 2015–2022 |
 | [**Mono**](https://github.com/wine-mono/wine-mono/releases) | .NET runtime for Wine (*.msi) |
 | [**Gecko**](https://dl.winehq.org/wine/wine-gecko/) | HTML engine for Wine (*.msi) |
