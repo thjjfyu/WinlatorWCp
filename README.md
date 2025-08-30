@@ -14,12 +14,6 @@ Nightly builds use the YYMMDD filename format
 <br>
 
 ## 🧩 DXVK
-| Type       | Description                                                   |
-|--------------|---------------------------------------------------------------|
-| **Sarek**    | Backports DXVK updates for older GPUs lacking Vulkan 1.3 support |
-| **GPLAsync (Async)** | Reduces stuttering by rendering frames before shaders compile |
-| **Arm64ec**  | Optimized for FEX to enhance performance (Use with FEX only)   |
-
 | Build |  |
 |-------|:------:|
 | [**DXVK**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK) |  <a href="https://github.com/doitsujin/dxvk">🔗</a> |
@@ -30,6 +24,12 @@ Nightly builds use the YYMMDD filename format
 | [**DXVK-GPLAsync**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC) |  <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
 | [**DXVK-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-ARM64EC) |   |
 | [**DXVK-GPLAsync-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) |   |
+
+| Type       | Description                                                   |
+|--------------|---------------------------------------------------------------|
+| **Sarek**    | Backports DXVK updates for older GPUs lacking Vulkan 1.3 support |
+| **GPLAsync (Async)** | Reduces stuttering by rendering frames before shaders compile |
+| **Arm64ec**  | Optimized for FEX to enhance performance (Use with FEX only)   |
 <br>
 
 ## 🌌 VKD3D-Proton
@@ -37,6 +37,10 @@ Nightly builds use the YYMMDD filename format
 |-------|:------:|
 | [**VKD3D-Proton**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON) |  <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
 | [**VKD3D-Proton-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) |   |
+
+| Type       | Description                                                   |
+|--------------|---------------------------------------------------------------|
+| **Arm64ec**  | Optimized for FEX to enhance performance (Use with FEX only)   |
 <br>
 
 ## 📦 Runtime Packages
