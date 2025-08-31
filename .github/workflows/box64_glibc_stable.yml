@@ -1,9 +1,9 @@
 name: Build Box64 Glibc Stable
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:              # Manual trigger (works on any branch)
   schedule:
-    - cron: "0 18 * * *"   # daily (UTC)
+    - cron: "0 18 * * *"         # Daily (UTC)
 
 permissions:
   contents: write
@@ -21,11 +21,11 @@ jobs:
       tag:  ${{ steps.tag.outputs.tag }}
       base: ${{ steps.tag.outputs.base }}
     steps:
-      - name: Install tools (jq, curl)
+      - name: Install tools (jq, curl)  # Minimal, no cache
         run: |
           set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y jq curl
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
 
       - name: Resolve latest upstream stable tag (robust)
         id: tag
@@ -70,11 +70,9 @@ jobs:
         run: |
           set -Eeuo pipefail
           API="https://api.github.com"
-          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-          ver=(-H "Accept: application/vnd.github+json")
           want="box64-${BASE}.wcp"
-
-          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' \
+                -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
                 "$API/repos/${REPO}/releases/tags/BOX64-STABLE" || true)"
           if [ "$HTTP" = "200" ] && jq -e --arg W "$want" '.assets[]?.name == $W' /tmp/rel.json >/dev/null; then
             echo "build=false" >> "$GITHUB_OUTPUT"
@@ -99,7 +97,6 @@ jobs:
           make_latest: true
           body: |
             🤖 Automated BOX64-STABLE builds. (0.3.6+)
-            
             Current: ${{ needs.resolve-latest.outputs.base }}
 
   build-and-append:
@@ -108,11 +105,12 @@ jobs:
     if: needs.gate.outputs.build == 'true'
     runs-on: ubuntu-24.04-arm
     steps:
-      - name: Install build tools
+      - name: Install build tools (minimal, no recommends)
         run: |
           set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y jq curl git cmake ninja-build build-essential zstd
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends \
+            git cmake ninja-build build-essential zstd file jq curl ca-certificates binutils unzip gh
 
       - name: Checkout upstream Box64 at tag
         uses: actions/checkout@v4
@@ -121,14 +119,25 @@ jobs:
           ref: ${{ needs.resolve-latest.outputs.tag }}
           submodules: recursive
           path: src
+          fetch-depth: 1
 
-      - name: Compile Box64 (glibc)
+      - name: Configure & build (glibc, Ninja)
         run: |
           set -Eeuo pipefail
-          cd src
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -G Ninja
-          cmake --build build -j"$(nproc)"
-          cd ..
+          cmake -S src -B src/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build src/build -j"$(nproc)"
+
+      - name: Strip binary (safe; keep needed symbols)  # Size-only optimization; no perf impact
+        run: |
+          set -Eeuo pipefail
+          BIN="src/build/box64"
+          [[ -f "$BIN" ]] || { echo "::error::Missing binary: $BIN"; exit 1; }
+          if command -v llvm-strip >/dev/null 2>&1; then
+            llvm-strip --strip-unneeded "$BIN"
+          else
+            strip --strip-unneeded "$BIN"
+          fi
+          file "$BIN"
 
       - name: Package Box64 WCP (lowercase filename)
         env:
@@ -141,21 +150,22 @@ jobs:
           cp src/build/box64 Box64_WCP/box64
           chmod +x Box64_WCP/box64 || true
 
+          # Build profile.json via jq to keep JSON valid and shell-proof
           jq -n \
             --arg VER "${BASE}" \
             --arg DESC "${DESC}" \
-            --argjson VC 0 \
+            --arg TARGET '${localbin}/box64' \
             '{
               type: "Box64",
               versionName: $VER,
-              versionCode: $VC,
+              versionCode: 0,
               description: $DESC,
-              files: [{ source: "box64", target: "${localbin}/box64" }]
+              files: [{ source: "box64", target: $TARGET }]
             }' > Box64_WCP/profile.json
 
           (cd Box64_WCP && tar --zstd -cf "../artifacts/box64-${BASE}.wcp" profile.json box64)
 
-      - name: Upload asset (accumulate)
+      - name: Upload asset (accumulate to BOX64-STABLE)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "BOX64-STABLE"
