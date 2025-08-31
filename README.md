@@ -6,7 +6,7 @@
 
 
 ## ⚙️ FEXCore & Box64
-Nightly - YYMMDD
+Nightlies use the YYMMDD format and get built every week
 | Type | Build | 📜 |
 |:------:|:------:|:------:|
 | FEXCore | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
