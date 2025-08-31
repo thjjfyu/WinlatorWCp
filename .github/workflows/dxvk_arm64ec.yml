@@ -21,7 +21,7 @@ jobs:
   guard:
     name: Fast guard (detect new DXVK tag)
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     outputs:
       build: ${{ steps.decide.outputs.build }}
     steps:
@@ -92,6 +92,7 @@ jobs:
           sudo apt-get -yq install --no-install-recommends \
             curl xz-utils jq ca-certificates \
             git meson ninja-build glslang-tools pkg-config \
+            pkg-config-aarch64-linux-gnu \
             build-essential python3 zstd gh
 
       - name: Ensure glslang (--vn) is available               # DXVK shader includes require --vn
@@ -119,6 +120,7 @@ jobs:
           curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
           sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+          export PATH="$TOOLCHAIN_DIR/bin:$PATH"   # ensure toolchain comes first
 
       - name: Create Meson cross files (GCC-first; safe fallbacks)  # arm64ec (64-bit) + i686 (32-bit)
         run: |
@@ -130,9 +132,8 @@ jobs:
           A_AR=$(pick arm64ec-w64-mingw32-ar arm64ec-w64-mingw32-ar)
           A_CC=$(pick arm64ec-w64-mingw32-gcc arm64ec-w64-mingw32-clang)
           A_CXX=$(pick arm64ec-w64-mingw32-g++ arm64ec-w64-mingw32-clang++)
-          A_LD=$(pick arm64ec-w64-mingw32-ld ld.lld)
           A_RC=$(pick arm64ec-w64-mingw32-windres llvm-rc)
-          A_STRIP=$(pick arm64ec-w64-mingw32-strip strip)
+          A_STRIP=$(pick arm64ec-w64-mingw32-strip llvm-strip)
           A_WIDL=$(pick arm64ec-w64-mingw32-widl widl)
           A_PKG=$(pick aarch64-linux-gnu-pkg-config pkg-config)
 
@@ -140,9 +141,8 @@ jobs:
           I_AR=$(pick i686-w64-mingw32-ar i686-w64-mingw32-ar)
           I_CC=$(pick i686-w64-mingw32-gcc i686-w64-mingw32-clang)
           I_CXX=$(pick i686-w64-mingw32-g++ i686-w64-mingw32-clang++)
-          I_LD=$(pick i686-w64-mingw32-ld ld.lld)
           I_RC=$(pick i686-w64-mingw32-windres llvm-rc)
-          I_STRIP=$(pick i686-w64-mingw32-strip strip)
+          I_STRIP=$(pick i686-w64-mingw32-strip llvm-strip)
           I_PKG=$(pick i686-w64-mingw32-pkg-config pkg-config)
 
           cat > "${{ github.workspace }}/arm64ec.cross" <<EOF
@@ -150,11 +150,10 @@ jobs:
           ar = '${A_AR}'
           c = '${A_CC}'
           cpp = '${A_CXX}'
-          ld = '${A_LD}'
           windres = '${A_RC}'
           strip = '${A_STRIP}'
           widl = '${A_WIDL}'
-          pkg-config = '${A_PKG}'
+          pkgconfig = '${A_PKG}'
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
@@ -167,10 +166,9 @@ jobs:
           ar = '${I_AR}'
           c = '${I_CC}'
           cpp = '${I_CXX}'
-          ld = '${I_LD}'
           windres = '${I_RC}'
           strip = '${I_STRIP}'
-          pkg-config = '${I_PKG}'
+          pkgconfig = '${I_PKG}'
           [host_machine]
           system = 'windows'
           cpu_family = 'x86'
@@ -267,7 +265,15 @@ jobs:
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
 
-            jq -n --arg VN "${base}" --argjson VC 0 --arg DESC "DXVK arm64ec build by Ari" \
+            # versionCode 계산: X.Y.Z -> X*10000 + Y*100 + Z
+            IFS=. read -r MA MI PA <<<"${base//[^0-9.]/}"
+            VC=$((10#$MA*10000 + 10#$MI*100 + 10#${PA:-0}))
+
+            # 재현성: 태그 커밋 타임으로 타임스탬프 고정
+            export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct "$tag")"
+
+            # profile.json 생성 (항상 포함, 플레이스홀더는 그대로 보존)
+            jq -n --arg VN "${base}" --argjson VC "$VC" --arg DESC "DXVK arm64ec build by Ari" \
                   --arg SYS '${system32}/' --arg WOW '${syswow64}/' \
                   --slurpfile x64 /tmp/x64.json --slurpfile x86 /tmp/x86.json '
               ($x64[0] // []) as $A | ($x86[0] // []) as $B |
@@ -276,11 +282,13 @@ jobs:
                          ($B[]? | {source:("syswow64/"+.), target:($WOW+.)}) ] }' \
               > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
 
-            # Pack WCP (reproducible-ish tar settings)
+            # WCP 패키징: profile.json + 폴더 포함 (정렬/소유자 고정으로 재현성 강화)
             tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
+              --sort=name \
               -cf "${OUT}/dxvk-arm64ec-${base}.wcp" profile.json system32 syswow64
+
             echo "::endgroup::"
-          done < "$LIST"   # Ensure the loop reads the list
+          done < "$LIST"
 
       - name: Build release notes (minimal)                    # Mention current if any artifacts were created
         run: |
