@@ -207,8 +207,21 @@ jobs:
             command -v ${f}-w64-mingw32-windres >/dev/null || \
               sed -i "s/windres = .*/windres = 'llvm-rc'/" "${{ github.workspace }}/$f.cross"
           done
-          command -v llvm-strip >/dev/null || \
-            sed -i "s/^strip.*/strip = '${f}-w64-mingw32-strip'/" "${{ github.workspace }}/x86_64.cross" "${{ github.workspace }}/i686.cross"
+          
+          # Prefer llvm-strip; if missing, fall back per triplet (or plain strip as last resort)
+          if ! command -v llvm-strip >/dev/null; then
+            if command -v x86_64-w64-mingw32-strip >/dev/null; then
+              sed -i "s/^[[:space:]]*strip.*/strip = 'x86_64-w64-mingw32-strip'/" "${{ github.workspace }}/x86_64.cross"
+            else
+              sed -i "s/^[[:space:]]*strip.*/strip = 'strip'/" "${{ github.workspace }}/x86_64.cross"
+            fi
+            if command -v i686-w64-mingw32-strip >/dev/null; then
+              sed -i "s/^[[:space:]]*strip.*/strip = 'i686-w64-mingw32-strip'/" "${{ github.workspace }}/i686.cross"
+            else
+              sed -i "s/^[[:space:]]*strip.*/strip = 'strip'/" "${{ github.workspace }}/i686.cross"
+            fi
+          fi
+
 
       # ───────────── Source & tag selection ─────────────
       - name: Clone DXVK (tags + submodules)                  # Full tag list required for multi-version loop
