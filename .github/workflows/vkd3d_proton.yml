@@ -1,9 +1,9 @@
-name: Build VKD3D-proton
+name: Build VKD3D v2
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:              # Manual trigger (any branch)
   schedule:
-    - cron: "0 18 * * *" # daily (UTC)
+    - cron: "0 18 * * *"         # Daily (UTC)
 
 permissions:
   contents: write
@@ -23,14 +23,16 @@ jobs:
     timeout-minutes: 60
     env:
       VKD3D_REPO: HansKristian-Work/vkd3d-proton
-      TOOLCHAIN_DIR: /opt/llvm-mingw
+      TOOLCHAIN_DIR: ${{ runner.temp }}/llvm-mingw        # Use runner temp to avoid sudo/permission issues
       PREFIX_X64: ${{ github.workspace }}/stage-x86_64
       PREFIX_X86: ${{ github.workspace }}/stage-i686
       RELEASE_TAG: VKD3D-PROTON
       GH_TOKEN: ${{ github.token }}
 
     steps:
-      # ── 0) Resolve latest upstream "release" tag quickly (API-first) ───────
+      # ───────────────────────────────────────────────────────────────────
+      # 0) Resolve upstream version (API-first; tag fallback)
+      # ───────────────────────────────────────────────────────────────────
       - name: Resolve latest upstream version (release → tag fallback)
         id: tag
         run: |
@@ -41,18 +43,14 @@ jobs:
           ua=(-H "User-Agent: ${GITHUB_REPOSITORY:-vkd3d-proton-stable-workflow}")
           fetch() { curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ver[@]}" "${ua[@]}" "$1"; }
 
-          # Prefer official latest non-prerelease release
           tag="$(fetch "$API/releases/latest" | jq -r 'select(.prerelease==false) | .tag_name // empty')"
-          # Fallback to newest non-prerelease from releases list
           if [[ -z "$tag" ]]; then
             tag="$(fetch "$API/releases?per_page=20" | jq -r '[ .[] | select(.prerelease==false) ][0].tag_name // empty')"
           fi
-          # Final fallback: latest annotated tag v*
           if [[ -z "$tag" ]]; then
             tag="$(git ls-remote --tags https://github.com/${{ env.VKD3D_REPO }}.git 'refs/tags/v*' \
                    | awk -F/ '{print $3}' | sed 's/\^{}//' | grep -E '^v[0-9]+' | sort -V | tail -n1)"
           fi
-
           [[ -z "$tag" ]] && { echo "::notice::No upstream version found; exit clean."; exit 0; }
 
           base="${tag#v}"
@@ -60,7 +58,9 @@ jobs:
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "Resolved: tag=$tag base=$base"
 
-      # ── 1) Fast skip: if the same version asset already exists, stop here ──
+      # ───────────────────────────────────────────────────────────────────
+      # 1) Early dupe guard (skip heavy work if asset already uploaded)
+      # ───────────────────────────────────────────────────────────────────
       - name: Skip if same-version asset exists (early exit)
         id: dupe
         if: steps.tag.outputs.tag != ''
@@ -75,26 +75,28 @@ jobs:
                  -H "Authorization: Bearer ${GH_TOKEN}" \
                  -H "Accept: application/vnd.github+json" \
                  "https://api.github.com/repos/${REPO}/releases/tags/${{ env.RELEASE_TAG }}" || true)"
-          if [[ "$http" == "200" ]] && jq -e --arg W "$want" '.assets[]?.name == $W' /tmp/rel.json >/dev/null; then
+          if [[ "$http" == "200" ]] && jq -e --arg W "$want" 'any(.assets[]?; .name==$W)' /tmp/rel.json >/dev/null; then
             echo "skip=true"  >> "$GITHUB_OUTPUT"
             echo "::notice::Found ${want} in ${RELEASE_TAG}; skipping."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── 2) Install deps only if we actually need to build ──────────────────
+      # ───────────────────────────────────────────────────────────────────
+      # 2) Install deps only if we actually need to build
+      # ───────────────────────────────────────────────────────────────────
       - name: Install prerequisites (meson/ninja/widl/glslang)
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         run: |
           set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends \
             curl xz-utils jq ca-certificates git \
             build-essential pkg-config ninja-build meson \
             zstd file rsync libvulkan-dev \
             wine64-tools glslang-tools gh
 
-      - name: Install llvm-mingw (ucrt, ubuntu x86_64) [cached URL via API]
+      - name: Install llvm-mingw (ucrt; Ubuntu x86_64 asset)
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -107,21 +109,30 @@ jobs:
           url="$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)"
           [[ -n "$url" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
           curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
-          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
+          tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
+      - name: Verify toolchain in PATH
+        if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
+        run: |
+          which x86_64-w64-mingw32-gcc
+          x86_64-w64-mingw32-gcc --version
+          which llvm-strip || true
+
+      # ───────────────────────────────────────────────────────────────────
+      # 3) Cross files (x86_64 / i686) with safe fallbacks
+      # ───────────────────────────────────────────────────────────────────
       - name: Create Meson cross files (x86_64 / i686)
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         run: |
           cat > "${{ github.workspace }}/x86_64.cross" << 'EOF'
           [binaries]
-          c = 'x86_64-w64-mingw32-gcc'
-          cpp = 'x86_64-w64-mingw32-g++'
-          ar = 'x86_64-w64-mingw32-ar'
-          ld = 'x86_64-w64-mingw32-ld'
-          windres = 'x86_64-w64-mingw32-windres'
-          widl = 'widl'
-          strip = 'strip'
+          c        = 'x86_64-w64-mingw32-gcc'
+          cpp      = 'x86_64-w64-mingw32-g++'
+          ar       = 'x86_64-w64-mingw32-ar'
+          windres  = 'x86_64-w64-mingw32-windres'
+          widl     = 'widl'
+          strip    = 'llvm-strip'
           pkg-config = 'pkg-config'
           [host_machine]
           system = 'windows'
@@ -134,13 +145,12 @@ jobs:
 
           cat > "${{ github.workspace }}/i686.cross" << 'EOF'
           [binaries]
-          c = 'i686-w64-mingw32-gcc'
-          cpp = 'i686-w64-mingw32-g++'
-          ar = 'i686-w64-mingw32-ar'
-          ld = 'i686-w64-mingw32-ld'
-          windres = 'i686-w64-mingw32-windres'
-          widl = 'widl'
-          strip = 'strip'
+          c        = 'i686-w64-mingw32-gcc'
+          cpp      = 'i686-w64-mingw32-g++'
+          ar       = 'i686-w64-mingw32-ar'
+          windres  = 'i686-w64-mingw32-windres'
+          widl     = 'widl'
+          strip    = 'llvm-strip'
           pkg-config = 'pkg-config'
           [host_machine]
           system = 'windows'
@@ -151,7 +161,19 @@ jobs:
           needs_exe_wrapper = true
           EOF
 
-      # ── 3) Checkout & Build (only when needed) ─────────────────────────────
+          # Fallbacks: keep build flowing if some tools are missing
+          for f in x86_64 i686; do
+            command -v ${f}-w64-mingw32-windres >/dev/null || \
+              sed -i "s/^windres[[:space:]]*=.*/windres = 'llvm-rc'/" "${{ github.workspace }}/$f.cross"
+            command -v ${f}-w64-mingw32-widl >/dev/null || \
+              sed -i "s/^widl[[:space:]]*=.*/widl = 'widl'/" "${{ github.workspace }}/$f.cross"
+          done
+          command -v llvm-strip >/dev/null || \
+            sed -i "s/^strip[[:space:]]*=.*/strip = 'strip'/" "${{ github.workspace }}/x86_64.cross" "${{ github.workspace }}/i686.cross"
+
+      # ───────────────────────────────────────────────────────────────────
+      # 4) Checkout & build (strip via Meson; no extra strip pass)
+      # ───────────────────────────────────────────────────────────────────
       - name: Checkout source at tag
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         uses: actions/checkout@v4
@@ -176,6 +198,7 @@ jobs:
           meson setup build.x64 \
             --cross-file "${GITHUB_WORKSPACE}/x86_64.cross" \
             --buildtype release \
+            -Dstrip=true \
             --prefix "${PREFIX_X64}"
           ninja -C build.x64 -j"$(nproc)"
           meson install -C build.x64
@@ -184,6 +207,7 @@ jobs:
           meson setup build.x86 \
             --cross-file "${GITHUB_WORKSPACE}/i686.cross" \
             --buildtype release \
+            -Dstrip=true \
             --prefix "${PREFIX_X86}"
           ninja -C build.x86 -j"$(nproc)"
           meson install -C build.x86
@@ -191,24 +215,32 @@ jobs:
           # Collect only d3d12 / d3d12core
           mkdir -p "${GITHUB_WORKSPACE}/VKD3D_WCP/system32" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"
 
-          copy_one() {
-            local f="$1" pref="$2" dest="$3"
-            for src in "$pref/bin/$f" "$pref/lib/$f" "$pref/usr/bin/$f"; do
-              [ -f "$src" ] && cp -v "$src" "$dest/" && return 0
+          copy_one() { # $1=dll, $2=prefix, $3=dest
+            for src in "$2/bin/$1" "$2/lib/$1" "$2/usr/bin/$1"; do
+              [[ -f "$src" ]] && cp -v "$src" "$3/" && return 0
             done
             return 1
           }
           copy_one d3d12.dll     "${PREFIX_X64}" "${GITHUB_WORKSPACE}/VKD3D_WCP/system32" || true
           copy_one d3d12core.dll "${PREFIX_X64}" "${GITHUB_WORKSPACE}/VKD3D_WCP/system32" || true
-          copy_one d3d12.dll     "${PREFIX_X86}" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64" || true
-          copy_one d3d12core.dll "${PREFIX_X86}" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64" || true
+          copy_one d3d12.dll     "${PREFIX_X86}" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"  || true
+          copy_one d3d12core.dll "${PREFIX_X86}" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"  || true
 
+          # Fail early if nothing was produced; also log counts for debugging
+          if ! compgen -G "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/*.dll" >/dev/null \
+             && ! compgen -G "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/*.dll" >/dev/null; then
+            echo "::error::No DLLs produced (check toolchain/cross files)"; exit 1
+          fi
+          echo "system32 DLLs: $(ls -1 "${GITHUB_WORKSPACE}/VKD3D_WCP/system32"/*.dll 2>/dev/null | wc -l || true)"
+          echo "syswow64 DLLs: $(ls -1 "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"/*.dll 2>/dev/null | wc -l || true)"
+
+          # Build profile.json (versionCode fixed 0; versionName includes base)
           FILES_JSON="/tmp/files.json"; jq -n '[]' > "$FILES_JSON"
           add_file() { jq --arg s "$1" --arg t "$2" '. + [{source:$s, target:$t}]' "$FILES_JSON" > /tmp/.j && mv /tmp/.j "$FILES_JSON"; }
-          [ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/d3d12.dll"     ] && add_file "system32/d3d12.dll"     '${system32}/d3d12.dll'
-          [ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/d3d12core.dll" ] && add_file "system32/d3d12core.dll" '${system32}/d3d12core.dll'
-          [ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/d3d12.dll"     ] && add_file "syswow64/d3d12.dll"     '${syswow64}/d3d12.dll'
-          [ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/d3d12core.dll" ] && add_file "syswow64/d3d12core.dll" '${syswow64}/d3d12core.dll'
+          [[ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/d3d12.dll"     ]] && add_file "system32/d3d12.dll"     '${system32}/d3d12.dll'
+          [[ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/d3d12core.dll" ]] && add_file "system32/d3d12core.dll" '${system32}/d3d12core.dll'
+          [[ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/d3d12.dll"     ]] && add_file "syswow64/d3d12.dll"     '${syswow64}/d3d12.dll'
+          [[ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/d3d12core.dll" ]] && add_file "syswow64/d3d12core.dll" '${syswow64}/d3d12core.dll'
 
           jq -n \
             --arg VN "proton-${{ steps.tag.outputs.base }}" \
@@ -223,7 +255,9 @@ jobs:
               -cf "${GITHUB_WORKSPACE}/vkd3d-proton-${{ steps.tag.outputs.base }}.wcp" \
               profile.json system32 syswow64
 
-      # ── 4) Release/update body + upload asset (accumulate) ─────────────────
+      # ───────────────────────────────────────────────────────────────────
+      # 5) Release/update body + upload asset (accumulate)
+      # ───────────────────────────────────────────────────────────────────
       - name: Ensure release (fixed tag; keep “Current” up to date)
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         env:
@@ -238,7 +272,7 @@ jobs:
             gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -n "${BODY}"
           fi
 
-      - name: Upload asset (versioned, accumulate)
+      - name: Upload asset (versioned; clobber same name)
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         env:
           REPO: ${{ github.repository }}
