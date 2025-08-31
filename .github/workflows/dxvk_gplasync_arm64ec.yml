@@ -180,7 +180,7 @@ jobs:
           A_CC=$(pick arm64ec-w64-mingw32-gcc arm64ec-w64-mingw32-clang)
           A_CXX=$(pick arm64ec-w64-mingw32-g++ arm64ec-w64-mingw32-clang++)
           A_RC=$(pick arm64ec-w64-mingw32-windres llvm-rc)
-          A_STRIP=$(pick arm64ec-w64-mingw32-strip llvm-strip)
+          A_STRIP=$(pick llvm-strip arm64ec-w64-mingw32-strip)
           A_WIDL=$(pick arm64ec-w64-mingw32-widl widl)
           A_PKG=$(pick aarch64-linux-gnu-pkg-config pkg-config)
 
@@ -189,7 +189,7 @@ jobs:
           I_CC=$(pick i686-w64-mingw32-gcc i686-w64-mingw32-clang)
           I_CXX=$(pick i686-w64-mingw32-g++ i686-w64-mingw32-clang++)
           I_RC=$(pick i686-w64-mingw32-windres llvm-rc)
-          I_STRIP=$(pick i686-w64-mingw32-strip llvm-strip)
+          I_STRIP=$(pick llvm-strip i686-w64-mingw32-strip)
           I_PKG=$(pick i686-w64-mingw32-pkg-config pkg-config)
 
           cat > "${{ github.workspace }}/arm64ec.cross" <<EOF
