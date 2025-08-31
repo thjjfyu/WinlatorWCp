@@ -1,1 +1,420 @@
+name: Build DXVK-Sarek ARM64EC
 
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *"   # Daily (UTC)
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: Fast guard (new Sarek tag?)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      SAREK_REPO: pythonlover02/DXVK-Sarek
+      RELEASE_TAG: DXVK-SAREK-ARM64EC
+    steps:
+      - name: Install jq, curl
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends jq curl
+
+      - name: Collect already-published versions
+        id: have
+        run: |
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+                  "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
+          if [ "$HTTP" = "200" ]; then
+            jq -r '.assets[].name' /tmp/rel.json \
+              | sed -n -E 's/^dxvk-sarek-arm64ec-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
+              | sort -V > /tmp/exist.txt
+          else
+            : > /tmp/exist.txt
+          fi
+          echo "Existing:"; cat /tmp/exist.txt || true
+
+      - name: Detect any missing tag (API-only)
+        id: detect
+        env:
+          MIN_VER: "1.10.8"
+        run: |
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+
+          curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${SAREK_REPO}/tags?per_page=100" \
+            | jq -r '.[].name' \
+            | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            | sort -V > /tmp/tags.txt
+
+          awk -v MIN="${MIN_VER}" '
+            function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
+              for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1}return 0}
+            { base=substr($0,2); if (cmp(base,MIN)>=0) print base }
+          ' /tmp/tags.txt > /tmp/candidates.txt
+
+          echo "Candidates (>= ${MIN_VER}):"; cat /tmp/candidates.txt || true
+
+          echo -n "no" > /tmp/missing.flag
+          while read -r base; do
+            [ -n "$base" ] || continue
+            if ! grep -Fxq "$base" /tmp/exist.txt; then
+              echo "MISSING: $base"
+              echo -n "yes" > /tmp/missing.flag
+              break
+            fi
+          done < /tmp/candidates.txt
+
+          [ "$(cat /tmp/missing.flag)" = "yes" ] && echo "missing=true"  >> "$GITHUB_OUTPUT" || echo "missing=false" >> "$GITHUB_OUTPUT"
+
+      - name: Decide build
+        id: decide
+        run: |
+          if [ "${{ steps.detect.outputs.missing }}" = "true" ]; then
+            echo "build=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-and-release:
+    name: Build & release DXVK-Sarek (ARM64EC + 32-bit)
+    runs-on: ubuntu-24.04
+    needs: guard
+    if: needs.guard.outputs.build == 'true'
+    env:
+      SAREK_REPO: pythonlover02/DXVK-Sarek
+      PREFIX_X64: ${{ github.workspace }}/dist-arm64ec   # system32 (ARM64EC)
+      PREFIX_X86: ${{ github.workspace }}/dist-x86       # syswow64 (i686)
+      TOOLCHAIN_DIR: ${{ runner.temp }}/llvm-mingw-ec
+      RELEASE_TAG: DXVK-SAREK-ARM64EC
+      GH_TOKEN: ${{ github.token }}
+      TOOLCHAIN_REPO: bylaws/llvm-mingw
+
+    steps:
+      - name: Install host tooling
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            curl xz-utils jq ca-certificates \
+            git meson ninja-build glslang-tools pkg-config \
+            build-essential python3 zstd file rsync gh
+
+      - name: Ensure glslang (--vn) available
+        run: |
+          cat > /tmp/min.comp <<'GLSL'
+          #version 450
+          void main() {}
+          GLSL
+          have() { command -v "$1" >/dev/null 2>&1 || return 1; "$1" --quiet --target-env vulkan1.3 --vn testvar -o /tmp/min.h /tmp/min.comp; }
+          if have glslang; then :
+          elif have glslangValidator; then
+            BIN="$HOME/.local/bin"; mkdir -p "$BIN"
+            ln -sf "$(command -v glslangValidator)" "$BIN/glslang"
+            echo "$BIN" >> "$GITHUB_PATH"
+          else
+            echo "::error::No glslang/glslangValidator with working --vn"; exit 1
+          fi
+
+      - name: Download & extract LLVM-MinGW (ARM64EC toolchain)
+        run: |
+          set -Eeuo pipefail
+          api="https://api.github.com/repos/${TOOLCHAIN_REPO}/releases/latest"
+          json="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$api")"
+          url="$(echo "$json" | jq -r '
+            .assets[]
+            | select(.name|test("(?i)(linux|ubuntu).*(x86_64|amd64).*(arm64ec).*(\\.tar\\.(zst|xz))$"))
+            | .browser_download_url
+          ' | head -n1)"
+          if [ -z "$url" ]; then
+            echo "::error::ARM64EC toolchain asset not found in ${TOOLCHAIN_REPO} latest release"; exit 1
+          fi
+          mkdir -p "$TOOLCHAIN_DIR"
+          tmp="/tmp/llvm-mingw-arm64ec.tar"
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o "${tmp}"
+          if file "${tmp}" | grep -qi 'zstandard'; then
+            tar -C "$TOOLCHAIN_DIR" --strip-components=1 --zstd -xf "${tmp}"
+          else
+            tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf "${tmp}"
+          fi
+          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain in PATH (arm64ec + i686)
+        run: |
+          set -Eeuo pipefail
+          (which arm64ec-w64-mingw32-clang || which arm64ec-w64-mingw32-gcc)
+          (arm64ec-w64-mingw32-clang --version || arm64ec-w64-mingw32-gcc --version)
+          which i686-w64-mingw32-gcc
+          i686-w64-mingw32-gcc --version
+          which llvm-strip || true
+          which llvm-rc || true
+
+      - name: Clone DXVK-Sarek (main + submodules)
+        run: |
+          git clone --recurse-submodules https://github.com/${SAREK_REPO}.git src
+          cd src
+          git fetch --tags --force
+          git fetch origin Sarek --force
+
+      - name: Resolve Sarek tags (v1.10.8 → latest; Async 제외) & compute NEW to build
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          cd src
+          # Sarek 브랜치에 병합된 태그만 대상으로 (Async 제외 목적)
+          git tag --merged origin/Sarek -l 'v*' \
+            | sort -V \
+            | awk '
+                function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
+                  for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1}return 0}
+                {ver=substr($0,2); if (cmp(ver,"1.10.8")>=0) print $0}
+              ' > "${GITHUB_WORKSPACE}/versions.txt"
+
+          : > "${GITHUB_WORKSPACE}/to_build.txt"
+
+          EXIST="/tmp/exist.txt"; : > "$EXIST"
+          if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh api repos/"${REPO}"/releases/tags/"${RELEASE_TAG}" \
+              | jq -r '.assets[].name' \
+              | sed -n -E 's/^dxvk-sarek-arm64ec-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
+              | sort -V > "$EXIST" || true
+          fi
+
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            base="${tag#v}"
+            if ! grep -Fxq "$base" "$EXIST"; then
+              echo "$tag $base" >> "${GITHUB_WORKSPACE}/to_build.txt"
+            fi
+          done < "${GITHUB_WORKSPACE}/versions.txt"
+
+          echo "Candidates:";       cat "${GITHUB_WORKSPACE}/versions.txt" || true
+          echo "Already uploaded:"; cat "$EXIST" || true
+          echo "To build:";         cat "${GITHUB_WORKSPACE}/to_build.txt" || true
+
+      - name: Ensure cross files prefer llvm-strip (and windres fallback)
+        working-directory: src
+        run: |
+          set -Eeuo pipefail
+          for f in build-win32.txt; do
+            [ -f "$f" ] || continue
+            if grep -q '^[[:space:]]*strip[[:space:]]*=' "$f"; then
+              sed -i "s|^[[:space:]]*strip[[:space:]]*=.*|strip = 'llvm-strip'|" "$f" || true
+            else
+              sed -i "/^\[binaries\]/a strip = 'llvm-strip'" "$f" || true
+            fi
+            if ! command -v i686-w64-mingw32-windres >/dev/null; then
+              sed -i "s|^[[:space:]]*windres[[:space:]]*=.*|windres = 'llvm-rc'|" "$f" || true
+            fi
+          done
+
+      - name: Prepare ARM64EC Meson cross file
+        working-directory: src
+        run: |
+          set -Eeuo pipefail
+          cat > build-arm64ec.txt <<'EOF'
+          [binaries]
+          c = 'arm64ec-w64-mingw32-clang'
+          cpp = 'arm64ec-w64-mingw32-clang++'
+          ar = 'arm64ec-w64-mingw32-ar'
+          strip = 'llvm-strip'
+          windres = 'arm64ec-w64-mingw32-windres'
+          widl = 'arm64ec-w64-mingw32-widl'
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          EOF
+          if ! command -v arm64ec-w64-mingw32-clang >/dev/null 2>&1; then
+            sed -i "s/clang'/gcc'/g; s/clang\+\+'$/g++'/" build-arm64ec.txt
+          fi
+          command -v arm64ec-w64-mingw32-windres >/dev/null 2>&1 || \
+            sed -i "s|windres = '.*'|windres = 'llvm-rc'|" build-arm64ec.txt
+
+      - name: Build NEW versions only (DXVK-Sarek → WCP) + compat patches + clean retag
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          set -Eeuo pipefail
+          OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
+          cd "${GITHUB_WORKSPACE}/src"
+
+          LIST="${GITHUB_WORKSPACE}/to_build.txt"
+          if [[ ! -f "$LIST" || ! -s "$LIST" ]]; then
+            echo "No new versions to build."; exit 0; fi
+
+          while read -r tag base; do
+            echo "::group::Build ${tag} (dxvk-sarek ARM64EC + 32-bit)"
+            git checkout -f "$tag"
+            git submodule update --init --recursive --checkout
+
+            # Minimal compat fixes (원본 유지)
+            hdr="src/d3d9/d3d9_include.h"
+            if [[ -f "$hdr" ]]; then
+              for sym in _D3DDEVINFO_RESOURCEMANAGER _D3DDEVINFO_D3D9PIPELINETIMINGS _D3DDEVINFO_VCACHE _D3DDEVINFO_PRIVATEDATA _D3DDEVINFO_VERTEXSTATS; do
+                if grep -q "typedef struct ${sym}" "$hdr"; then
+                  awk -v pat="typedef struct ${sym}" 'BEGIN{drop=0}
+                    index($0, pat){drop=1; next}
+                    drop==1 && /\}[[:space:]]*[^;]*;[[:space:]]*$/ {drop=0; next}
+                    drop==0 {print}' "$hdr" > "$hdr.new" && mv "$hdr.new" "$hdr"
+                fi
+              done
+            fi
+
+            hdr2="src/d3d11/d3d11_texture.h"
+            if [[ -f "$hdr2" ]] && grep -qE 'constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource' "$hdr2"; then
+              sed -i -E 's/static[[:space:]]+constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource[[:space:]]*=[[:space:]]*D3D11_MAP\(-1u\);/inline static const D3D11_MAP UnmappedSubresource = (D3D11_MAP)0xFFFFFFFFu;/' "$hdr2" || true
+            fi
+
+            # HUD retag
+            git config user.name  "ci"
+            git config user.email "ci@local"
+            git config --global --add safe.directory "$(pwd)"
+            git add -A
+            git commit -m "local compat patches for ${base}" || true
+            git tag -d "$tag" || true
+            git tag -a "$tag" -m "clean retag for HUD version"
+            git reset --hard HEAD
+            git clean -xdf
+
+            # Clean previous artifacts
+            rm -rf "${GITHUB_WORKSPACE}/build.ec" "${GITHUB_WORKSPACE}/build.w32" \
+                   "${PREFIX_X64}" "${PREFIX_X86}" \
+                   "${GITHUB_WORKSPACE}/DXVK_WCP"
+
+            # ARM64EC (system32)
+            meson setup "${GITHUB_WORKSPACE}/build.ec" \
+              --cross-file build-arm64ec.txt \
+              --buildtype release \
+              --prefix "${PREFIX_X64}" \
+              -Dbuild_id=false -Dstrip=true \
+              -Dc_args='-Wno-nontrivial-memcall' \
+              -Dcpp_args='-Wno-nontrivial-memcall'
+            ninja -C "${GITHUB_WORKSPACE}/build.ec" -j"$(nproc)"
+            meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.ec"
+
+            # 32-bit (syswow64)
+            meson setup "${GITHUB_WORKSPACE}/build.w32" \
+              --cross-file build-win32.txt \
+              --buildtype release \
+              --prefix "${PREFIX_X86}" \
+              -Dbuild_id=false -Dstrip=true \
+              -Dc_args='-Wno-nontrivial-memcall' \
+              -Dcpp_args='-Wno-nontrivial-memcall'
+            ninja -C "${GITHUB_WORKSPACE}/build.w32" -j"$(nproc)"
+            meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.w32"
+
+            # Layout WCP (ARM64EC → system32, i686 → syswow64)
+            mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
+            cp -v "${PREFIX_X64}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
+            cp -v "${PREFIX_X86}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
+
+            (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x64.txt || true
+            (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x86.txt || true
+            if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
+              echo "::error::No DLLs discovered for ${base}"; exit 1; fi
+
+            jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
+            jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
+
+            # ⚠ profile.json 내용은 사용자가 준 워크플로우와 동일하게 유지
+            jq -n \
+              --arg VN "sarek-${base}" \
+              --argjson VC 0 \
+              --arg DESC "DXVK-Sarek arm64ec build by Ari" \
+              --arg SYS '${system32}/' \
+              --arg WOW '${syswow64}/' \
+              --slurpfile x64 /tmp/x64.json \
+              --slurpfile x86 /tmp/x86.json \
+              '
+              ($x64[0] // []) as $A |
+              ($x86[0] // []) as $B |
+              {
+                type: "DXVK",
+                versionName: $VN,
+                versionCode: $VC,
+                description: $DESC,
+                files: [
+                  ($A[]? | {source: ("system32/"+.), target: ($SYS + .)}),
+                  ($B[]? | {source: ("syswow64/"+.), target: ($WOW + .)})
+                ]
+              }' > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
+
+            mkdir -p "${GITHUB_WORKSPACE}/out"
+            wcp="dxvk-sarek-arm64ec-${base}.wcp"
+            # ⚠ WCP 패키지 구성도 원본과 동일(system32 + syswow64 + profile.json)
+            tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd \
+                --format=gnu --owner=0 --group=0 --numeric-owner \
+                -cf "${GITHUB_WORKSPACE}/out/${wcp}" profile.json system32 syswow64
+            echo "::endgroup::"
+          done < "$LIST"
+
+      - name: Build release notes (with Current)
+        run: |
+          set -Eeuo pipefail
+          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          printf '🤖 Automated DXVK-Sarek arm64ec builds (1.10.8+).\n\n' > "$NOTES"
+          cat "$NOTES"
+
+      - name: Create/Update GitHub Release (DXVK-SAREK-ARM64EC) + upload new WCPs
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          RELEASE_TAG="${RELEASE_TAG}"
+
+          printf '🤖 Automated DXVK-Sarek arm64ec builds (1.10.8+).\n\n' > "$NOTES"
+          cur=""
+          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-sarek-arm64ec-*.wcp" > /dev/null; then
+            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-sarek-arm64ec-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
+            cur="${latest#dxvk-sarek-arm64ec-}"; cur="${cur%.wcp}"
+          else
+            if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+              assets_json="$(gh api repos/${REPO}/releases/tags/${RELEASE_TAG})"
+              mapfile -t list < <(
+                echo "$assets_json" \
+                | jq -r '.assets[].name' \
+                | grep -E '^dxvk-sarek-arm64ec-.*\.wcp$' \
+                | LC_ALL=C sort -V
+              )
+              if ((${#list[@]} > 0)); then
+                latest="${list[-1]}"
+                cur="${latest#dxvk-sarek-arm64ec-}"; cur="${cur%.wcp}"
+              fi
+            fi
+          fi
+          [[ -n "$cur" ]] && echo "Current: ${cur}" >> "$NOTES"
+
+          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
+          else
+            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
+          fi
+
+          if compgen -G "${GITHUB_WORKSPACE}/out/*.wcp" > /dev/null; then
+            gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
+          else
+            echo "No new WCP files to upload."
+          fi
