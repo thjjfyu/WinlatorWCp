@@ -1,4 +1,4 @@
-name: Build DXVK
+name: Build DXVK v2
 
 on:
   workflow_dispatch:              # Manual trigger (any branch)
@@ -25,6 +25,11 @@ jobs:
     outputs:
       build: ${{ steps.decide.outputs.build }}
     steps:
+      - name: Install jq, curl (minimal)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends jq curl ca-certificates
+
       - name: Resolve upstream latest tag (DXVK)            # Prefer release tag; fallback to highest v* tag
         id: upstream
         env:
@@ -42,18 +47,22 @@ jobs:
           [[ -z "$LATEST" ]] && { echo "::error::No upstream tag found"; exit 1; }
           echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve current mirrored highest version in DXVK release  # Read existing assets to compare
+      - name: Resolve current mirrored highest version in DXVK release  # API-only (no gh dependency)
         id: local
         env:
           GH_TOKEN: ${{ github.token }}
           REPO:     ${{ github.repository }}
         run: |
-          CUR=""
-          if gh release view "DXVK" --repo "$REPO" >/dev/null 2>&1; then
-            CUR="$(gh api repos/$REPO/releases/tags/DXVK \
-                 | jq -r '.assets[].name' \
-                 | sed -n -E 's/^dxvk-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
-                 | sort -V | tail -n1)"
+          API="https://api.github.com/repos/${REPO}/releases/tags/DXVK"
+          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" "$API" || true)"
+          if [ "$HTTP" = "200" ]; then
+            CUR="$(jq -r '.assets[].name' /tmp/rel.json \
+              | sed -n -E 's/^dxvk-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
+              | sort -V | tail -n1)"
+          else
+            CUR=""
           fi
           echo "cur=${CUR}" >> "$GITHUB_OUTPUT"
           echo "Current: ${CUR:-<none>}"
@@ -67,9 +76,11 @@ jobs:
           if [[ -z "$CUR" ]]; then
             echo "build=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          dpkg --compare-versions "$up_base" gt "$CUR" && {
-            echo "build=true"  >> "$GITHUB_OUTPUT"; echo "New upstream ($up_base) > current ($CUR): build"; exit 0; }
-          echo "build=false" >> "$GITHUB_OUTPUT"; echo "No newer upstream: skip"
+          if dpkg --compare-versions "$up_base" gt "$CUR"; then
+            echo "build=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
 
   build-and-release:
     name: Build & release missing DXVK versions
@@ -119,7 +130,7 @@ jobs:
           sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
-      - name: Create Meson cross files (clang toolchain; no ccache)  # Basic cross settings for both archs
+      - name: Create Meson cross files (clang; llvm-strip first with robust fallbacks)
         run: |
           cat > "${{ github.workspace }}/x86_64.cross" << 'EOF'
           [binaries]
@@ -127,13 +138,15 @@ jobs:
           c = 'x86_64-w64-mingw32-clang'
           cpp = 'x86_64-w64-mingw32-clang++'
           windres = 'x86_64-w64-mingw32-windres'
-          strip = 'x86_64-w64-mingw32-strip'
+          strip = 'llvm-strip'
           pkg-config = 'pkg-config'
           [host_machine]
           system = 'windows'
           cpu_family = 'x86_64'
           cpu = 'x86_64'
           endian = 'little'
+          [properties]
+          needs_exe_wrapper = true
           EOF
           cat > "${{ github.workspace }}/i686.cross" << 'EOF'
           [binaries]
@@ -141,18 +154,34 @@ jobs:
           c = 'i686-w64-mingw32-clang'
           cpp = 'i686-w64-mingw32-clang++'
           windres = 'i686-w64-mingw32-windres'
-          strip = 'i686-w64-mingw32-strip'
+          strip = 'llvm-strip'
           pkg-config = 'pkg-config'
           [host_machine]
           system = 'windows'
           cpu_family = 'x86'
           cpu = 'i686'
           endian = 'little'
+          [properties]
+          needs_exe_wrapper = true
           EOF
+          # windres → llvm-rc if triplet tool missing
           for f in x86_64 i686; do
             command -v ${f}-w64-mingw32-windres >/dev/null || \
-              sed -i "s/windres = .*/windres = 'llvm-rc'/" "${{ github.workspace }}/$f.cross"
+              sed -i "s/^[[:space:]]*windres.*/windres = 'llvm-rc'/" "${{ github.workspace }}/$f.cross"
           done
+          # strip: prefer llvm-strip; fall back per file, then plain strip
+          if ! command -v llvm-strip >/dev/null; then
+            if command -v x86_64-w64-mingw32-strip >/dev/null; then
+              sed -i "s/^[[:space:]]*strip.*/strip = 'x86_64-w64-mingw32-strip'/" "${{ github.workspace }}/x86_64.cross"
+            else
+              sed -i "s/^[[:space:]]*strip.*/strip = 'strip'/" "${{ github.workspace }}/x86_64.cross"
+            fi
+            if command -v i686-w64-mingw32-strip >/dev/null; then
+              sed -i "s/^[[:space:]]*strip.*/strip = 'i686-w64-mingw32-strip'/" "${{ github.workspace }}/i686.cross"
+            else
+              sed -i "s/^[[:space:]]*strip.*/strip = 'strip'/" "${{ github.workspace }}/i686.cross"
+            fi
+          fi
 
       - name: Clone DXVK (tags + submodules)                # Full tag list required for multi-version loop
         run: |
@@ -196,7 +225,7 @@ jobs:
           echo "Already uploaded:"; cat "$EXIST" || true
           echo "To build:";         cat "${GITHUB_WORKSPACE}/to_build.txt" || true
 
-      - name: Build NEW versions only (DXVK → WCP)           # Loop build; basic strip via Meson
+      - name: Build NEW versions only (DXVK → WCP)           # Loop build; Meson -Dstrip=true performs DLL strip
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
@@ -213,12 +242,15 @@ jobs:
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
 
-            # Optional compatibility tweaks (kept, guarded by pattern checks)
+            # Optional compatibility tweaks (guarded by pattern checks)
             hdr="src/d3d9/d3d9_include.h"
             if [[ -f "$hdr" ]]; then
               for sym in _D3DDEVINFO_RESOURCEMANAGER _D3DDEVINFO_D3D9PIPELINETIMINGS _D3DDEVINFO_VCACHE _D3DDEVINFO_PRIVATEDATA _D3DDEVINFO_VERTEXSTATS; do
                 if grep -q "typedef struct ${sym}" "$hdr"; then
-                  awk -v pat="typedef struct ${sym}" 'BEGIN{drop=0} index($0, pat){drop=1; next} drop==1 && /\}[[:space:]]*[^;]*;[[:space:]]*$/ {drop=0; next} drop==0 {print}' "$hdr" > "$hdr.new" && mv "$hdr.new" "$hdr"
+                  awk -v pat="typedef struct ${sym}" 'BEGIN{drop=0}
+                    index($0, pat){drop=1; next}
+                    drop==1 && /\}[[:space:]]*[^;]*;[[:space:]]*$/ {drop=0; next}
+                    drop==0 {print}' "$hdr" > "$hdr.new" && mv "$hdr.new" "$hdr"
                 fi
               done
             fi
@@ -229,7 +261,7 @@ jobs:
 
             ver="${tag#v}"
 
-            # Fresh build per arch (enable Meson strip to remove unneeded symbols)
+            # Fresh build per arch
             rm -rf "${GITHUB_WORKSPACE}/build.x64" "${GITHUB_WORKSPACE}/build.x86" \
                    "${GITHUB_WORKSPACE}/dist-x64"  "${GITHUB_WORKSPACE}/dist-x86" \
                    "${GITHUB_WORKSPACE}/DXVK_WCP"
@@ -246,11 +278,13 @@ jobs:
             ninja -C "${GITHUB_WORKSPACE}/build.x86" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x86"
 
+            # Layout WCP (x64 → system32, x86 → syswow64)
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
             cp -v "${PREFIX_X64}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
             cp -v "${PREFIX_X86}/bin/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
 
-            # NOTE: Secondary strip pass removed to avoid duplicate work (Meson -Dstrip=true already applied)
+            # Reproducible timestamps from tag commit
+            export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct "$tag")"
 
             # Collect file lists and generate profile.json
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x64.txt || true
@@ -271,6 +305,7 @@ jobs:
 
             mkdir -p "${GITHUB_WORKSPACE}/out"
             tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
+                --sort=name \
                 -cf "${GITHUB_WORKSPACE}/out/dxvk-${ver}.wcp" profile.json system32 syswow64
             echo "::endgroup::"
           done < "$LIST"
