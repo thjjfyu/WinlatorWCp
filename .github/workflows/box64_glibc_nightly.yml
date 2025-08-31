@@ -1,9 +1,9 @@
 name: Build Box64 Glibc Nightly
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:              # Manual trigger (works on any branch)
   schedule:
-    - cron: "0 18 * * 0"   # weekly (UTC, every Sunday)
+    - cron: "0 18 * * 0"         # Weekly (UTC, every Sunday)
 
 permissions:
   contents: write
@@ -17,15 +17,15 @@ jobs:
     name: Resolve upstream HEAD (commit)
     runs-on: ubuntu-latest
     outputs:
-      sha:   ${{ steps.upstream.outputs.sha }}
-      short: ${{ steps.upstream.outputs.short }}
+      sha:      ${{ steps.upstream.outputs.sha }}
+      short:    ${{ steps.upstream.outputs.short }}
       datecode: ${{ steps.datecode.outputs.code }}
     steps:
-      - name: Install tools (jq, curl)
+      - name: Install tools (jq, curl)  # Minimal, no cache
         run: |
           set -Eeuo pipefail
-          sudo apt-get update
-          sudo apt-get install -y jq curl
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
 
       - name: Resolve upstream Box64 HEAD SHA (robust)
         id: upstream
@@ -52,7 +52,7 @@ jobs:
           echo "short=${short}" >> "$GITHUB_OUTPUT"
           echo "Upstream ${default_branch} @ ${short}"
 
-      - name: Decide date code (YYMMDD, KST)
+      - name: Decide date code (YYMMDD, KST)  # Stable, timezone-anchored
         id: datecode
         run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
 
@@ -62,8 +62,8 @@ jobs:
     runs-on: ubuntu-24.04-arm
 
     steps:
-      # --- 초경량 가드: 커밋 동일 시 즉시 종료 (설치 전에) ---
-      - name: Skip if same upstream commit already released
+      # --- ultra-fast guard: skip early if the same upstream commit is already released ---
+      - name: Skip if same upstream commit already released (API-based)
         id: guard_commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -71,29 +71,30 @@ jobs:
           SHA:      ${{ needs.resolve-latest.outputs.sha }}
         run: |
           set -Eeuo pipefail
-          BODY="$(gh release view BOX64-NIGHTLY --repo "$REPO" --json body --jq '.body' 2>/dev/null || true)"
-          if echo "$BODY" | grep -q "commit/${SHA}"; then
+          API="https://api.github.com/repos/${REPO}/releases/tags/BOX64-NIGHTLY"
+          HTTP="$(curl -s -o /tmp/release.json -w '%{http_code}' \
+                   -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$API" || true)"
+          if [ "$HTTP" = "200" ] && jq -e --arg S "$SHA" '.body | contains($S)' /tmp/release.json >/dev/null; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Same upstream commit already released; skipping."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # 동일 날짜 자산 중복 방지(보호막)
+      # --- prevent duplicated asset when the same datecode exists ---
       - name: Skip if same-date asset exists
         id: dupe
         if: steps.guard_commit.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
+          GH_TOKEN:  ${{ github.token }}
+          REPO:      ${{ github.repository }}
+          DATECODE:  ${{ needs.resolve-latest.outputs.datecode }}
         run: |
           set -Eeuo pipefail
           API="https://api.github.com"
-          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-          ver=(-H "Accept: application/vnd.github+json")
           FILENAME="box64-nightly-${DATECODE}.wcp"
-          HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+          HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' \
+                  -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
                   "$API/repos/${REPO}/releases/tags/BOX64-NIGHTLY" || true)"
           if [ "$HTTP" = "200" ] && jq -e --arg N "$FILENAME" '.assets[]?.name == $N' /tmp/nightly.json >/dev/null; then
             echo "skip=true"  >> "$GITHUB_OUTPUT"
@@ -102,12 +103,14 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install build tools
+      - name: Install build tools (minimal, no recommends)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
-          sudo apt-get update
-          sudo apt-get install -y jq zstd wget curl git cmake ninja-build build-essential gh
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends \
+            git cmake ninja-build build-essential zstd file jq curl unzip ca-certificates \
+            gh binutils
 
       - name: Checkout upstream Box64 (exact commit)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
@@ -119,14 +122,26 @@ jobs:
           path: src
           fetch-depth: 1
 
-      - name: Compile Box64 (glibc)
+      - name: Configure & build (glibc, Ninja)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
-          cd src
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -G Ninja
-          cmake --build build -j"$(nproc)"
-          cd ..
+          cmake -S src -B src/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build src/build -j"$(nproc)"
+
+      - name: Strip binary (safe; keep needed symbols)
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+        run: |
+          set -Eeuo pipefail
+          BIN="src/build/box64"
+          [[ -f "$BIN" ]] || { echo "::error::Missing binary: $BIN"; exit 1; }
+          # Prefer llvm-strip if available, fallback to GNU strip
+          if command -v llvm-strip >/dev/null 2>&1; then
+            llvm-strip --strip-unneeded "$BIN"
+          else
+            strip --strip-unneeded "$BIN"
+          fi
+          file "$BIN"
 
       - name: Package WCP (lowercase filename)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
@@ -148,10 +163,7 @@ jobs:
             "versionCode": ${VER},
             "description": "${DESC}",
             "files": [
-              {
-                "source": "box64",
-                "target": "\${localbin}/box64"
-              }
+              { "source": "box64", "target": "\${localbin}/box64" }
             ]
           }
           JSON
@@ -199,5 +211,5 @@ jobs:
               echo "Deleted asset id=$id"
             done
           else
-            echo "::notice::Asset count $count (<=5); nothing to delete."
+            echo "::notice::Asset count $count (≤5); nothing to delete."
           fi
