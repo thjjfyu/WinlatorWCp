@@ -265,19 +265,17 @@ jobs:
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
 
-            # versionCode 계산: X.Y.Z -> X*10000 + Y*100 + Z
-            IFS=. read -r MA MI PA <<<"${base//[^0-9.]/}"
-            VC=$((10#$MA*10000 + 10#$MI*100 + 10#${PA:-0}))
+            VC=0
 
             # 재현성: 태그 커밋 타임으로 타임스탬프 고정
             export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct "$tag")"
 
             # profile.json 생성 (항상 포함, 플레이스홀더는 그대로 보존)
-            jq -n --arg VN "${base}" --argjson VC "$VC" --arg DESC "DXVK arm64ec build by Ari" \
+            jq -n --arg VN "arm64ec-${base}" --argjson VC "$VC" --arg DESC "DXVK arm64ec build by Ari" \
                   --arg SYS '${system32}/' --arg WOW '${syswow64}/' \
                   --slurpfile x64 /tmp/x64.json --slurpfile x86 /tmp/x86.json '
               ($x64[0] // []) as $A | ($x86[0] // []) as $B |
-              { type:"DXVK-ARM64EC", versionName:$VN, versionCode:$VC, description:$DESC,
+              { type:"DXVK", versionName:$VN, versionCode:$VC, description:$DESC,
                 files: [ ($A[]? | {source:("system32/"+.), target:($SYS+.)}),
                          ($B[]? | {source:("syswow64/"+.), target:($WOW+.)}) ] }' \
               > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
