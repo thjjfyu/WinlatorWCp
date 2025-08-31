@@ -1,5 +1,4 @@
-# .github/workflows/build-turnip.yml
-name: Build Turnip Driver
+name: Build Turnip Driver (freedreno-latest, on-demand)
 
 on:
   workflow_dispatch:
@@ -15,42 +14,102 @@ on:
 
 permissions:
   contents: write
+  actions: write   # repo variable 업데이트용
 
 defaults:
   run:
     shell: bash -Eeuo pipefail {0}
 
+env:
+  GITLAB_API: https://gitlab.freedesktop.org/api/v4
+  MESA_PATH: mesa/mesa
+
 jobs:
+  guard-freedreno:
+    name: Detect latest freedreno commit
+    runs-on: ubuntu-24.04
+    outputs:
+      changed:   ${{ steps.decide.outputs.changed }}
+      free_sha:  ${{ steps.free.outputs.sha }}
+      free_short:${{ steps.free.outputs.short }}
+      prev_sha:  ${{ steps.prev.outputs.prev }}
+    steps:
+      - name: Install gh & jq
+        run: |
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends gh jq curl ca-certificates
+
+      - name: Read previously built freedreno SHA (repo variable)
+        id: prev
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          prev="$(gh variable get MESA_LAST_FREEDRENO_SHA -R "$REPO" -q .value 2>/dev/null || true)"
+          echo "Previous freedreno SHA: ${prev:-<none>}"
+          echo "prev=${prev}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve latest commit touching src/freedreno/**
+        id: free
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }} # 선택(없어도 OK, 레이트리밋 완화)
+        run: |
+          set -Eeuo pipefail
+          UA="gha-turnip/${GITHUB_RUN_ID:-0} (+https://github.com/${GITHUB_REPOSITORY})"
+          PROJ_ENC="${MESA_PATH//\//%2F}"
+          HDR=(-A "$UA" -H "Accept: application/json")
+          [ -n "${GITLAB_TOKEN:-}" ] && HDR+=(-H "PRIVATE-TOKEN: ${GITLAB_TOKEN}")
+          # 최신 main에서 freedreno 경로에 영향 준 커밋 1개만
+          url="${GITLAB_API}/projects/${PROJ_ENC}/repository/commits?ref_name=main&per_page=1&path=src%2Ffreedreno"
+          json="$(curl -fsSL "${HDR[@]}" "$url")"
+          sha="$(echo "$json" | jq -r '.[0].id')"
+          [ -n "$sha" ] || { echo "::error::Failed to resolve freedreno latest commit"; exit 1; }
+          echo "sha=$sha"          >> "$GITHUB_OUTPUT"
+          echo "short=${sha:0:9}"  >> "$GITHUB_OUTPUT"
+          echo "Latest freedreno SHA: $sha"
+
+      - name: Decide build (prev != freedreno latest)
+        id: decide
+        run: |
+          set -Eeuo pipefail
+          prev="${{ steps.prev.outputs.prev }}"
+          head="${{ steps.free.outputs.sha }}"
+          if [ -z "$prev" ] || [ "$prev" != "$head" ]; then
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    name: Build & Package Turnip (Android aarch64)
+    needs: guard-freedreno
+    if: needs.guard-freedreno.outputs.changed == 'true'
     runs-on: ubuntu-24.04
     env:
-      NDK_PKG: ${{ inputs.ndk_pkg }}
+      # Inputs
+      NDK_PKG:   ${{ inputs.ndk_pkg }}
       API_LEVEL: ${{ inputs.api_level }}
-      WORKDIR: ${{ github.workspace }}/turnip_workdir
+      # Mesa
+      MESA_PATH: ${{ env.MESA_PATH }}
+      FREE_SHA:  ${{ needs.guard-freedreno.outputs.free_sha }}
+      # Work
+      WORKDIR:   ${{ github.workspace }}/turnip_workdir
       META_FILE: meta.json
       DRIVER_FILE: vulkan.turnip.so
-      # Mesa official GitLab
-      GITLAB_API: https://gitlab.freedesktop.org/api/v4
-      MESA_PATH: mesa/mesa
       NDK_URL: https://dl.google.com/android/repository/${{ inputs.ndk_pkg }}-linux.zip
-      # Optional: provide a token to reduce API 403s (optional)
-      # GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
-
     steps:
       - name: Checkout (for versioning only)
         uses: actions/checkout@v4
 
-      # System deps (Meson via pip)
-      - name: Install system dependencies (without meson)
+      - name: Install system dependencies
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y \
-            build-essential \
-            ninja-build ccache clang lld llvm git \
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends \
+            build-essential ninja-build ccache clang lld llvm git \
             patchelf unzip curl xz-utils ca-certificates \
             python3 python3-pip python3-mako \
-            flex bison zip jq \
-            glslang-tools vulkan-tools
+            flex bison zip jq glslang-tools vulkan-tools gh
 
       - name: Install Meson >= 1.4 via pip (user)
         run: |
@@ -59,89 +118,11 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           meson --version
 
-      - name: Show tool versions
-        run: |
-          clang --version || true
-          meson --version || true
-          ninja --version || true
-          git --version || true
-          python3 --version || true
-          jq --version || true
-
-      - name: Resolve Mesa latest release tag from GitLab (numeric max, with git verify)
-        id: latest
-        run: |
-          set -Eeuo pipefail
-          UA="gha-turnip/${GITHUB_RUN_ID:-0} (+https://github.com/${GITHUB_REPOSITORY})"
-          PROJ_ENC="${MESA_PATH//\//%2F}"
-          API_HDRS=(-A "$UA")
-          if [ -n "${GITLAB_TOKEN:-}" ]; then
-            API_HDRS+=(-H "PRIVATE-TOKEN: ${GITLAB_TOKEN}")
-          fi
-
-          TAG=""
-
-          # 1) Releases API: highest mesa-x.y.z
-          if REL_JSON="$(curl -fsSL "${API_HDRS[@]}" \
-                "${GITLAB_API}/projects/${PROJ_ENC}/releases?per_page=100" 2>/dev/null || true)"; then
-            TAG="$(printf '%s\n' "$REL_JSON" \
-                  | jq -r '.[].tag_name' \
-                  | grep -E '^mesa-[0-9]+\.[0-9]+\.[0-9]+$' \
-                  | sort -V \
-                  | tail -n1 || true)"
-          fi
-
-          # 2) Tags API fallback
-          if [ -z "${TAG:-}" ] || [ "${TAG}" = "null" ]; then
-            if TAGS_JSON="$(curl -fsSL "${API_HDRS[@]}" \
-                  "${GITLAB_API}/projects/${PROJ_ENC}/repository/tags?per_page=200" 2>/dev/null || true)"; then
-              TAG="$(printf '%s\n' "$TAGS_JSON" \
-                    | jq -r '.[].name' \
-                    | grep -E '^mesa-[0-9]+\.[0-9]+\.[0-9]+$' \
-                    | sort -V \
-                    | tail -n1 || true)"
-            fi
-          fi
-
-          # 3) Final fallback: git ls-remote
-          if [ -z "${TAG:-}" ] || [ "${TAG}" = "null" ]; then
-            echo "API unavailable; falling back to git ls-remote…" >&2
-            TAG="$(git ls-remote --tags "https://gitlab.freedesktop.org/${MESA_PATH}.git" \
-                  | awk -F/ '/refs\/tags\/mesa-[0-9]+\.[0-9]+\.[0-9]+(\^\{\})?$/ {print $3}' \
-                  | sed 's/\^{}//' \
-                  | sort -V \
-                  | tail -n1 || true)"
-          fi
-
-          # 4) Verify against git's highest
-          if GIT_HIGHEST="$(git ls-remote --tags "https://gitlab.freedesktop.org/${MESA_PATH}.git" \
-                | awk -F/ '/refs\/tags\/mesa-[0-9]+\.[0-9]+\.[0-9]+(\^\{\})?$/ {print $3}' \
-                | sed 's/\^{}//' \
-                | sort -V \
-                | tail -n1 || true)"; then
-            if [ -n "$GIT_HIGHEST" ] && [ "$GIT_HIGHEST" != "$TAG" ]; then
-              echo "Overriding TAG ($TAG) -> git highest ($GIT_HIGHEST)"
-              TAG="$GIT_HIGHEST"
-            fi
-          fi
-
-          if [ -z "${TAG:-}" ] || [ "${TAG}" = "null" ]; then
-            echo "::error::Failed to resolve Mesa latest tag"
-            exit 1
-          fi
-
-          VER="${TAG#mesa-}"
-          echo "Resolved tag: $TAG (ver=$VER)"
-          {
-            echo "tag=$TAG"
-            echo "ver=$VER"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: ccache-${{ runner.os }}-${{ env.NDK_PKG }}-api${{ env.API_LEVEL }}-${{ steps.latest.outputs.tag }}
+          key: ccache-${{ runner.os }}-${{ env.NDK_PKG }}-api${{ env.API_LEVEL }}-${{ needs.guard-freedreno.outputs.free_short }}
           restore-keys: |
             ccache-${{ runner.os }}-
 
@@ -159,8 +140,7 @@ jobs:
           rm -rf "$WORKDIR"
           mkdir -p "$WORKDIR/src" "$WORKDIR/out"
 
-      # Crucial: prevent host pkg-config poisoning the cross build
-      - name: Sanitize pkg-config for cross (disable host detection)
+      - name: Sanitize pkg-config for cross
         run: |
           {
             echo "PKG_CONFIG=/bin/false"
@@ -175,34 +155,27 @@ jobs:
           curl -fL --retry 3 --retry-delay 2 -o "${NDK_PKG}.zip" "$NDK_URL"
           unzip -q "${NDK_PKG}.zip"
 
-      - name: Download Mesa (official GitLab archive of latest tag)
+      - name: Download Mesa (archive at freedreno commit)
         working-directory: ${{ env.WORKDIR }}/src
-        env:
-          MESA_TAG: ${{ steps.latest.outputs.tag }}
         run: |
           PROJ_LAST="${MESA_PATH##*/}"  # "mesa"
-          ARCH_URL="https://gitlab.freedesktop.org/${MESA_PATH}/-/archive/${MESA_TAG}/${PROJ_LAST}-${MESA_TAG}.tar.gz"
+          ARCH_URL="https://gitlab.freedesktop.org/${MESA_PATH}/-/archive/${FREE_SHA}/${PROJ_LAST}-${FREE_SHA}.tar.gz"
           echo "ARCH_URL=$ARCH_URL"
-          curl -fL --retry 3 --retry-delay 2 -o "${PROJ_LAST}-${MESA_TAG}.tar.gz" "$ARCH_URL"
-          tar -xzf "${PROJ_LAST}-${MESA_TAG}.tar.gz"
-          echo "Extracted dirs:"
-          ls -1d ${PROJ_LAST}-* || true
+          curl -fL --retry 3 --retry-delay 2 -o "${PROJ_LAST}-${FREE_SHA}.tar.gz" "$ARCH_URL"
+          tar -xzf "${PROJ_LAST}-${FREE_SHA}.tar.gz"
+          echo "Extracted:"; ls -1d ${PROJ_LAST}-* || true
 
       - name: Locate extracted Mesa dir
         id: mesadir
         working-directory: ${{ env.WORKDIR }}/src
-        env:
-          MESA_TAG: ${{ steps.latest.outputs.tag }}
         run: |
           PROJ_LAST="${MESA_PATH##*/}"
-          d="${PROJ_LAST}-${MESA_TAG}"
-          if [ ! -d "$d" ]; then
-            d="$(ls -1d ${PROJ_LAST}-* | head -n1)"
-          fi
+          d="${PROJ_LAST}-${FREE_SHA}"
+          [ -d "$d" ] || d="$(ls -1d ${PROJ_LAST}-* | head -n1)"
           echo "dir=$d"
           echo "dir=$d" >> "$GITHUB_OUTPUT"
 
-      - name: Configure toolchain & cross files
+      - name: Configure toolchain & cross files (Android aarch64)
         working-directory: ${{ env.WORKDIR }}
         run: |
           NDK_BIN="$WORKDIR/${NDK_PKG}/toolchains/llvm/prebuilt/linux-x86_64/bin"
@@ -221,8 +194,8 @@ jobs:
           cat > android-aarch64.txt <<'EOF'
           [binaries]
           ar = '@NDK_BIN@/llvm-ar'
-          c = ['ccache', '@NDK_BIN@/aarch64-linux-android@API_LEVEL@-clang', '-Wno-deprecated-declarations', '-Wno-gnu-alignof-expression']
-          cpp = ['ccache', '@NDK_BIN@/aarch64-linux-android@API_LEVEL@-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-Wno-error=c++11-narrowing', '-Wno-deprecated-declarations', '-Wno-gnu-alignof-expression']
+          c = ['ccache', '@NDK_BIN@/aarch64-linux-android@API_LEVEL@-clang']
+          cpp = ['ccache', '@NDK_BIN@/aarch64-linux-android@API_LEVEL@-clang++']
           c_ld = '@NDK_BIN@/ld.lld'
           cpp_ld = '@NDK_BIN@/ld.lld'
           strip = '@NDK_BIN@/llvm-strip'
@@ -234,7 +207,6 @@ jobs:
           cpu = 'aarch64'
           endian = 'little'
           EOF
-
           sed -i "s|@NDK_BIN@|$NDK_BIN|g; s|@API_LEVEL@|${API_LEVEL}|g" android-aarch64.txt
 
           cat > native.txt <<'EOF'
@@ -251,15 +223,13 @@ jobs:
           endian = 'little'
           EOF
 
-      - name: Configure Meson (latest release; libarchive openssl off; no werror)
+      - name: Configure Meson (Android/Turnip, ThinLTO)
         working-directory: ${{ env.WORKDIR }}
         env:
-          MESA_VER: ${{ steps.latest.outputs.ver }}
-          MESA_ALLOW_WARNINGS: "1"    # allow warnings even in CI
-          CI: ""                      # prevent CI auto-werror heuristics
+          MESA_ALLOW_WARNINGS: "1"
+          CI: ""
         run: |
           MESA_SRC="$WORKDIR/src/${{ steps.mesadir.outputs.dir }}"
-          echo "MESA_SRC=$MESA_SRC"
           [ -d "$MESA_SRC" ] || { echo "No such dir: $MESA_SRC"; exit 1; }
 
           meson setup build-android-aarch64 "$MESA_SRC" \
@@ -288,37 +258,30 @@ jobs:
       - name: Collect artifact & build meta.json
         id: artifact
         working-directory: ${{ env.WORKDIR }}
-        env:
-          MESA_VER: ${{ steps.latest.outputs.ver }}
         run: |
           OUT_SO="build-android-aarch64/src/freedreno/vulkan/libvulkan_freedreno.so"
           test -f "$OUT_SO" || { echo "Build artifact not found: $OUT_SO"; exit 1; }
 
           cp "$OUT_SO" "$DRIVER_FILE"
+          SHORT="${{ needs.guard-freedreno.outputs.free_short }}"
 
-          # Extract Vulkan header version from Mesa tree
+          # Vulkan header version (for meta)
           MESA_SRC="$WORKDIR/src/${{ steps.mesadir.outputs.dir }}"
           HDR_FILE="$(find "$MESA_SRC" -type f -path '*/include/vulkan/vulkan_core.h' | head -n1 || true)"
           if [ -n "$HDR_FILE" ]; then
-            echo "Found Vulkan core header: $HDR_FILE"
             HDR_NUM="$(grep -E '^[[:space:]]*#define[[:space:]]+VK_HEADER_VERSION[[:space:]]+[0-9]+' "$HDR_FILE" | awk '{print $3}' | head -n1)"
           fi
           if [ -z "${HDR_NUM:-}" ]; then
             HDR_FILE2="$(find "$MESA_SRC" -type f -path '*/subprojects/*/include/vulkan/vulkan_core.h' | head -n1 || true)"
-            if [ -n "$HDR_FILE2" ]; then
-              echo "Found Vulkan core header (subprojects): $HDR_FILE2"
-              HDR_NUM="$(grep -E '^[[:space:]]*#define[[:space:]]+VK_HEADER_VERSION[[:space:]]+[0-9]+' "$HDR_FILE2" | awk '{print $3}' | head -n1)"
-            fi
+            [ -n "$HDR_FILE2" ] && HDR_NUM="$(grep -E '^[[:space:]]*#define[[:space:]]+VK_HEADER_VERSION[[:space:]]+[0-9]+' "$HDR_FILE2" | awk '{print $3}' | head -n1)"
           fi
           VK_VER="1.4.${HDR_NUM:-unknown}"
-          echo "Derived Vulkan header version: $VK_VER"
 
-          # meta.json
           cat > "$META_FILE" <<JSON
           {
             "schemaVersion": 1,
-            "name": "Turnip Driver v${MESA_VER}-STABLE",
-            "description": "",
+            "name": "Turnip Driver nightly (${SHORT})",
+            "description": "Turnip (freedreno) Vulkan driver built from Mesa main @ ${SHORT} (freedreno latest)",
             "author": "Ari",
             "packageVersion": "1",
             "vendor": "Mesa",
@@ -328,10 +291,21 @@ jobs:
           }
           JSON
 
-          OUT_ZIP="Turnip-${MESA_VER}-EMULATOR.zip"
+          OUT_ZIP="Turnip-nightly-freedreno-${SHORT}.zip"
           zip -q "$OUT_ZIP" "$DRIVER_FILE" "$META_FILE"
           echo "outzip=$WORKDIR/$OUT_ZIP" >> "$GITHUB_OUTPUT"
 
-      - name: Print output path (no artifact upload)
+      - name: Upload artifact (zip)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Turnip-nightly-freedreno-${{ needs.guard-freedreno.outputs.free_short }}
+          path: ${{ steps.artifact.outputs.outzip }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Persist latest freedreno SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:     ${{ github.repository }}
         run: |
-          echo "::notice file=Turnip::Created ${{ steps.artifact.outputs.outzip }}"
+          gh variable set MESA_LAST_FREEDRENO_SHA -R "$REPO" -b "${FREE_SHA}"
