@@ -18,30 +18,30 @@ Nightly - YYMMDD
 | Build | 📜 |
 |-------|:------:|
 | [**DXVK**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK) |  <a href="https://github.com/doitsujin/dxvk">🔗</a> |
-| [**DXVK-Sarek**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK) |  <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
-| [**DXVK-Sarek-Async**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK-ASYNC) |   |
-| DXVK-Sarek-ARM64EC |  |
-| DXVK-Sarek-Async-ARM64EC |  |
-| [**DXVK-GPLAsync**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC) |  <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
-| [**DXVK-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-ARM64EC) |   |
-| [**DXVK-GPLAsync-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) |   |
+| [**DXVK-sarek**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK) |  <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
+| [**DXVK-sarek-async**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK-ASYNC) |   |
+| DXVK-sarek-arm64ec |  |
+| DXVK-sarek-async-arm64ec |  |
+| [**DXVK-gplasync**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC) |  <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
+| [**DXVK-arm64ec**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-ARM64EC) |   |
+| [**DXVK-gplasync-arm64ec**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) |   |
 
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
-| **Sarek**    | Provides backports for GPUs that don’t support Vulkan 1.3 |
-| **GPLAsync** | Rendering frames before shader compilation = less stutter |
-| **Arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
+| **sarek**    | Provides backports for GPUs that don’t support Vulkan 1.3 |
+| **gplsync** | Rendering frames before shader compilation = less stutter |
+| **arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
 <br>
 
 ## 🌌 VKD3D-Proton
 | Build | 📜 |
 |-------|:------:|
-| [**VKD3D-Proton**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON) |  <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
-| [**VKD3D-Proton-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) |   |
+| [**VKD3D-proton**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON) |  <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
+| [**VKD3D-proton-arm64ec**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) |   |
 
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
-| **Arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
+| **arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
 <br>
 
 ## 📦 Runtime Packages
