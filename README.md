@@ -30,7 +30,7 @@
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
 | **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3 |
-| **gplsync** | Rendering frames before shader compilation = less stutter |
+| **gplasync** | Rendering frames before shader compilation = less stutter |
 | **arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
 <br>
 
