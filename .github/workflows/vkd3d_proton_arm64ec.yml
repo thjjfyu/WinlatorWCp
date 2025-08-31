@@ -1,4 +1,4 @@
-name: Build VKD3D-proton-arm64ec
+name: Build VKD3D arm64ec v2
 
 on:
   workflow_dispatch:              # Manual trigger (any branch)
@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 60
     env:
       VKD3D_REPO: HansKristian-Work/vkd3d-proton
-      TOOLCHAIN_DIR: /opt/llvm-mingw
+      TOOLCHAIN_DIR: ${{ runner.temp }}/llvm-mingw        # Use runner temp to avoid sudo/permission issues
       PREFIX_EC: ${{ github.workspace }}/stage-arm64ec
       PREFIX_X86: ${{ github.workspace }}/stage-i686
       RELEASE_TAG: VKD3D-PROTON-ARM64EC
@@ -32,7 +32,7 @@ jobs:
 
     steps:
       # ───────────────────────────────────────────────────────────────────
-      # 0) Resolve upstream version (fast; API-first, tag fallback)
+      # 0) Resolve upstream version (API-first; tag fallback)
       # ───────────────────────────────────────────────────────────────────
       - name: Resolve latest upstream version (release → tag)
         id: tag
@@ -75,7 +75,7 @@ jobs:
                 -H "Authorization: Bearer ${GH_TOKEN}" \
                 -H "Accept: application/vnd.github+json" \
                 "https://api.github.com/repos/${REPO}/releases/tags/${{ env.RELEASE_TAG }}" || true)"
-          if [[ "$HTTP" == "200" ]] && jq -e --arg W "$WANT" '.assets[]?.name == $W' /tmp/rel.json >/dev/null; then
+          if [[ "$HTTP" == "200" ]] && jq -e --arg W "$WANT" 'any(.assets[]?; .name==$W)' /tmp/rel.json >/dev/null; then
             echo "skip=true"  >> "$GITHUB_OUTPUT"
             echo "::notice::Found ${WANT} in ${{ env.RELEASE_TAG }}; skipping."
           else
@@ -97,7 +97,7 @@ jobs:
             wine64-tools glslang-tools gh \
             pkg-config-aarch64-linux-gnu  # provides aarch64-linux-gnu-pkg-config
 
-      - name: Install llvm-mingw (ucrt, ubuntu x86_64)
+      - name: Install llvm-mingw (ucrt; Ubuntu x86_64 asset)
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -110,24 +110,30 @@ jobs:
           url="$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)"
           [[ -n "$url" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
           curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
-          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
+          tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
-      # ───────────────────────────────────────────────────────────────────
-      # 3) Cross files (ARM64EC guide prioritized) + safety fallbacks
-      # ───────────────────────────────────────────────────────────────────
-      - name: Create Meson cross files (arm64ec / i686)  # per guide + guards
+      - name: Verify toolchain in PATH
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         run: |
-          # ARM64EC: follow guide strictly; prefer triplet tools from llvm-mingw
+          which arm64ec-w64-mingw32-gcc
+          arm64ec-w64-mingw32-gcc --version
+          which llvm-strip || true
+
+      # ───────────────────────────────────────────────────────────────────
+      # 3) Cross files (ARM64EC prioritized) + safety fallbacks
+      # ───────────────────────────────────────────────────────────────────
+      - name: Create Meson cross files (arm64ec / i686)
+        if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
+        run: |
+          # ARM64EC: prefer triplet tools from llvm-mingw; use llvm-strip for PE/COFF
           cat > "${{ github.workspace }}/arm64ec.cross" << 'EOF'
           [binaries]
           ar       = 'arm64ec-w64-mingw32-ar'
           c        = 'arm64ec-w64-mingw32-gcc'
           cpp      = 'arm64ec-w64-mingw32-g++'
-          ld       = 'arm64ec-w64-mingw32-ld'
           windres  = 'arm64ec-w64-mingw32-windres'
-          strip    = 'strip'
+          strip    = 'llvm-strip'
           widl     = 'arm64ec-w64-mingw32-widl'
           pkgconfig= 'aarch64-linux-gnu-pkg-config'
           [host_machine]
@@ -139,15 +145,14 @@ jobs:
           needs_exe_wrapper = true
           EOF
 
-          # i686 companion (32-bit) for syswow64 DLLs
+          # i686 companion (32-bit) for syswow64 DLLs; use llvm-strip
           cat > "${{ github.workspace }}/i686.cross" << 'EOF'
           [binaries]
           ar       = 'i686-w64-mingw32-ar'
           c        = 'i686-w64-mingw32-gcc'
           cpp      = 'i686-w64-mingw32-g++'
-          ld       = 'i686-w64-mingw32-ld'
           windres  = 'i686-w64-mingw32-windres'
-          strip    = 'strip'
+          strip    = 'llvm-strip'
           widl     = 'i686-w64-mingw32-widl'
           pkgconfig= 'pkg-config'
           [host_machine]
@@ -159,20 +164,23 @@ jobs:
           needs_exe_wrapper = true
           EOF
 
-          # Safety fallbacks (keep build flowing on rare tool gaps)
-          # 1) windres → llvm-rc
+          # Safety fallbacks to keep build flowing on rare tool gaps
           for f in arm64ec i686; do
+            # windres → llvm-rc if triplet windres is missing
             command -v ${f}-w64-mingw32-windres >/dev/null || \
               sed -i "s/^windres[[:space:]]*=.*/windres = 'llvm-rc'/" "${{ github.workspace }}/$f.cross"
           done
-          # 2) widl → host widl (wine) if triplet widl is absent
+          # widl → host widl (wine) if triplet widl is absent
           command -v arm64ec-w64-mingw32-widl >/dev/null || \
             sed -i "s/^widl[[:space:]]*=.*/widl = 'widl'/" "${{ github.workspace }}/arm64ec.cross"
           command -v i686-w64-mingw32-widl   >/dev/null || \
             sed -i "s/^widl[[:space:]]*=.*/widl = 'widl'/" "${{ github.workspace }}/i686.cross"
-          # 3) pkgconfig: fallback to generic pkg-config if aarch64 one is missing
+          # pkgconfig: fallback to generic pkg-config if aarch64 one is missing
           command -v aarch64-linux-gnu-pkg-config >/dev/null || \
             sed -i "s/^pkgconfig[[:space:]]*=.*/pkgconfig = 'pkg-config'/" "${{ github.workspace }}/arm64ec.cross"
+          # strip: if llvm-strip is missing, fallback to host strip (best-effort)
+          command -v llvm-strip >/dev/null || \
+            sed -i "s/^strip[[:space:]]*=.*/strip = 'strip'/" "${{ github.workspace }}/arm64ec.cross" "${{ github.workspace }}/i686.cross"
 
       # ───────────────────────────────────────────────────────────────────
       # 4) Checkout & build (Meson strip on; no extra strip pass)
@@ -229,11 +237,15 @@ jobs:
           copy_one d3d12.dll     "${PREFIX_X86}" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"  || true
           copy_one d3d12core.dll "${PREFIX_X86}" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"  || true
 
-          # Sanity check: at least one DLL should exist
+          # Sanity check: ensure at least one DLL exists
           if ! compgen -G "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/*.dll" >/dev/null \
              && ! compgen -G "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/*.dll" >/dev/null; then
             echo "::error::No DLLs produced (check toolchain/cross files)"; exit 1
           fi
+
+          # Log counts for easier debugging
+          echo "system32 DLLs: $(ls -1 "${GITHUB_WORKSPACE}/VKD3D_WCP/system32"/*.dll 2>/dev/null | wc -l || true)"
+          echo "syswow64 DLLs: $(ls -1 "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"/*.dll 2>/dev/null | wc -l || true)"
 
           # Build profile.json (versionCode fixed 0; versionName includes base)
           FILES_JSON="/tmp/files.json"; jq -n '[]' > "$FILES_JSON"
@@ -246,7 +258,7 @@ jobs:
           jq -n \
             --arg VN "proton-arm64ec-${{ steps.tag.outputs.base }}" \
             --argjson VC 0 \
-            --arg DESC "VKD3D-Proton-arm64ec build by Ari" \
+            --arg DESC "VKD3D-Proton-arm64ec build by GitHub Actions" \
             --slurpfile F "$FILES_JSON" \
             '{type:"VKD3D", versionName:$VN, versionCode:$VC, description:$DESC, files:($F[0]//[])}' \
             > "${GITHUB_WORKSPACE}/VKD3D_WCP/profile.json"
