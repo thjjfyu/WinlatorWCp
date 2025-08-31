@@ -30,7 +30,7 @@ Nightlies use the YYMMDD format and get built every week
 |--------------|---------------------------------------------------------------|
 | **Sarek**    | Backports DXVK updates for older GPUs lacking Vulkan 1.3 support |
 | **GPLAsync** | Reduces stuttering by rendering frames before shaders compile |
-| **Arm64ec**  | Optimized for FEX to enhance performance <br>(Use with FEX only)   |
+| **Arm64ec**  | Optimized for FEX to enhance performance (64bit) <br>(Use with FEX only)   |
 <br>
 
 ## 🌌 VKD3D-Proton
@@ -41,7 +41,7 @@ Nightlies use the YYMMDD format and get built every week
 
 | Type       | Description                                                   |
 |--------------|---------------------------------------------------------------|
-| **Arm64ec**  | Optimized for FEX to enhance performance <br>(Use with FEX only)   |
+| **Arm64ec**  | Optimized for FEX to enhance performance (64bit) <br>(Use with FEX only)   |
 <br>
 
 ## 📦 Runtime Packages
