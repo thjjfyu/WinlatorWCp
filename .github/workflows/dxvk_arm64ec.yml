@@ -1,16 +1,17 @@
 name: Build DXVK arm64ec
 
 on:
-  workflow_dispatch:              # Manual trigger (works on any branch)
+  workflow_dispatch:              # Manual trigger (any branch)
   schedule:
     - cron: "0 18 * * *"         # Daily (UTC)
 
 permissions:
   contents: write
 
+# Consistent, strict, fast shell; no caching anywhere
 defaults:
   run:
-    shell: 'bash --noprofile --norc -euo pipefail {0}'
+    shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,7 +25,7 @@ jobs:
     outputs:
       build: ${{ steps.decide.outputs.build }}
     steps:
-      - name: Resolve upstream latest tag (DXVK)  # Prefer release tag; fallback to highest v* tag
+      - name: Resolve upstream latest tag (DXVK)              # Prefer latest release; fallback to highest v* tag
         id: upstream
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,7 +42,7 @@ jobs:
           [[ -z "$LATEST" ]] && { echo "::error::No upstream tag found"; exit 1; }
           echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve current mirrored highest version (DXVK-ARM64EC)
+      - name: Resolve current mirrored highest version (DXVK-ARM64EC)  # Read existing assets to compare
         id: local
         env:
           GH_TOKEN: ${{ github.token }}
@@ -57,7 +58,7 @@ jobs:
           echo "cur=${CUR}" >> "$GITHUB_OUTPUT"
           echo "Current: ${CUR:-<none>}"
 
-      - name: Decide build  # Build only if upstream > current
+      - name: Decide build                                     # Build only if upstream > mirrored
         id: decide
         run: |
           UP="${{ steps.upstream.outputs.tag }}"
@@ -85,15 +86,15 @@ jobs:
       RELEASE_TAG: DXVK-ARM64EC
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Install host tooling (minimal; no cache)  # Keep runtime small
+      - name: Install host tooling (lean set; no cache)        # Minimal deps for cross-compile + packaging
         run: |
           sudo apt-get -yq update
           sudo apt-get -yq install --no-install-recommends \
             curl xz-utils jq ca-certificates \
             git meson ninja-build glslang-tools pkg-config \
-            build-essential python3 zstd file rsync unzip gh
+            build-essential python3 zstd gh
 
-      - name: Ensure glslang (--vn) is available  # DXVK build requirement
+      - name: Ensure glslang (--vn) is available               # DXVK shader includes require --vn
         run: |
           cat > /tmp/min.comp <<'GLSL'
           #version 450
@@ -109,7 +110,7 @@ jobs:
             echo "::error::No glslang/glslangValidator with working --vn"; exit 1
           fi
 
-      - name: Download llvm-mingw (ucrt, ubuntu x86_64)  # Provides arm64ec/i686 toolchains
+      - name: Download llvm-mingw (ucrt, ubuntu x86_64)        # Provides arm64ec/i686 clang toolchains
         run: |
           json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
           url=$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)
@@ -119,13 +120,13 @@ jobs:
           sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
-      - name: Create Meson cross files (no ccache)  # arm64ec (64-bit) + i686 (32-bit)
+      - name: Create Meson cross files (clang; no ccache)      # arm64ec (64-bit) + i686 (32-bit)
         run: |
           cat > "${{ github.workspace }}/arm64ec.cross" << 'EOF'
           [binaries]
           ar = 'arm64ec-w64-mingw32-ar'
-          c = 'arm64ec-w64-mingw32-gcc'
-          cpp = 'arm64ec-w64-mingw32-g++'
+          c = 'arm64ec-w64-mingw32-clang'
+          cpp = 'arm64ec-w64-mingw32-clang++'
           windres = 'arm64ec-w64-mingw32-windres'
           strip = 'arm64ec-w64-mingw32-strip'
           pkg-config = 'pkg-config'
@@ -139,8 +140,8 @@ jobs:
           cat > "${{ github.workspace }}/i686.cross" << 'EOF'
           [binaries]
           ar = 'i686-w64-mingw32-ar'
-          c = 'i686-w64-mingw32-gcc'
-          cpp = 'i686-w64-mingw32-g++'
+          c = 'i686-w64-mingw32-clang'
+          cpp = 'i686-w64-mingw32-clang++'
           windres = 'i686-w64-mingw32-windres'
           strip = 'i686-w64-mingw32-strip'
           pkg-config = 'pkg-config'
@@ -151,18 +152,18 @@ jobs:
           endian = 'little'
           EOF
 
-          # Fallbacks for rare tool absence (keep build flowing)
+          # Fallbacks when *windres is missing (use llvm-rc)
           for f in arm64ec i686; do
             command -v ${f}-w64-mingw32-windres >/dev/null || \
               sed -i "s/windres = .*/windres = 'llvm-rc'/" "${{ github.workspace }}/$f.cross"
           done
 
-      - name: Clone DXVK (tags + submodules)
+      - name: Clone DXVK (tags + submodules)                   # Full tag list required for multi-version loop
         run: |
           git clone --recurse-submodules https://github.com/${DXVK_REPO}.git src
           cd src && git fetch --tags --force
 
-      - name: Resolve versions (>= v2.3.1) and compute NEW to build
+      - name: Resolve versions (>= v2.3.1) and compute NEW to build  # Skip already-uploaded versions
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
@@ -197,11 +198,10 @@ jobs:
           echo "Already uploaded:"; cat "$EXIST" || true
           echo "To build:";         cat "${GITHUB_WORKSPACE}/to_build.txt" || true
 
-      - name: Build NEW versions only (arm64ec + x86) → WCP
+      - name: Build NEW versions only (arm64ec + x86) → WCP    # Meson -Dstrip=true for basic DLL strip
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
-          set -euo pipefail
           OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
           cd "${GITHUB_WORKSPACE}/src"
 
@@ -234,26 +234,12 @@ jobs:
             ninja -C "${GITHUB_WORKSPACE}/build.x86" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x86"
 
-            # Collect DLLs
+            # Collect DLLs (system32=64-bit arm64ec, syswow64=32-bit x86)
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
             cp -v "${PREFIX_EC}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
             cp -v "${PREFIX_X86}/bin/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
 
-            # Strip DLLs (safe; size-only). Prefer target strip; fallback to host strip.
-            if command -v arm64ec-w64-mingw32-strip >/dev/null 2>&1; then
-              find "${GITHUB_WORKSPACE}/DXVK_WCP/system32" -maxdepth 1 -type f -name '*.dll' -print0 \
-                | xargs -0 -I{} arm64ec-w64-mingw32-strip --strip-unneeded {}
-            else
-              find "${GITHUB_WORKSPACE}/DXVK_WCP/system32" -maxdepth 1 -type f -name '*.dll' -print0 \
-                | xargs -0 -I{} strip --strip-unneeded {}
-            fi
-            if command -v i686-w64-mingw32-strip >/dev/null 2>&1; then
-              find "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64" -maxdepth 1 -type f -name '*.dll' -print0 \
-                | xargs -0 -I{} i686-w64-mingw32-strip --strip-unneeded {}
-            else
-              find "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64" -maxdepth 1 -type f -name '*.dll' -print0 \
-                | xargs -0 -I{} strip --strip-unneeded {}
-            fi
+            # Second strip pass omitted (Meson -Dstrip=true already applied)
 
             # Build file lists for profile.json
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x64.txt || true
@@ -272,13 +258,13 @@ jobs:
                          ($B[]? | {source:("syswow64/"+.), target:($WOW+.)}) ] }' \
               > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
 
-            # Pack WCP
+            # Pack WCP (reproducible-ish tar settings)
             tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
               -cf "${OUT}/dxvk-arm64ec-${base}.wcp" profile.json system32 syswow64
             echo "::endgroup::"
-          done
+          done < "$LIST"   # ← ensure the loop actually reads the list
 
-      - name: Build release notes (minimal)
+      - name: Build release notes (minimal)                    # Mention current if any artifacts were created
         run: |
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           printf '🤖 Automated arm64ec builds (2.3.1+)\n\n' > "$NOTES"
@@ -289,7 +275,7 @@ jobs:
           fi
           cat "$NOTES"
 
-      - name: Create/Update GitHub Release (DXVK-ARM64EC) + upload WCPs
+      - name: Create/Update GitHub Release (DXVK-ARM64EC) + upload WCPs  # Append new artifacts (clobber same names)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
