@@ -1,9 +1,9 @@
 name: Build DXVK gplasync
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:              # Manual trigger (works on any branch)
   schedule:
-    - cron: "0 18 * * *"   # daily (UTC)
+    - cron: "0 18 * * *"         # Daily (UTC)
 
 permissions:
   contents: write
@@ -30,10 +30,10 @@ jobs:
       GPLASYNC_BASE_URL: https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/patches
       DXVK_REPO: doitsujin/dxvk
     steps:
-      - name: Install jq, curl
+      - name: Install jq, curl (minimal)
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y jq curl
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
 
       - name: Collect already-published (base,rev)
         id: have
@@ -72,15 +72,15 @@ jobs:
             | sort -V > /tmp/tags.txt
 
           awk '
-            function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,"."); for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1} return 0}
+            function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
+              for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1} return 0}
             { base=substr($0,2); if (cmp(base,"2.3.1")>=0) print $0 }
           ' /tmp/tags.txt > /tmp/candidates.txt
 
           echo "Candidate tags (>= v2.3.1):"
           cat /tmp/candidates.txt || true
 
-          touch /tmp/missing.flag
-          : > /tmp/missing.flag
+          echo -n > /tmp/missing.flag
 
           while read -r tag; do
             [ -n "$tag" ] || continue
@@ -88,30 +88,23 @@ jobs:
             mm="${base%.*}"
 
             found_rev=""
-            # exact base first
+            # Try exact base
             for n in 9 8 7 6 5 4 3 2 1; do
               url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${base}-${n}.patch"
               if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; break; fi
             done
-            # fallback to major.minor if base has 3 parts
+            # Fallback to major.minor
             if [ -z "$found_rev" ] && [ "$mm" != "$base" ]; then
-              case "$mm" in
-                ''|*[!0-9.]*|*..* ) : ;;  # not x.y
-                * )
-                  for n in 9 8 7 6 5 4 3 2 1; do
-                    url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${mm}-${n}.patch"
-                    if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; break; fi
-                  done
-                ;;
-              esac
+              for n in 9 8 7 6 5 4 3 2 1; do
+                url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${mm}-${n}.patch"
+                if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; break; fi
+              done
             fi
 
-            if [ -n "$found_rev" ]; then
-              if ! grep -Fq "${base} ${found_rev}" /tmp/exist.txt; then
-                echo "MISSING: ${base}-${found_rev}"
-                echo "yes" > /tmp/missing.flag
-                break
-              fi
+            if [ -n "$found_rev" ] && ! grep -Fq "${base} ${found_rev}" /tmp/exist.txt; then
+              echo "yes" > /tmp/missing.flag
+              echo "Missing: ${base}-${found_rev}"
+              break
             fi
           done < /tmp/candidates.txt
 
@@ -132,6 +125,7 @@ jobs:
           echo "build=${{ steps.detect.outputs.missing == 'true' && 'true' || 'false' }}"
 
   build-and-release:
+    name: Build & release (gplasync variants)
     runs-on: ubuntu-24.04
     needs: guard
     if: needs.guard.outputs.build == 'true'
@@ -143,18 +137,17 @@ jobs:
       TOOLCHAIN_DIR: /opt/llvm-mingw
       RELEASE_TAG: DXVK-GPLASYNC
       GH_TOKEN: ${{ github.token }}
-
     steps:
-      # ───────────────────────────────── Tooling ──────────────────────────────
-      - name: Install host tooling
+      # ───────────── Tooling (no caches) ─────────────
+      - name: Install host tooling (minimal; no cache)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends \
             curl xz-utils jq ca-certificates \
             git meson ninja-build glslang-tools pkg-config \
-            build-essential python3 zstd ccache file rsync
+            build-essential python3 zstd file rsync unzip gh
 
-      - name: Ensure glslang (--vn) available
+      - name: Ensure glslang (--vn) is available
         run: |
           cat > /tmp/min.comp <<'GLSL'
           #version 450
@@ -170,58 +163,24 @@ jobs:
             echo "::error::No glslang/glslangValidator with working --vn"; exit 1
           fi
 
-      # ───────────────────────────── llvm-mingw (cached) ──────────────────────
-      - name: Resolve llvm-mingw (ucrt, ubuntu x86_64)
-        id: llvm
+      - name: Download llvm-mingw (ucrt, ubuntu x86_64)
         run: |
           json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
           url=$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)
-          name=$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .name' | head -n1)
-          [[ -n "$url" && -n "$name" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
-          echo "url=$url"  >> "$GITHUB_OUTPUT"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
-
-      - name: Cache llvm-mingw (extracted)
-        id: cache-llvm
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.TOOLCHAIN_DIR }}
-          key: llvm-mingw-${{ steps.llvm.outputs.name }}
-
-      - name: Fetch llvm-mingw (if cache miss)
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p "$TOOLCHAIN_DIR"
-          curl -fL -H "Authorization: Bearer $GH_TOKEN" "${{ steps.llvm.outputs.url }}" -o /tmp/llvm-mingw.tar.xz
+          [[ -n "$url" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
+          sudo mkdir -p "$TOOLCHAIN_DIR"
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
           sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
+          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
-      - name: Add toolchain to PATH
-        run: echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
-
-      # ───────────────────────────────── ccache ───────────────────────────────
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ runner.os }}-${{ runner.arch }}-dxvk-gplasync
-          restore-keys: |
-            ccache-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Configure ccache
-        run: |
-          echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> $GITHUB_ENV
-          echo "CCACHE_MAXSIZE=2G" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
-          echo "CCACHE_BASEDIR=${{ github.workspace }}" >> $GITHUB_ENV
-
-      # ───────────────────────────── Cross files ──────────────────────────────
+      # ───────────── Cross files (no ccache) ─────────────
       - name: Create cross files (x64 / x86)
         run: |
           cat > "${{ github.workspace }}/x86_64.cross" << 'EOF'
           [binaries]
           ar = 'x86_64-w64-mingw32-ar'
-          c = ['ccache','x86_64-w64-mingw32-gcc']
-          cpp = ['ccache','x86_64-w64-mingw32-g++']
+          c = 'x86_64-w64-mingw32-gcc'
+          cpp = 'x86_64-w64-mingw32-g++'
           windres = 'x86_64-w64-mingw32-windres'
           strip = 'x86_64-w64-mingw32-strip'
           pkg-config = 'pkg-config'
@@ -234,8 +193,8 @@ jobs:
           cat > "${{ github.workspace }}/i686.cross" << 'EOF'
           [binaries]
           ar = 'i686-w64-mingw32-ar'
-          c = ['ccache','i686-w64-mingw32-gcc']
-          cpp = ['ccache','i686-w64-mingw32-g++']
+          c = 'i686-w64-mingw32-gcc'
+          cpp = 'i686-w64-mingw32-g++'
           windres = 'i686-w64-mingw32-windres'
           strip = 'i686-w64-mingw32-strip'
           pkg-config = 'pkg-config'
@@ -250,46 +209,38 @@ jobs:
               sed -i "s/windres = .*/windres = 'llvm-rc'/" "${{ github.workspace }}/$f.cross"
           done
 
-      # ───────────────────────────── Source & tags ────────────────────────────
-      - name: Clone DXVK (full tags, submodules)
+      # ───────────── Source & tag selection ─────────────
+      - name: Clone DXVK (tags + submodules)
         run: |
           git clone --recurse-submodules https://github.com/${DXVK_REPO}.git src
-          cd src
-          git fetch --tags --force
+          cd src && git fetch --tags --force
 
-      - name: Resolve upstream versions (>= v2.3.1) & compute NEW to build
+      - name: Resolve versions (>= v2.3.1) and compute NEW to build
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
           cd src
           git tag -l 'v*' \
-            | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            | { grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' || true; } \
             | sort -V \
             | awk '
                 function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
                   for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1}return 0}
                 {ver=substr($0,2); if (cmp(ver,"2.3.1")>=0) print $0}
               ' > "${GITHUB_WORKSPACE}/versions.txt"
-          echo "Candidates:"; cat "${GITHUB_WORKSPACE}/versions.txt"
 
-          # Already published: dxvk-gplasync-<base>-<rev>.wcp
-          API="https://api.github.com"
-          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-          ver=(-H "Accept: application/vnd.github+json")
+          : > "${GITHUB_WORKSPACE}/to_build.txt"
           EXIST="/tmp/exist.txt"; : > "$EXIST"
-          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
-                  "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
-          if [ "$HTTP" = "200" ]; then
-            jq -r '.assets[].name' /tmp/rel.json \
+          if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh api repos/"${REPO}"/releases/tags/"${RELEASE_TAG}" \
+              | jq -r '.assets[].name' \
               | sed -n -E 's/^dxvk-gplasync-([0-9]+\.[0-9]+(\.[0-9]+)?)-([0-9]+)\.wcp$/\1 \3/p' \
               | sort -V > "$EXIST" || true
           fi
-          echo "Already published (base rev):"; cat "$EXIST" || true
 
-          : > "${GITHUB_WORKSPACE}/to_build.txt"
           while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
             base="${tag#v}"; mm="${base%.*}"
             found_rev=""; patch_base=""
             for n in 9 8 7 6 5 4 3 2 1; do
@@ -311,28 +262,29 @@ jobs:
             fi
             echo "${tag} ${base} ${found_rev} ${patch_base}" >> "${GITHUB_WORKSPACE}/to_build.txt"
           done < "${GITHUB_WORKSPACE}/versions.txt"
+
           echo "To build (tag base rev patch_base):"
           cat "${GITHUB_WORKSPACE}/to_build.txt" || true
 
-      # ─────────────────────── Build NEW (loop per version) ───────────────────
+      # ───────────── Build loop (strip-safe) ─────────────
       - name: Build NEW versions only (gplasync → WCP)
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
           OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
           cd "${GITHUB_WORKSPACE}/src"
 
           if [[ ! -s "${GITHUB_WORKSPACE}/to_build.txt" ]]; then
-            echo "No new versions to build."
-            exit 0
+            echo "No new versions to build."; exit 0
           fi
 
           while read -r tag base rev patch_base; do
             echo "::group::Build ${tag} (gplasync rev ${rev}, patch_base ${patch_base})"
             git checkout -f "$tag"
-            git submodule update --init --recursive
+            git submodule update --init --recursive --checkout
 
+            # Apply gplasync patch (am if possible, otherwise apply/reject)
             url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${patch_base}-${rev}.patch"
             curl -fL "$url" -o /tmp/gpl.patch
             git config user.name  ci
@@ -340,6 +292,7 @@ jobs:
             if git am -3 /tmp/gpl.patch; then :; else git am --abort || true; git apply -p1 --reject /tmp/gpl.patch; fi
             grep -q "enableAsync" src/dxvk/dxvk_options.h || { echo "::error::Patch not applied cleanly for ${base} (using ${patch_base}-${rev})"; git status -sb; exit 1; }
 
+            # Small compatibility tweaks (safe)
             hdr="src/d3d9/d3d9_include.h"
             if [[ -f "$hdr" ]]; then
               for sym in _D3DDEVINFO_RESOURCEMANAGER _D3DDEVINFO_D3D9PIPELINETIMINGS _D3DDEVINFO_VCACHE _D3DDEVINFO_PRIVATEDATA _D3DDEVINFO_VERTEXSTATS; do
@@ -357,15 +310,13 @@ jobs:
               fi
             fi
 
-            HUD_TAG="v${base}"
-            git tag -d "$HUD_TAG" 2>/dev/null || true
-            git tag -a "$HUD_TAG" -m "HUD tag $HUD_TAG"
-
+            # Optional feature flag if supported
             MESON_D3D8=""
             if [[ -f meson_options.txt ]] && grep -qE "option\(['\"]enable_d3d8['\"]" meson_options.txt; then
               MESON_D3D8="-Denable_d3d8=true"
             fi
 
+            # Fresh builds per arch (strip during install; extra strip after copy)
             rm -rf "${GITHUB_WORKSPACE}/build.x64" "${GITHUB_WORKSPACE}/build.x86" \
                    "${GITHUB_WORKSPACE}/dist-x64" "${GITHUB_WORKSPACE}/dist-x86" \
                    "${GITHUB_WORKSPACE}/DXVK_WCP"
@@ -377,7 +328,7 @@ jobs:
               -Dbuild_id=false -Dstrip=true \
               ${MESON_D3D8}
             ninja -C "${GITHUB_WORKSPACE}/build.x64" -j"$(nproc)"
-            meson install -C "${GITHUB_WORKSPACE}/build.x64"
+            meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x64"
 
             meson setup "${GITHUB_WORKSPACE}/build.x86" \
               --cross-file "${GITHUB_WORKSPACE}/i686.cross" \
@@ -386,12 +337,30 @@ jobs:
               -Dbuild_id=false -Dstrip=true \
               ${MESON_D3D8}
             ninja -C "${GITHUB_WORKSPACE}/build.x86" -j"$(nproc)"
-            meson install -C "${GITHUB_WORKSPACE}/build.x86"
+            meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x86"
 
+            # Gather DLLs
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
             cp -v "${PREFIX_X64}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
             cp -v "${PREFIX_X86}/bin/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
 
+            # Extra strip (safe; size-only). Prefer target-strip; fallback to host strip.
+            if command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
+              find "${GITHUB_WORKSPACE}/DXVK_WCP/system32" -maxdepth 1 -type f -name '*.dll' -print0 \
+                | xargs -0 -I{} x86_64-w64-mingw32-strip --strip-unneeded {}
+            else
+              find "${GITHUB_WORKSPACE}/DXVK_WCP/system32" -maxdepth 1 -type f -name '*.dll' -print0 \
+                | xargs -0 -I{} strip --strip-unneeded {}
+            fi
+            if command -v i686-w64-mingw32-strip >/dev/null 2>&1; then
+              find "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64" -maxdepth 1 -type f -name '*.dll' -print0 \
+                | xargs -0 -I{} i686-w64-mingw32-strip --strip-unneeded {}
+            else
+              find "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64" -maxdepth 1 -type f -name '*.dll' -print0 \
+                | xargs -0 -I{} strip --strip-unneeded {}
+            fi
+
+            # Build profile.json
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x64.txt || true
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x86.txt || true
             if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
@@ -427,62 +396,42 @@ jobs:
                 ]
               }' > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
 
+            # Pack WCP
             mkdir -p "${GITHUB_WORKSPACE}/out"
-            wcp="dxvk-gplasync-${base}-${rev}.wcp"
-            tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd \
-                --format=gnu --owner=0 --group=0 --numeric-owner \
-                -cf "${GITHUB_WORKSPACE}/out/${wcp}" profile.json system32 syswow64
+            tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
+              -cf "${GITHUB_WORKSPACE}/out/dxvk-gplasync-${base}-${rev}.wcp" profile.json system32 syswow64
             echo "::endgroup::"
           done < "${GITHUB_WORKSPACE}/to_build.txt"
 
-      - name: Build release notes (links only)
+      # ───────────── Release notes & upload ─────────────
+      - name: Build release notes (minimal)
         run: |
-          set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           printf '🤖 Automated gplasync builds (2.3.1+)\n\n' > "$NOTES"
+          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-gplasync-*.wcp" > /dev/null; then
+            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-gplasync-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
+            cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"
+            echo "Current: ${cur}" >> "$NOTES"
+          fi
           cat "$NOTES"
 
-      - name: Create/Update GitHub Release (DXVK-GPLASYNC) + upload new WCPs
+      - name: Create/Update GitHub Release (DXVK-GPLASYNC) + upload WCPs
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-
-          cur=""
-          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-gplasync-*.wcp" > /dev/null; then
-            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-gplasync-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
-            cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"
-          else
-            API="https://api.github.com"
-            auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-            ver=(-H "Accept: application/vnd.github+json")
-            HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
-                    "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
-            if [ "$HTTP" = "200" ]; then
-              mapfile -t list < <(jq -r '.assets[].name' /tmp/rel.json | grep -E '^dxvk-gplasync-.*\.wcp$' | LC_ALL=C sort -V || true)
-              if ((${#list[@]} > 0)); then
-                latest="${list[-1]}"; cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"
-              fi
-            fi
-          fi
-
-          [[ -n "$cur" ]] && echo "Current: ${cur}" >> "$NOTES"
-
           RELEASE_TAG="DXVK-GPLASYNC"
-          API="https://api.github.com"
-          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-          ver=(-H "Accept: application/vnd.github+json")
-          # Create or edit release
-          if ! curl -fsS "${auth[@]}" "${ver[@]}" "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+
+          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           else
             gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           fi
 
-          if compgen -G "out/*.wcp" > /dev/null; then
-            gh release upload "${RELEASE_TAG}" out/*.wcp --repo "${REPO}" --clobber
+          if compgen -G "${GITHUB_WORKSPACE}/out/*.wcp" > /dev/null; then
+            gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
           else
             echo "No new WCP files to upload."
           fi
