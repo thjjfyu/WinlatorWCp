@@ -1,4 +1,4 @@
-name: Build Box64 Glibc Stable
+name: Build Box64 Glibc Stable v2
 
 on:
   workflow_dispatch:              # Manual trigger (any branch)
