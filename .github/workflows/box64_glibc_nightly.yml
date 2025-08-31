@@ -1,4 +1,4 @@
-name: Build Box64 Glibc Nightly
+name: Build Box64 Glibc Nightly v2
 
 on:
   workflow_dispatch:              # Manual trigger (any branch)
