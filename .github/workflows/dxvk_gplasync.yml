@@ -1,4 +1,4 @@
-name: Build DXVK gplasync
+name: Build DXVK gplasync v2
 
 on:
   workflow_dispatch:              # Manual trigger (any branch)
