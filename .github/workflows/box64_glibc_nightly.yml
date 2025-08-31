@@ -1,9 +1,9 @@
 name: Build Box64 Glibc Nightly
 
 on:
-  workflow_dispatch:              # Manual trigger (works on any branch)
+  workflow_dispatch:              # Manual trigger (any branch)
   schedule:
-    - cron: "0 18 * * 0"         # Weekly (UTC, every Sunday)
+    - cron: "0 18 * * 0"         # Weekly (UTC Sunday)
 
 permissions:
   contents: write
@@ -11,6 +11,11 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+# Use strict, fast, and consistent shell across all steps (no cache anywhere)
+defaults:
+  run:
+    shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
 
 jobs:
   resolve-latest:
@@ -21,9 +26,8 @@ jobs:
       short:    ${{ steps.upstream.outputs.short }}
       datecode: ${{ steps.datecode.outputs.code }}
     steps:
-      - name: Install tools (jq, curl)  # Minimal, no cache
+      - name: Install tools (jq, curl)
         run: |
-          set -Eeuo pipefail
           sudo apt-get -yq update
           sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
 
@@ -32,7 +36,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -Eeuo pipefail
           API="https://api.github.com"
           OWNER="ptitSeb"
           REPO="box64"
@@ -52,25 +55,23 @@ jobs:
           echo "short=${short}" >> "$GITHUB_OUTPUT"
           echo "Upstream ${default_branch} @ ${short}"
 
-      - name: Decide date code (YYMMDD, KST)  # Stable, timezone-anchored
+      - name: Decide date code (YYMMDD, KST)   # Stable timezone anchor for versionCode
         id: datecode
         run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
 
   compile-box64:
     name: Build & append ${{ needs.resolve-latest.outputs.short }}
     needs: [resolve-latest]
-    runs-on: ubuntu-24.04-arm
-
+    runs-on: ubuntu-24.04-arm   # NOTE: requires Arm64 hosted runner; keep as-is by design
     steps:
-      # --- ultra-fast guard: skip early if the same upstream commit is already released ---
-      - name: Skip if same upstream commit already released (API-based)
+      # Fast guards — exit early if nothing new to publish
+      - name: Skip if same upstream commit already released (API check)
         id: guard_commit
         env:
           GH_TOKEN: ${{ github.token }}
           REPO:     ${{ github.repository }}
           SHA:      ${{ needs.resolve-latest.outputs.sha }}
         run: |
-          set -Eeuo pipefail
           API="https://api.github.com/repos/${REPO}/releases/tags/BOX64-NIGHTLY"
           HTTP="$(curl -s -o /tmp/release.json -w '%{http_code}' \
                    -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$API" || true)"
@@ -81,8 +82,7 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # --- prevent duplicated asset when the same datecode exists ---
-      - name: Skip if same-date asset exists
+      - name: Skip if same-date asset exists (avoid duplicates)
         id: dupe
         if: steps.guard_commit.outputs.skip != 'true'
         env:
@@ -90,7 +90,6 @@ jobs:
           REPO:      ${{ github.repository }}
           DATECODE:  ${{ needs.resolve-latest.outputs.datecode }}
         run: |
-          set -Eeuo pipefail
           API="https://api.github.com"
           FILENAME="box64-nightly-${DATECODE}.wcp"
           HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' \
@@ -103,14 +102,12 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install build tools (minimal, no recommends)
+      - name: Install build tools (minimal, no cache)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
-          set -Eeuo pipefail
           sudo apt-get -yq update
           sudo apt-get -yq install --no-install-recommends \
-            git cmake ninja-build build-essential zstd file jq curl unzip ca-certificates \
-            gh binutils
+            git cmake ninja-build build-essential zstd file jq curl unzip ca-certificates gh binutils
 
       - name: Checkout upstream Box64 (exact commit)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
@@ -122,20 +119,17 @@ jobs:
           path: src
           fetch-depth: 1
 
-      - name: Configure & build (glibc, Ninja)
+      - name: Configure & build (glibc, Ninja, Release)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
-          set -Eeuo pipefail
           cmake -S src -B src/build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build src/build -j"$(nproc)"
 
-      - name: Strip binary (safe; keep needed symbols)
+      - name: Strip binary (remove unneeded symbols; no perf impact)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
-          set -Eeuo pipefail
           BIN="src/build/box64"
           [[ -f "$BIN" ]] || { echo "::error::Missing binary: $BIN"; exit 1; }
-          # Prefer llvm-strip if available, fallback to GNU strip
           if command -v llvm-strip >/dev/null 2>&1; then
             llvm-strip --strip-unneeded "$BIN"
           else
@@ -143,18 +137,16 @@ jobs:
           fi
           file "$BIN"
 
-      - name: Package WCP (lowercase filename)
+      - name: Package WCP (commit-agnostic name; date-based versionCode)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
-          set -Eeuo pipefail
           VER="${DATECODE}"
           DESC="Version ${VER} Box64 build by Ari"
 
           mkdir -p Box64_WCP artifacts
-          cp src/build/box64 Box64_WCP/box64
-          chmod +x Box64_WCP/box64 || true
+          install -m 0755 src/build/box64 Box64_WCP/box64
 
           cat > Box64_WCP/profile.json <<JSON
           {
@@ -170,7 +162,7 @@ jobs:
 
           (cd Box64_WCP && tar --zstd -cf "../artifacts/box64-nightly-${VER}.wcp" profile.json box64)
 
-      - name: Ensure/Update release (tag = BOX64-NIGHTLY) and upload asset
+      - name: Ensure/Update release (BOX64-NIGHTLY) and upload asset
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -179,9 +171,7 @@ jobs:
           SHA:      ${{ needs.resolve-latest.outputs.sha }}
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
-          set -Eeuo pipefail
           BODY=$'🌙 Automated BOX64-NIGHTLY builds (rolling)\n\nCommit: ['"${SHORT}"'](https://github.com/ptitSeb/box64/commit/'"${SHA}"')'
-
           if ! gh release view "BOX64-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "BOX64-NIGHTLY" --repo "$REPO" -t "BOX64-NIGHTLY" -n "${BODY}"
           else
@@ -198,7 +188,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          set -Eeuo pipefail
           API="https://api.github.com/repos/${REPO}/releases/tags/BOX64-NIGHTLY"
           assets="$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API" | jq -c '.assets | sort_by(.created_at)')"
           count="$(echo "$assets" | jq 'length')"
