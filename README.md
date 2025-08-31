@@ -29,7 +29,7 @@ Nightly - YYMMDD
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
 | **Sarek**    | Provides backports for GPUs that don’t support Vulkan 1.3 |
-| **GPLAsync** | Frames drawn before shader compile = less stutter |
+| **GPLAsync** | Rendering frames before shader compilation = less stutter |
 | **Arm64ec**  | Performance boost for 64bit games (only with FEX)   |
 <br>
 
