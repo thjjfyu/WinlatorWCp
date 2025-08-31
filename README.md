@@ -6,7 +6,7 @@
 
 
 ## ⚙️ FEXCore & Box64
-Nightly - YYMMDD
+📌 Nightly - YYMMDD
 | Type | Build | 📜 |
 |:------:|:------:|:------:|
 | FEXCore | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
@@ -44,8 +44,8 @@ Nightly - YYMMDD
 <br>
 
 ## 📦 Runtime Packages
-If older VC++ is needed, try an AIO package. <br>
-May require the official .NET Framework instead of Mono.
+📌 If older VC++ is needed, try an AIO package. <br>
+📌 May require the official .NET Framework instead of Mono.
 | Package | Description |
 |-------|-------------|
 | [**Visual C++ x64**](https://aka.ms/vs/17/release/vc_redist.x64.exe) | 2015–2022 Redistributable |
