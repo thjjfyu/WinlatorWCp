@@ -1,9 +1,9 @@
 name: Build DXVK-Sarek (async)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:              # Manual trigger (any branch)
   schedule:
-    - cron: "0 18 * * *" # daily (UTC)
+    - cron: "0 18 * * *"         # Daily (UTC)
 
 permissions:
   contents: write
@@ -27,23 +27,26 @@ jobs:
       head_sha:   ${{ steps.meta.outputs.head_sha }}
       head_short: ${{ steps.meta.outputs.head_short }}
     env:
-      GH_TOKEN:    ${{ github.token }}
-      REPO:        ${{ github.repository }}
-      SAREK_REPO:  pythonlover02/DXVK-Sarek
+      GH_TOKEN:     ${{ github.token }}
+      REPO:         ${{ github.repository }}
+      SAREK_REPO:   pythonlover02/DXVK-Sarek
       SAREK_BRANCH: async
-      RELEASE_TAG: DXVK-SAREK-ASYNC
+      RELEASE_TAG:  DXVK-SAREK-ASYNC
     steps:
       - name: Install jq, curl
         run: |
+          set -Eeuo pipefail
           sudo apt-get update -y
-          sudo apt-get install -y jq curl
+          sudo apt-get install -y --no-install-recommends jq curl
 
       - name: Read previous ASYNC_HEAD from release (if exists)
         id: prev
         run: |
           set -Eeuo pipefail
           API="https://api.github.com/repos/${REPO}/releases/tags/${RELEASE_TAG}"
-          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$API" || true)"
+          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" "$API" || true)"
           if [ "$HTTP" = "200" ]; then
             body="$(jq -r '.body // ""' /tmp/rel.json)"
             prev="$(printf '%s\n' "$body" | sed -nE 's/^ASYNC_HEAD=([0-9a-f]{7,40}).*$/\1/p' | head -n1 || true)"
@@ -69,6 +72,7 @@ jobs:
           min="1.10.8"
           page=1
           base=""
+          > /tmp/tags.txt
           while :; do
             json="$(curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${SAREK_REPO}/tags?per_page=100&page=${page}")"
             count="$(jq 'length' <<<"$json")"
@@ -79,7 +83,6 @@ jobs:
           done
           if [ -s /tmp/tags.txt ]; then
             grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' /tmp/tags.txt | sort -V > /tmp/tags.sorted
-            # walk ascending, keep latest >= min
             while read -r t; do
               v="${t#v}"
               if [ "$(printf '%s\n' "$v" "$min" | sort -V | tail -n1)" = "$v" ]; then
@@ -112,28 +115,30 @@ jobs:
     needs: guard
     if: needs.guard.outputs.build == 'true'
     env:
-      SAREK_REPO:  pythonlover02/DXVK-Sarek
+      SAREK_REPO:   pythonlover02/DXVK-Sarek
       SAREK_BRANCH: async
-      PREFIX_X64:  ${{ github.workspace }}/dist-x64
-      PREFIX_X86:  ${{ github.workspace }}/dist-x86
-      TOOLCHAIN_DIR: /opt/llvm-mingw
-      RELEASE_TAG: DXVK-SAREK-ASYNC
-      GH_TOKEN:   ${{ github.token }}
-      BASE_VER:   ${{ needs.guard.outputs.base }}
-      HEAD_SHA:   ${{ needs.guard.outputs.head_sha }}
-      HEAD_SHORT: ${{ needs.guard.outputs.head_short }}
+      PREFIX_X64:   ${{ github.workspace }}/dist-x64
+      PREFIX_X86:   ${{ github.workspace }}/dist-x86
+      TOOLCHAIN_DIR: ${{ runner.temp }}/llvm-mingw   # Use runner temp to avoid permission issues
+      RELEASE_TAG:  DXVK-SAREK-ASYNC
+      GH_TOKEN:     ${{ github.token }}
+      BASE_VER:     ${{ needs.guard.outputs.base }}
+      HEAD_SHA:     ${{ needs.guard.outputs.head_sha }}
+      HEAD_SHORT:   ${{ needs.guard.outputs.head_short }}
 
     steps:
       - name: Install host tooling
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          set -Eeuo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
             curl xz-utils jq ca-certificates \
             git meson ninja-build glslang-tools pkg-config \
-            build-essential python3 zstd ccache file rsync
+            build-essential python3 zstd file rsync
 
       - name: Ensure glslang (--vn) available
         run: |
+          set -Eeuo pipefail
           cat > /tmp/min.comp <<'GLSL'
           #version 450
           void main() {}
@@ -150,6 +155,7 @@ jobs:
 
       - name: Install gh CLI
         run: |
+          set -Eeuo pipefail
           if ! command -v gh >/dev/null 2>&1; then
             curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
               | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
@@ -160,55 +166,55 @@ jobs:
             sudo apt-get install -y gh
           fi
 
-      - name: Resolve llvm-mingw (ucrt, ubuntu x86_64)
+      - name: Download & extract llvm-mingw (ucrt; Ubuntu x86_64 asset)
         id: llvm
         run: |
-          json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
-          url=$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)
-          name=$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .name' | head -n1)
-          [[ -n "$url" && -n "$name" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
-          echo "url=$url"  >> "$GITHUB_OUTPUT"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
+          set -Eeuo pipefail
+          json="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                 -H "Accept: application/vnd.github+json" \
+                 https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)"
+          url="$(echo "$json"  | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)"
+          [[ -n "$url" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
+          mkdir -p "$TOOLCHAIN_DIR"
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
+          tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
+          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
-      - name: Cache llvm-mingw (extracted)
-        id: cache-llvm
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.TOOLCHAIN_DIR }}
-          key: llvm-mingw-${{ steps.llvm.outputs.name }}
-
-      - name: Fetch llvm-mingw (if cache miss)
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
+      - name: Verify toolchain in PATH
         run: |
-          sudo mkdir -p "$TOOLCHAIN_DIR"
-          curl -fL -H "Authorization: Bearer $GH_TOKEN" "${{ steps.llvm.outputs.url }}" -o /tmp/llvm-mingw.tar.xz
-          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
-
-      - name: Add toolchain to PATH
-        run: echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
-
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ runner.os }}-${{ runner.arch }}-dxvk-sarek-async
-          restore-keys: |
-            ccache-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Configure ccache
-        run: |
-          echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> $GITHUB_ENV
-          echo "CCACHE_MAXSIZE=2G" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
-          echo "CCACHE_BASEDIR=${{ github.workspace }}" >> $GITHUB_ENV
+          set -Eeuo pipefail
+          which x86_64-w64-mingw32-gcc
+          x86_64-w64-mingw32-gcc --version
+          which i686-w64-mingw32-gcc
+          i686-w64-mingw32-gcc --version
+          which llvm-strip || true
 
       - name: Clone DXVK-Sarek (async branch + submodules)
         run: |
+          set -Eeuo pipefail
           git clone --branch "${SAREK_BRANCH}" --single-branch --recurse-submodules https://github.com/${SAREK_REPO}.git src
           cd src
           git fetch --tags --force
 
-      - name: Apply minimal compat patches (no retag)
+      - name: Ensure cross files prefer llvm-strip (and windres fallback)
+        working-directory: src
+        run: |
+          set -Eeuo pipefail
+          for f in build-win64.txt build-win32.txt; do
+            [ -f "$f" ] || continue
+            # Prefer llvm-strip for PE/COFF; add or replace if present
+            if grep -q '^[[:space:]]*strip[[:space:]]*=' "$f"; then
+              sed -i "s|^[[:space:]]*strip[[:space:]]*=.*|strip = 'llvm-strip'|" "$f" || true
+            else
+              sed -i "/^\[binaries\]/a strip = 'llvm-strip'" "$f" || true
+            fi
+            # If triplet windres is missing at runtime, fallback to llvm-rc
+            if ! command -v x86_64-w64-mingw32-windres >/dev/null || ! command -v i686-w64-mingw32-windres >/dev/null; then
+              sed -i "s|^[[:space:]]*windres[[:space:]]*=.*|windres = 'llvm-rc'|" "$f" || true
+            fi
+          done
+
+      - name: Apply minimal compat patches (local commit)
         run: |
           set -Eeuo pipefail
           cd src
@@ -231,8 +237,6 @@ jobs:
           git config user.email "ci@local"
           git add -A
           git commit -m "local compat patches for async (${BASE_VER} @ ${HEAD_SHORT})" || true
-          git reset --hard HEAD
-          git clean -xdf
 
       - name: Build (x64 + x86) and stage WCP
         env:
@@ -247,6 +251,7 @@ jobs:
                  "${GITHUB_WORKSPACE}/dist-x64"  "${GITHUB_WORKSPACE}/dist-x86" \
                  "${GITHUB_WORKSPACE}/DXVK_WCP"
 
+          # x64 (to system32)
           meson setup "${GITHUB_WORKSPACE}/build.w64" \
             --cross-file build-win64.txt \
             --buildtype release \
@@ -257,6 +262,7 @@ jobs:
           ninja -C "${GITHUB_WORKSPACE}/build.w64" -j"$(nproc)"
           meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.w64"
 
+          # x86 (to syswow64)
           meson setup "${GITHUB_WORKSPACE}/build.w32" \
             --cross-file build-win32.txt \
             --buildtype release \
@@ -271,10 +277,11 @@ jobs:
           cp -v "${PREFIX_X64}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
           cp -v "${PREFIX_X86}/bin/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
 
-          (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32  -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x64.txt || true
-          (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64  -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x86.txt || true
+          (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort)  > /tmp/x64.txt || true
+          (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort)  > /tmp/x86.txt || true
           if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
-            echo "::error::No DLLs discovered"; exit 1; fi
+            echo "::error::No DLLs discovered"; exit 1
+          fi
 
           jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
           jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
@@ -305,7 +312,8 @@ jobs:
           mkdir -p "${GITHUB_WORKSPACE}/out"
           tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd \
               --format=gnu --owner=0 --group=0 --numeric-owner \
-              -cf "${GITHUB_WORKSPACE}/out/dxvk-sarek-async-${BASE_VER}.wcp" profile.json system32 syswow64
+              -cf "${GITHUB_WORKSPACE}/out/dxvk-sarek-async-${BASE_VER}.wcp" \
+              profile.json system32 syswow64
 
       - name: Create/Update GitHub Release (DXVK-SAREK-ASYNC) + upload (overwrite)
         env:
