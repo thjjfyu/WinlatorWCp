@@ -120,13 +120,13 @@ jobs:
           sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
-      - name: Create Meson cross files (clang; no ccache)      # arm64ec (64-bit) + i686 (32-bit)
+      - name: Create Meson cross files      # arm64ec (64-bit) + i686 (32-bit)
         run: |
           cat > "${{ github.workspace }}/arm64ec.cross" << 'EOF'
           [binaries]
           ar = 'arm64ec-w64-mingw32-ar'
-          c = 'arm64ec-w64-mingw32-clang'
-          cpp = 'arm64ec-w64-mingw32-clang++'
+          c = 'arm64ec-w64-mingw32-gcc'
+          cpp = 'arm64ec-w64-mingw32-g++'
           windres = 'arm64ec-w64-mingw32-windres'
           strip = 'arm64ec-w64-mingw32-strip'
           pkg-config = 'pkg-config'
