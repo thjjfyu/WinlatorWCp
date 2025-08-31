@@ -1,4 +1,4 @@
-name: Build Box64 Bionic Nightly
+name: Build Box64 Bionic Nightly v2
 
 on:
   workflow_dispatch:        # Manual trigger (works on any branch)
@@ -73,8 +73,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           CACHE=.github/upstream-cache/box64-release-workflow.sha256
-          echo "$SHA_UP" > "$CACHE"
           mkdir -p .github/upstream-cache
+          echo "$SHA_UP" > "$CACHE"
           cp /tmp/upstream_release.yml .github/upstream-cache/box64-release.yml
           BR="sync/upstream-release-$(date +%Y%m%d%H%M%S)"
           git switch -c "$BR"
@@ -225,6 +225,7 @@ jobs:
           cd src
           mkdir -p build && cd build
           cmake .. \
+            -G Ninja \
             -DCMAKE_C_COMPILER="${BOX64_COMPILER}" \
             ${BOX64_PLATFORM_MACRO} \
             -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
@@ -286,7 +287,8 @@ jobs:
           }
           JSON
 
-          (cd Box64_WCP && tar --zstd -cf "../artifacts/box64-bionic-nightly-${DATECODE}.wcp" profile.json box64)
+          (cd Box64_WCP && tar --zstd --format=gnu --owner=0 --group=0 --numeric-owner --sort=name \
+                -cf "../artifacts/box64-bionic-nightly-${DATECODE}.wcp" profile.json box64)
 
       - name: Ensure/Update release (BOX64-BIONIC-NIGHTLY)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
