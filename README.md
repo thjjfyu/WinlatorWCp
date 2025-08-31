@@ -28,7 +28,7 @@ Nightly - YYMMDD
 
 | Type       | Description                                                   |
 |--------------|---------------------------------------------------------------|
-| **Sarek**    | Backports DXVK updates for older GPUs lacking Vulkan 1.3 support |
+| **Sarek**    | Provides backports for GPUs that don’t support Vulkan 1.3 |
 | **GPLAsync** | Frames drawn before shader compile = less stutter |
 | **Arm64ec**  | Performance boost in 64bit games (FEX only)   |
 <br>
