@@ -10,7 +10,7 @@ Nightly - YYMMDD
 | Type | Build | 📜 |
 |:------:|:------:|:------:|
 | FEXCore | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
-| Box64 | [**Glibc-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) · [**Glibc-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY)<br> Bionic-Stable · [**Bionic-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY)| <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| Box64 | [**Glibc-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) <br> [**Glibc-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) <br> Bionic-Stable <br> [**Bionic-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY)| <a href="https://github.com/ptitSeb/box64">🔗</a> |
 <br>
 
 ## 🧩 DXVK
@@ -27,7 +27,7 @@ Nightly - YYMMDD
 
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
-| **sarek**    | Provides backports for GPUs that don’t support Vulkan 1.3 |
+| **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3 |
 | **gplsync** | Rendering frames before shader compilation = less stutter |
 | **arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
 <br>
