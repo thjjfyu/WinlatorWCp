@@ -30,7 +30,7 @@ Nightly - YYMMDD
 |--------------|---------------------------------------------------------------|
 | **Sarek**    | Provides backports for GPUs that don’t support Vulkan 1.3 |
 | **GPLAsync** | Frames drawn before shader compile = less stutter |
-| **Arm64ec**  | Performance boost in 64bit games (FEX only)   |
+| **Arm64ec**  | Performance boost for 64bit games (only with FEX)   |
 <br>
 
 ## 🌌 VKD3D-Proton
@@ -41,7 +41,7 @@ Nightly - YYMMDD
 
 | Type       | Description                                                   |
 |--------------|---------------------------------------------------------------|
-| **Arm64ec**  | Performance boost in 64bit games (FEX only)   |
+| **Arm64ec**  | Performance boost for 64bit games (only with FEX)   |
 <br>
 
 ## 📦 Runtime Packages
