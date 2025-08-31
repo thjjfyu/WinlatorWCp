@@ -30,6 +30,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -Eeuo pipefail
           API="https://api.github.com"
           OWNER="doitsujin"; REPO="dxvk"
           LATEST="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
@@ -42,18 +43,23 @@ jobs:
           [[ -z "$LATEST" ]] && { echo "::error::No upstream tag found"; exit 1; }
           echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve current mirrored highest version (DXVK-ARM64EC)  # Read existing assets to compare
+      - name: Resolve current mirrored highest version (DXVK-ARM64EC)  # API-only; no gh dependency
         id: local
         env:
           GH_TOKEN: ${{ github.token }}
           REPO:     ${{ github.repository }}
         run: |
-          CUR=""
-          if gh release view "DXVK-ARM64EC" --repo "$REPO" >/dev/null 2>&1; then
-            CUR="$(gh api repos/$REPO/releases/tags/DXVK-ARM64EC \
-                 | jq -r '.assets[].name' \
-                 | sed -n -E 's/^dxvk-arm64ec-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
-                 | sort -V | tail -n1)"
+          set -Eeuo pipefail
+          API="https://api.github.com/repos/${REPO}/releases/tags/DXVK-ARM64EC"
+          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" "$API" || true)"
+          if [ "$HTTP" = "200" ]; then
+            CUR="$(jq -r '.assets[].name' /tmp/rel.json \
+              | sed -n -E 's/^dxvk-arm64ec-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
+              | sort -V | tail -n1)"
+          else
+            CUR=""
           fi
           echo "cur=${CUR}" >> "$GITHUB_OUTPUT"
           echo "Current: ${CUR:-<none>}"
@@ -61,6 +67,7 @@ jobs:
       - name: Decide build                                     # Build only if upstream > mirrored
         id: decide
         run: |
+          set -Eeuo pipefail
           UP="${{ steps.upstream.outputs.tag }}"
           CUR="${{ steps.local.outputs.cur }}"
           up_base="${UP#v}"
@@ -113,6 +120,7 @@ jobs:
 
       - name: Download llvm-mingw (ucrt, ubuntu x86_64)        # Provides clang-based triplets (fallback path)
         run: |
+          set -Eeuo pipefail
           json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
           url=$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)
           [[ -n "$url" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
@@ -128,7 +136,7 @@ jobs:
 
           pick() { command -v "$1" >/dev/null 2>&1 && echo "$1" || echo "$2"; }
 
-          # --- arm64ec (prefer GCC triplets per your spec; fallback to clang/llvm tools) ---
+          # --- arm64ec (prefer GCC wrappers; fallback to clang/llvm tools) ---
           A_AR=$(pick arm64ec-w64-mingw32-ar arm64ec-w64-mingw32-ar)
           A_CC=$(pick arm64ec-w64-mingw32-gcc arm64ec-w64-mingw32-clang)
           A_CXX=$(pick arm64ec-w64-mingw32-g++ arm64ec-w64-mingw32-clang++)
@@ -159,6 +167,8 @@ jobs:
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
+          [properties]
+          needs_exe_wrapper = true
           EOF
 
           cat > "${{ github.workspace }}/i686.cross" <<EOF
@@ -174,6 +184,8 @@ jobs:
           cpu_family = 'x86'
           cpu = 'i686'
           endian = 'little'
+          [properties]
+          needs_exe_wrapper = true
           EOF
 
       - name: Clone DXVK (tags + submodules)                   # Full tag list required for multi-version loop
@@ -186,6 +198,7 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -Eeuo pipefail
           cd src
           git tag -l 'v*' \
             | { grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' || true; } \
@@ -198,12 +211,13 @@ jobs:
 
           : > "${GITHUB_WORKSPACE}/to_build.txt"
           EXIST="/tmp/exist.txt"; : > "$EXIST"
-          if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-            gh api repos/"${REPO}"/releases/tags/"${RELEASE_TAG}" \
-              | jq -r '.assets[].name' \
+          if curl -sf -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+               "https://api.github.com/repos/${REPO}/releases/tags/${RELEASE_TAG}" -o /tmp/rel.json; then
+            jq -r '.assets[].name' /tmp/rel.json \
               | sed -n -E 's/^dxvk-arm64ec-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
               | sort -V > "$EXIST" || true
           fi
+
           while IFS= read -r tag; do
             [ -n "$tag" ] || continue
             base="${tag#v}"
@@ -220,6 +234,7 @@ jobs:
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
+          set -Eeuo pipefail
           OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
           cd "${GITHUB_WORKSPACE}/src"
 
@@ -252,12 +267,12 @@ jobs:
             ninja -C "${GITHUB_WORKSPACE}/build.x86" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x86"
 
-            # Collect DLLs (system32=64-bit arm64ec, syswow64=32-bit x86)
+            # Collect DLLs (system32 = arm64ec, syswow64 = i686)
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
             cp -v "${PREFIX_EC}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
             cp -v "${PREFIX_X86}/bin/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
 
-            # Build file lists for profile.json
+            # Build lists for profile.json
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x64.txt || true
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x86.txt || true
             if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
@@ -267,10 +282,10 @@ jobs:
 
             VC=0
 
-            # 재현성: 태그 커밋 타임으로 타임스탬프 고정
+            # Reproducible timestamps: pin to tag commit time
             export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct "$tag")"
 
-            # profile.json 생성 (항상 포함, 플레이스홀더는 그대로 보존)
+            # Create profile.json (always include; keep placeholders as-is)
             jq -n --arg VN "arm64ec-${base}" --argjson VC "$VC" --arg DESC "DXVK arm64ec build by Ari" \
                   --arg SYS '${system32}/' --arg WOW '${syswow64}/' \
                   --slurpfile x64 /tmp/x64.json --slurpfile x86 /tmp/x86.json '
@@ -280,7 +295,7 @@ jobs:
                          ($B[]? | {source:("syswow64/"+.), target:($WOW+.)}) ] }' \
               > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
 
-            # WCP 패키징: profile.json + 폴더 포함 (정렬/소유자 고정으로 재현성 강화)
+            # Pack WCP: include profile.json + folders (sorted and fixed owner for reproducibility)
             tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
               --sort=name \
               -cf "${OUT}/dxvk-arm64ec-${base}.wcp" profile.json system32 syswow64
@@ -290,6 +305,7 @@ jobs:
 
       - name: Build release notes (minimal)                    # Mention current if any artifacts were created
         run: |
+          set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           printf '🤖 Automated arm64ec builds (2.3.1+)\n\n' > "$NOTES"
           if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-arm64ec-*.wcp" > /dev/null; then
@@ -304,6 +320,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
+          set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           RELEASE_TAG="DXVK-ARM64EC"
           if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
