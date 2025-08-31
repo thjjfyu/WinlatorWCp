@@ -1,9 +1,9 @@
 name: Build DXVK-Sarek
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:              # Manual trigger (any branch)
   schedule:
-    - cron: "0 18 * * *"  # daily (UTC)
+    - cron: "0 18 * * *"         # Daily (UTC)
 
 permissions:
   contents: write
@@ -31,8 +31,10 @@ jobs:
     steps:
       - name: Install jq, curl
         run: |
+          set -Eeuo pipefail
           sudo apt-get update -y
-          sudo apt-get install -y jq curl
+          sudo apt-get install -y --no-install-recommends jq curl
+
       - name: Collect already-published versions
         id: have
         run: |
@@ -50,6 +52,7 @@ jobs:
             : > /tmp/exist.txt
           fi
           echo "Existing:"; cat /tmp/exist.txt || true
+
       - name: Detect any missing tag (API-only)
         id: detect
         env:
@@ -60,7 +63,7 @@ jobs:
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
 
-          # Fetch tags (first pages are enough for new releases)
+          # Fetch tags (first page is enough for newest releases)
           curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${SAREK_REPO}/tags?per_page=100" \
             | jq -r '.[].name' \
             | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
@@ -85,6 +88,7 @@ jobs:
           done < /tmp/candidates.txt
 
           [ "$(cat /tmp/missing.flag)" = "yes" ] && echo "missing=true"  >> "$GITHUB_OUTPUT" || echo "missing=false" >> "$GITHUB_OUTPUT"
+
       - name: Decide build
         id: decide
         run: |
@@ -103,21 +107,23 @@ jobs:
       SAREK_REPO: pythonlover02/DXVK-Sarek
       PREFIX_X64: ${{ github.workspace }}/dist-x64
       PREFIX_X86: ${{ github.workspace }}/dist-x86
-      TOOLCHAIN_DIR: /opt/llvm-mingw
+      TOOLCHAIN_DIR: ${{ runner.temp }}/llvm-mingw   # Use runner temp to avoid permission issues
       RELEASE_TAG: DXVK-SAREK
       GH_TOKEN: ${{ github.token }}
 
     steps:
       - name: Install host tooling
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          set -Eeuo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
             curl xz-utils jq ca-certificates \
             git meson ninja-build glslang-tools pkg-config \
-            build-essential python3 zstd ccache file rsync
+            build-essential python3 zstd file rsync gh
 
       - name: Ensure glslang (--vn) available
         run: |
+          set -Eeuo pipefail
           cat > /tmp/min.comp <<'GLSL'
           #version 450
           void main() {}
@@ -132,62 +138,31 @@ jobs:
             echo "::error::No glslang/glslangValidator with working --vn"; exit 1
           fi
 
-      - name: Install gh CLI
+      - name: Download & extract llvm-mingw (ucrt; Ubuntu x86_64 asset)
         run: |
-          if ! command -v gh >/dev/null 2>&1; then
-            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-              | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-              | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-            sudo apt-get update -y
-            sudo apt-get install -y gh
-          fi
+          set -Eeuo pipefail
+          json="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                 -H "Accept: application/vnd.github+json" \
+                 https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)"
+          url="$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)"
+          [[ -n "$url" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
+          mkdir -p "$TOOLCHAIN_DIR"
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
+          tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
+          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
-      - name: Resolve llvm-mingw (ucrt, ubuntu x86_64)
-        id: llvm
+      - name: Verify toolchain in PATH
         run: |
-          json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
-          url=$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)
-          name=$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .name' | head -n1)
-          [[ -n "$url" && -n "$name" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
-          echo "url=$url"  >> "$GITHUB_OUTPUT"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
-
-      - name: Cache llvm-mingw (extracted)
-        id: cache-llvm
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.TOOLCHAIN_DIR }}
-          key: llvm-mingw-${{ steps.llvm.outputs.name }}
-
-      - name: Fetch llvm-mingw (if cache miss)
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
-        run: |
-          sudo mkdir -p "$TOOLCHAIN_DIR"
-          curl -fL -H "Authorization: Bearer $GH_TOKEN" "${{ steps.llvm.outputs.url }}" -o /tmp/llvm-mingw.tar.xz
-          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
-
-      - name: Add toolchain to PATH
-        run: echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
-
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ runner.os }}-${{ runner.arch }}-dxvk-sarek
-          restore-keys: |
-            ccache-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Configure ccache
-        run: |
-          echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> $GITHUB_ENV
-          echo "CCACHE_MAXSIZE=2G" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
-          echo "CCACHE_BASEDIR=${{ github.workspace }}" >> $GITHUB_ENV
+          set -Eeuo pipefail
+          which x86_64-w64-mingw32-gcc
+          x86_64-w64-mingw32-gcc --version
+          which i686-w64-mingw32-gcc
+          i686-w64-mingw32-gcc --version
+          which llvm-strip || true
 
       - name: Clone DXVK-Sarek (main + submodules)
         run: |
+          set -Eeuo pipefail
           git clone --recurse-submodules https://github.com/${SAREK_REPO}.git src
           cd src
           git fetch --tags --force
@@ -197,6 +172,7 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -Eeuo pipefail
           cd src
           git tag -l 'v*' \
             | sort -V \
@@ -228,11 +204,29 @@ jobs:
           echo "Already uploaded:"; cat "$EXIST" || true
           echo "To build:";         cat "${GITHUB_WORKSPACE}/to_build.txt" || true
 
+      - name: Ensure cross files prefer llvm-strip (and windres fallback)
+        working-directory: src
+        run: |
+          set -Eeuo pipefail
+          for f in build-win64.txt build-win32.txt; do
+            [ -f "$f" ] || continue
+            # Prefer llvm-strip for PE/COFF; add or replace
+            if grep -q '^[[:space:]]*strip[[:space:]]*=' "$f"; then
+              sed -i "s|^[[:space:]]*strip[[:space:]]*=.*|strip = 'llvm-strip'|" "$f" || true
+            else
+              sed -i "/^\[binaries\]/a strip = 'llvm-strip'" "$f" || true
+            fi
+            # If triplet windres is missing, fallback to llvm-rc at runtime
+            if ! command -v x86_64-w64-mingw32-windres >/dev/null || ! command -v i686-w64-mingw32-windres >/dev/null; then
+              sed -i "s|^[[:space:]]*windres[[:space:]]*=.*|windres = 'llvm-rc'|" "$f" || true
+            fi
+          done
+
       - name: Build NEW versions only (DXVK-Sarek → WCP) + compat patches + clean retag
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
           OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
           cd "${GITHUB_WORKSPACE}/src"
 
