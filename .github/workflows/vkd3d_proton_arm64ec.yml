@@ -258,7 +258,7 @@ jobs:
           jq -n \
             --arg VN "proton-arm64ec-${{ steps.tag.outputs.base }}" \
             --argjson VC 0 \
-            --arg DESC "VKD3D-Proton-arm64ec build by GitHub Actions" \
+            --arg DESC "VKD3D-Proton-arm64ec build by Ari" \
             --slurpfile F "$FILES_JSON" \
             '{type:"VKD3D", versionName:$VN, versionCode:$VC, description:$DESC, files:($F[0]//[])}' \
             > "${GITHUB_WORKSPACE}/VKD3D_WCP/profile.json"
