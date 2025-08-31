@@ -10,7 +10,8 @@
 | Type | Build | 📜 |
 |:------:|:------:|:------:|
 | FEXCore | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
-| Box64 | [**Glibc-Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) <br> [**Glibc-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) <br>·<br> Bionic-Stable <br> [**Bionic-Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY)| <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| Box64 Glibc | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| Box64 Bionic | Stable · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY)| |
 <br>
 
 ## 🧩 DXVK
