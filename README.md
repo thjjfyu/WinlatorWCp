@@ -27,7 +27,7 @@ Nightly - YYMMDD
 | [**DXVK-GPLAsync-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) |   |
 
 | Type       | Description                                                   |
-|--------------|---------------------------------------------------------------|
+|:------:|---------------------------------------------------------------|
 | **Sarek**    | Provides backports for GPUs that don’t support Vulkan 1.3 |
 | **GPLAsync** | Frames drawn before shader compile = less stutter |
 | **Arm64ec**  | Performance boost for 64bit games (only with FEX)   |
@@ -40,7 +40,7 @@ Nightly - YYMMDD
 | [**VKD3D-Proton-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) |   |
 
 | Type       | Description                                                   |
-|--------------|---------------------------------------------------------------|
+|:------:|---------------------------------------------------------------|
 | **Arm64ec**  | Performance boost for 64bit games (only with FEX)   |
 <br>
 
