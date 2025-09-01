@@ -214,24 +214,8 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args = [
-            '-Wno-nontrivial-memcall',
-            '-DWIN32_LEAN_AND_MEAN', '-DVC_EXTRALEAN',
-            '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
-            '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE',
-            '-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
-            '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86',
-            '-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__'
-          ]
-          cpp_args = [
-            '-Wno-nontrivial-memcall',
-            '-DWIN32_LEAN_AND_MEAN', '-DVC_EXTRALEAN',
-            '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
-            '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE',
-            '-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
-            '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86',
-            '-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__'
-          ]
+          c_args = ['-Wno-nontrivial-memcall','-DWIN32_LEAN_AND_MEAN','-DVC_EXTRALEAN','-include','${GITHUB_WORKSPACE}/arm64ec_shim.h','-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1','-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86','-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__']
+          cpp_args = ['-Wno-nontrivial-memcall','-DWIN32_LEAN_AND_MEAN','-DVC_EXTRALEAN','-include','${GITHUB_WORKSPACE}/arm64ec_shim.h','-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1','-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86','-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__']
           EOF
       
           # --- i686 (strip/rc 정리; DXVK와 동일) ---
