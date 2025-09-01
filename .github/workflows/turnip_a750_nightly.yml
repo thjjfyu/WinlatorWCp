@@ -29,10 +29,10 @@ jobs:
     name: Detect latest freedreno commit
     runs-on: ubuntu-24.04
     outputs:
-      changed:   ${{ steps.decide.outputs.changed }}
-      free_sha:  ${{ steps.free.outputs.sha }}
-      free_short:${{ steps.free.outputs.short }}
-      prev_sha:  ${{ steps.prev.outputs.prev }}
+      changed:    ${{ steps.decide.outputs.changed }}
+      free_sha:   ${{ steps.free.outputs.sha }}
+      free_short: ${{ steps.free.outputs.short }}
+      prev_sha:   ${{ steps.prev.outputs.prev }}
     steps:
       - name: Install gh & jq
         run: |
