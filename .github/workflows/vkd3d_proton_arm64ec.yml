@@ -1,13 +1,14 @@
-name: Build VKD3D-proton-arm64ec
+name: Build VKD3D arm64ec v2
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:              # Manual trigger (any branch)
   schedule:
-    - cron: "0 18 * * *" # daily (UTC)
+    - cron: "0 18 * * *"         # Daily (UTC)
 
 permissions:
   contents: write
 
+# Strict/fast shell; no caching anywhere
 defaults:
   run:
     shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
@@ -18,20 +19,22 @@ concurrency:
 
 jobs:
   build-and-release:
-    name: Detect release fast → build only if new
+    name: Detect latest → build only if new
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       VKD3D_REPO: HansKristian-Work/vkd3d-proton
-      TOOLCHAIN_DIR: /opt/llvm-mingw
+      TOOLCHAIN_DIR: ${{ runner.temp }}/llvm-mingw        # Use runner temp to avoid sudo/permission issues
       PREFIX_EC: ${{ github.workspace }}/stage-arm64ec
       PREFIX_X86: ${{ github.workspace }}/stage-i686
       RELEASE_TAG: VKD3D-PROTON-ARM64EC
       GH_TOKEN: ${{ github.token }}
 
     steps:
-      # ── 0) Resolve latest upstream version quickly (API-first) ─────────────
-      - name: Resolve latest upstream version (release → tag fallback)
+      # ───────────────────────────────────────────────────────────────────
+      # 0) Resolve upstream version (API-first; tag fallback)
+      # ───────────────────────────────────────────────────────────────────
+      - name: Resolve latest upstream version (release → tag)
         id: tag
         run: |
           set -Eeuo pipefail
@@ -41,27 +44,24 @@ jobs:
           ua=(-H "User-Agent: ${GITHUB_REPOSITORY:-vkd3d-proton-arm64ec-workflow}")
           fetch() { curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ver[@]}" "${ua[@]}" "$1"; }
 
-          # Prefer official latest non-prerelease release
           tag="$(fetch "$API/releases/latest" | jq -r 'select(.prerelease==false) | .tag_name // empty')"
-          # Fallback to newest non-prerelease from releases list
           if [[ -z "$tag" ]]; then
             tag="$(fetch "$API/releases?per_page=20" | jq -r '[ .[] | select(.prerelease==false) ][0].tag_name // empty')"
           fi
-          # Final fallback: latest annotated tag v*
           if [[ -z "$tag" ]]; then
             tag="$(git ls-remote --tags https://github.com/${{ env.VKD3D_REPO }}.git 'refs/tags/v*' \
                    | awk -F/ '{print $3}' | sed 's/\^{}//' | grep -E '^v[0-9]+' | sort -V | tail -n1)"
           fi
-
           [[ -z "$tag" ]] && { echo "::notice::No upstream version found; exit clean."; exit 0; }
-
           base="${tag#v}"
-          echo "tag=$tag"  >> "$GITHUB_OUTPUT"
+          echo "tag=$tag"   >> "$GITHUB_OUTPUT"
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "Resolved: tag=$tag base=$base"
 
-      # ── 1) Fast skip before any heavy work ──────────────────────────────────
-      - name: Skip if same-version asset exists (early exit)
+      # ───────────────────────────────────────────────────────────────────
+      # 1) Early dupe guard (skip heavy work if asset already uploaded)
+      # ───────────────────────────────────────────────────────────────────
+      - name: Skip if same-version asset exists
         id: dupe
         if: steps.tag.outputs.tag != ''
         env:
@@ -70,31 +70,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          want="vkd3d-proton-arm64ec-${BASE}.wcp"
-          http="$(curl -sS -o /tmp/rel.json -w '%{http_code}' \
-                 -H "Authorization: Bearer ${GH_TOKEN}" \
-                 -H "Accept: application/vnd.github+json" \
-                 "https://api.github.com/repos/${REPO}/releases/tags/${{ env.RELEASE_TAG }}" || true)"
-          if [[ "$http" == "200" ]] && jq -e --arg W "$want" '.assets[]?.name == $W' /tmp/rel.json >/dev/null; then
+          WANT="vkd3d-proton-arm64ec-${BASE}.wcp"
+          HTTP="$(curl -sS -o /tmp/rel.json -w '%{http_code}' \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${REPO}/releases/tags/${{ env.RELEASE_TAG }}" || true)"
+          if [[ "$HTTP" == "200" ]] && jq -e --arg W "$WANT" 'any(.assets[]?; .name==$W)' /tmp/rel.json >/dev/null; then
             echo "skip=true"  >> "$GITHUB_OUTPUT"
-            echo "::notice::Found ${want} in ${RELEASE_TAG}; skipping."
+            echo "::notice::Found ${WANT} in ${{ env.RELEASE_TAG }}; skipping."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── 2) Install deps only if needed ─────────────────────────────────────
-      - name: Install prerequisites (meson/ninja/widl/glslang)
+      # ───────────────────────────────────────────────────────────────────
+      # 2) Minimal prerequisites (no caches; small footprint)
+      # ───────────────────────────────────────────────────────────────────
+      - name: Install build prerequisites (lean)
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         run: |
           set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends \
             curl xz-utils jq ca-certificates git \
             build-essential pkg-config ninja-build meson \
             zstd file rsync libvulkan-dev \
-            wine64-tools glslang-tools gh
+            wine64-tools glslang-tools gh \
+            pkg-config-aarch64-linux-gnu  # provides aarch64-linux-gnu-pkg-config
 
-      - name: Install llvm-mingw (ucrt, ubuntu x86_64) [API URL]
+      - name: Install llvm-mingw (ucrt; Ubuntu x86_64 asset)
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -107,22 +110,32 @@ jobs:
           url="$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)"
           [[ -n "$url" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
           curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
-          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
+          tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
+      - name: Verify toolchain in PATH
+        if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
+        run: |
+          which arm64ec-w64-mingw32-gcc
+          arm64ec-w64-mingw32-gcc --version
+          which llvm-strip || true
+
+      # ───────────────────────────────────────────────────────────────────
+      # 3) Cross files (ARM64EC prioritized) + safety fallbacks
+      # ───────────────────────────────────────────────────────────────────
       - name: Create Meson cross files (arm64ec / i686)
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         run: |
+          # ARM64EC: prefer triplet tools from llvm-mingw; use llvm-strip for PE/COFF
           cat > "${{ github.workspace }}/arm64ec.cross" << 'EOF'
           [binaries]
-          c = 'arm64ec-w64-mingw32-gcc'
-          cpp = 'arm64ec-w64-mingw32-g++'
-          ar = 'arm64ec-w64-mingw32-ar'
-          ld = 'arm64ec-w64-mingw32-ld'
-          windres = 'arm64ec-w64-mingw32-windres'
-          widl = 'widl'
-          strip = 'strip'
-          pkg-config = 'pkg-config'
+          ar       = 'arm64ec-w64-mingw32-ar'
+          c        = 'arm64ec-w64-mingw32-gcc'
+          cpp      = 'arm64ec-w64-mingw32-g++'
+          windres  = 'arm64ec-w64-mingw32-windres'
+          strip    = 'llvm-strip'
+          widl     = 'arm64ec-w64-mingw32-widl'
+          pkgconfig= 'aarch64-linux-gnu-pkg-config'
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
@@ -132,16 +145,16 @@ jobs:
           needs_exe_wrapper = true
           EOF
 
+          # i686 companion (32-bit) for syswow64 DLLs; use llvm-strip
           cat > "${{ github.workspace }}/i686.cross" << 'EOF'
           [binaries]
-          c = 'i686-w64-mingw32-gcc'
-          cpp = 'i686-w64-mingw32-g++'
-          ar = 'i686-w64-mingw32-ar'
-          ld = 'i686-w64-mingw32-ld'
-          windres = 'i686-w64-mingw32-windres'
-          widl = 'widl'
-          strip = 'strip'
-          pkg-config = 'pkg-config'
+          ar       = 'i686-w64-mingw32-ar'
+          c        = 'i686-w64-mingw32-gcc'
+          cpp      = 'i686-w64-mingw32-g++'
+          windres  = 'i686-w64-mingw32-windres'
+          strip    = 'llvm-strip'
+          widl     = 'i686-w64-mingw32-widl'
+          pkgconfig= 'pkg-config'
           [host_machine]
           system = 'windows'
           cpu_family = 'x86'
@@ -151,7 +164,27 @@ jobs:
           needs_exe_wrapper = true
           EOF
 
-      # ── 3) Checkout & Build (only when needed) ─────────────────────────────
+          # Safety fallbacks to keep build flowing on rare tool gaps
+          for f in arm64ec i686; do
+            # windres → llvm-rc if triplet windres is missing
+            command -v ${f}-w64-mingw32-windres >/dev/null || \
+              sed -i "s/^windres[[:space:]]*=.*/windres = 'llvm-rc'/" "${{ github.workspace }}/$f.cross"
+          done
+          # widl → host widl (wine) if triplet widl is absent
+          command -v arm64ec-w64-mingw32-widl >/dev/null || \
+            sed -i "s/^widl[[:space:]]*=.*/widl = 'widl'/" "${{ github.workspace }}/arm64ec.cross"
+          command -v i686-w64-mingw32-widl   >/dev/null || \
+            sed -i "s/^widl[[:space:]]*=.*/widl = 'widl'/" "${{ github.workspace }}/i686.cross"
+          # pkgconfig: fallback to generic pkg-config if aarch64 one is missing
+          command -v aarch64-linux-gnu-pkg-config >/dev/null || \
+            sed -i "s/^pkgconfig[[:space:]]*=.*/pkgconfig = 'pkg-config'/" "${{ github.workspace }}/arm64ec.cross"
+          # strip: if llvm-strip is missing, fallback to host strip (best-effort)
+          command -v llvm-strip >/dev/null || \
+            sed -i "s/^strip[[:space:]]*=.*/strip = 'strip'/" "${{ github.workspace }}/arm64ec.cross" "${{ github.workspace }}/i686.cross"
+
+      # ───────────────────────────────────────────────────────────────────
+      # 4) Checkout & build (Meson strip on; no extra strip pass)
+      # ───────────────────────────────────────────────────────────────────
       - name: Checkout source at tag
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         uses: actions/checkout@v4
@@ -172,40 +205,55 @@ jobs:
 
           test -f meson.build || { echo "::error::Not in repository root (meson.build missing)"; exit 1; }
 
+          # Configure/build/install (ARM64EC) — single-strip via Meson built-in
           meson setup build.ec \
             --cross-file "${GITHUB_WORKSPACE}/arm64ec.cross" \
             --buildtype release \
+            -Dstrip=true \
             --prefix "${PREFIX_EC}"
           ninja -C build.ec -j"$(nproc)"
           meson install -C build.ec
 
+          # Configure/build/install (i686) — single-strip via Meson built-in
           meson setup build.x86 \
             --cross-file "${GITHUB_WORKSPACE}/i686.cross" \
             --buildtype release \
+            -Dstrip=true \
             --prefix "${PREFIX_X86}"
           ninja -C build.x86 -j"$(nproc)"
           meson install -C build.x86
 
+          # Collect DLLs (system32 = 64-bit ARM64EC, syswow64 = 32-bit i686)
           mkdir -p "${GITHUB_WORKSPACE}/VKD3D_WCP/system32" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"
 
-          copy_one() {
-            local f="$1" pref="$2" dest="$3"
-            for src in "$pref/bin/$f" "$pref/lib/$f" "$pref/usr/bin/$f"; do
-              [ -f "$src" ] && cp -v "$src" "$dest/" && return 0
+          copy_one() { # $1=dll, $2=prefix, $3=dest
+            for p in "$2/bin/$1" "$2/lib/$1" "$2/usr/bin/$1"; do
+              [[ -f "$p" ]] && cp -v "$p" "$3/" && return 0
             done
             return 1
           }
-          copy_one d3d12.dll     "${PREFIX_EC}"  "${GITHUB_WORKSPACE}/VKD3D_WCP/system32" || true
-          copy_one d3d12core.dll "${PREFIX_EC}"  "${GITHUB_WORKSPACE}/VKD3D_WCP/system32" || true
-          copy_one d3d12.dll     "${PREFIX_X86}" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64" || true
-          copy_one d3d12core.dll "${PREFIX_X86}" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64" || true
+          copy_one d3d12.dll     "${PREFIX_EC}"  "${GITHUB_WORKSPACE}/VKD3D_WCP/system32"  || true
+          copy_one d3d12core.dll "${PREFIX_EC}"  "${GITHUB_WORKSPACE}/VKD3D_WCP/system32"  || true
+          copy_one d3d12.dll     "${PREFIX_X86}" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"  || true
+          copy_one d3d12core.dll "${PREFIX_X86}" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"  || true
 
+          # Sanity check: ensure at least one DLL exists
+          if ! compgen -G "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/*.dll" >/dev/null \
+             && ! compgen -G "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/*.dll" >/dev/null; then
+            echo "::error::No DLLs produced (check toolchain/cross files)"; exit 1
+          fi
+
+          # Log counts for easier debugging
+          echo "system32 DLLs: $(ls -1 "${GITHUB_WORKSPACE}/VKD3D_WCP/system32"/*.dll 2>/dev/null | wc -l || true)"
+          echo "syswow64 DLLs: $(ls -1 "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"/*.dll 2>/dev/null | wc -l || true)"
+
+          # Build profile.json (versionCode fixed 0; versionName includes base)
           FILES_JSON="/tmp/files.json"; jq -n '[]' > "$FILES_JSON"
           add_file() { jq --arg s "$1" --arg t "$2" '. + [{source:$s, target:$t}]' "$FILES_JSON" > /tmp/.j && mv /tmp/.j "$FILES_JSON"; }
-          [ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/d3d12.dll"     ] && add_file "system32/d3d12.dll"     '${system32}/d3d12.dll'
-          [ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/d3d12core.dll" ] && add_file "system32/d3d12core.dll" '${system32}/d3d12core.dll'
-          [ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/d3d12.dll"     ] && add_file "syswow64/d3d12.dll"     '${syswow64}/d3d12.dll'
-          [ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/d3d12core.dll" ] && add_file "syswow64/d3d12core.dll" '${syswow64}/d3d12core.dll'
+          [[ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/d3d12.dll"     ]] && add_file "system32/d3d12.dll"     '${system32}/d3d12.dll'
+          [[ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/system32/d3d12core.dll" ]] && add_file "system32/d3d12core.dll" '${system32}/d3d12core.dll'
+          [[ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/d3d12.dll"     ]] && add_file "syswow64/d3d12.dll"     '${syswow64}/d3d12.dll'
+          [[ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/d3d12core.dll" ]] && add_file "syswow64/d3d12core.dll" '${syswow64}/d3d12core.dll'
 
           jq -n \
             --arg VN "proton-arm64ec-${{ steps.tag.outputs.base }}" \
@@ -220,8 +268,10 @@ jobs:
               -cf "${GITHUB_WORKSPACE}/vkd3d-proton-arm64ec-${{ steps.tag.outputs.base }}.wcp" \
               profile.json system32 syswow64
 
-      # ── 4) Release/update body + upload asset (accumulate) ─────────────────
-      - name: Ensure release (fixed tag; keep “Current” up to date)
+      # ───────────────────────────────────────────────────────────────────
+      # 5) Ensure release body + upload asset (accumulate to fixed tag)
+      # ───────────────────────────────────────────────────────────────────
+      - name: Ensure release body (fixed tag; "Current" line)
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         env:
           REPO: ${{ github.repository }}
@@ -235,7 +285,7 @@ jobs:
             gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -n "${BODY}"
           fi
 
-      - name: Upload asset (versioned, accumulate)
+      - name: Upload asset (versioned; clobber same name)
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
         env:
           REPO: ${{ github.repository }}

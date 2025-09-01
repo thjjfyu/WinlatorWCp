@@ -6,52 +6,53 @@
 
 
 ## ⚙️ FEXCore & Box64
-Nightly - YYMMDD
+📌 Nightly - YYMMDD
 | Type | Build | 📜 |
 |:------:|:------:|:------:|
 | FEXCore | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
-| Box64-Glibc | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
-| Box64-Bionic | Stable · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY) |  |
+| Box64 Glibc | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| Box64 Bionic | Stable · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY)| |
 <br>
 
 ## 🧩 DXVK
+📌 No outdated or unusual patched versions here.
 | Build | 📜 |
 |-------|:------:|
 | [**DXVK**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK) |  <a href="https://github.com/doitsujin/dxvk">🔗</a> |
-| [**DXVK-Sarek**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK) |  <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
-| [**DXVK-Sarek-Async**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK-ASYNC) |   |
-| DXVK-Sarek-ARM64EC |  |
-| DXVK-Sarek-Async-ARM64EC |  |
-| [**DXVK-GPLAsync**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC) |  <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
-| [**DXVK-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-ARM64EC) |   |
-| [**DXVK-GPLAsync-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) |   |
+| [**DXVK-sarek**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK) |  <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
+| [**DXVK-sarek-async**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK-ASYNC) |   |
+| DXVK-sarek-arm64ec |  |
+| DXVK-sarek-async-arm64ec |  |
+| [**DXVK-gplasync**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC) |  <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
+| [**DXVK-arm64ec**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-ARM64EC) |   |
+| [**DXVK-gplasync-arm64ec**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) |   |
 
 | Type       | Description                                                   |
-|--------------|---------------------------------------------------------------|
-| **Sarek**    | Backports DXVK updates for older GPUs lacking Vulkan 1.3 support |
-| **GPLAsync** | Reduces stuttering by rendering frames before shaders compile |
-| **Arm64ec**  | Optimized for FEX to enhance performance <br>(Use with FEX only)   |
+|:------:|---------------------------------------------------------------|
+| **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3 |
+| **gplasync** | Rendering frames before shader compilation = less stutter |
+| **arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
 <br>
 
 ## 🌌 VKD3D-Proton
 | Build | 📜 |
 |-------|:------:|
-| [**VKD3D-Proton**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON) |  <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
-| [**VKD3D-Proton-ARM64EC**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) |   |
+| [**VKD3D-proton**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON) |  <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
+| [**VKD3D-proton-arm64ec**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) |   |
 
 | Type       | Description                                                   |
-|--------------|---------------------------------------------------------------|
-| **Arm64ec**  | Optimized for FEX to enhance performance <br>(Use with FEX only)   |
+|:------:|---------------------------------------------------------------|
+| **arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
 <br>
 
 ## 📦 Runtime Packages
-If older VC++ is needed, try an AIO package<br>
-May require the official .NET Framework instead of Mono
+📌 If older VC++ is needed, try an AIO package. <br>
+📌 May require the official .NET Framework instead of Mono.
 | Package | Description |
 |-------|-------------|
 | [**Visual C++ x64**](https://aka.ms/vs/17/release/vc_redist.x64.exe) | 2015–2022 Redistributable |
 | [**Visual C++ x86**](https://aka.ms/vs/17/release/vc_redist.x86.exe) | 2015–2022 Redistributable |
-| [**Visual C++ ARM64**](https://aka.ms/vs/17/release/vc_redist.arm64.exe) | 2015–2022 Redistributable (arm64ec) |
+| [**Visual C++ ARM64**](https://aka.ms/vs/17/release/vc_redist.arm64.exe) | 2015–2022 Redistributable (FEX) |
 | [**Wine-Mono**](https://github.com/wine-mono/wine-mono/releases) | .NET runtime for Wine (*.msi) |
 | [**Wine-Gecko**](https://dl.winehq.org/wine/wine-gecko/) | HTML engine for Wine (*.msi) |
 | [**XNA Framework**](https://download.microsoft.com/download/a/c/2/ac2c903b-e6e8-42c2-9fd7-bebac362a930/xnafx40_redist.msi) | Old indie games runtime |
@@ -61,7 +62,7 @@ May require the official .NET Framework instead of Mono
 
 
 ---
-✨ All credit goes to the original creators and those who inspired this work<br>
+✨ All credit goes to the original creators and those who inspired this work <br>
 [ptitSeb](https://github.com/ptitSeb)  
 [doitsujin](https://github.com/doitsujin)  
 [pythonlover02](https://github.com/pythonlover02)  

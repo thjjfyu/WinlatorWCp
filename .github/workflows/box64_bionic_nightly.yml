@@ -1,9 +1,9 @@
-name: Build Box64 Bionic Nightly
+name: Build Box64 Bionic Nightly v2
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:        # Manual trigger (works on any branch)
   schedule:
-    - cron: "0 18 * * 0"   # weekly (UTC, every Sunday)
+    - cron: "0 18 * * 0"   # Weekly (UTC, every Sunday)
 
 permissions:
   contents: write
@@ -13,20 +13,98 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 1) Upstream workflow watcher (GATE)
+#    - If upstream release.yml changed: open PR and STOP builds
+#    - If not changed: allow downstream build jobs to proceed
+# ──────────────────────────────────────────────────────────────────────────────
 jobs:
+  check-upstream-workflow:
+    name: Check upstream workflow changes (gate)
+    runs-on: ubuntu-latest
+    outputs:
+      changed:   ${{ steps.compare.outputs.changed }}
+      new_sha:   ${{ steps.hash.outputs.sha }}
+    steps:
+      - name: Install tools (jq, curl, gh)  # minimal footprint, no cache
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends jq curl gh ca-certificates
+
+      - name: Fetch upstream workflow (raw)
+        id: fetch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          RAW_URL="https://raw.githubusercontent.com/ptitSeb/box64/HEAD/.github/workflows/release.yml"
+          curl -fsSL "$RAW_URL" -o /tmp/upstream_release.yml
+
+      - name: Hash upstream workflow (sha256)
+        id: hash
+        run: echo "sha=$(sha256sum /tmp/upstream_release.yml | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare current vs previous hash
+        id: compare
+        env:
+          SHA_UP: ${{ steps.hash.outputs.sha }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p .github/upstream-cache
+          CACHE=.github/upstream-cache/box64-release-workflow.sha256
+          OLD_SHA="$(cat "$CACHE" 2>/dev/null || true)"
+          if [ "$SHA_UP" != "$OLD_SHA" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create PR when upstream changed (and update cache)
+        if: steps.compare.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA_UP:   ${{ steps.hash.outputs.sha }}
+        run: |
+          set -Eeuo pipefail
+          CACHE=.github/upstream-cache/box64-release-workflow.sha256
+          mkdir -p .github/upstream-cache
+          echo "$SHA_UP" > "$CACHE"
+          cp /tmp/upstream_release.yml .github/upstream-cache/box64-release.yml
+          BR="sync/upstream-release-$(date +%Y%m%d%H%M%S)"
+          git switch -c "$BR"
+          git add .github/upstream-cache/box64-release.yml "$CACHE"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore: update cached upstream release workflow (sha=$SHA_UP)"
+          git push -u origin "$BR"
+          gh pr create --fill \
+            --title "Sync: Upstream release workflow changed" \
+            --body "Auto-detected change in ptitSeb/box64 .github/workflows/release.yml. Review and mirror relevant flags/steps here if needed."
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 2) Resolve upstream commit (runs ONLY if upstream workflow did NOT change)
+# ──────────────────────────────────────────────────────────────────────────────
   resolve-latest:
     name: Resolve upstream HEAD (commit)
     runs-on: ubuntu-latest
+    needs: [check-upstream-workflow]
+    if: needs.check-upstream-workflow.outputs.changed != 'true'
     outputs:
-      sha:     ${{ steps.upstream.outputs.sha }}
-      short:   ${{ steps.upstream.outputs.short }}
+      sha:      ${{ steps.upstream.outputs.sha }}
+      short:    ${{ steps.upstream.outputs.short }}
       datecode: ${{ steps.datecode.outputs.code }}
     steps:
       - name: Install tools (jq, curl)
         run: |
           set -Eeuo pipefail
-          sudo apt-get update
-          sudo apt-get install -y jq curl
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
 
       - name: Resolve upstream Box64 HEAD SHA (robust)
         id: upstream
@@ -53,21 +131,25 @@ jobs:
           echo "short=${short}" >> "$GITHUB_OUTPUT"
           echo "Upstream ${default_branch} @ ${short}"
 
-      - name: Decide date code (YYMMDD, KST)
+      - name: Decide date code (YYMMDD, KST)  # stable timezone-anchored code
         id: datecode
         run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 3) Build & release (runs ONLY if upstream workflow did NOT change)
+# ──────────────────────────────────────────────────────────────────────────────
   build-android-bionic:
     name: Build & release ${{ needs.resolve-latest.outputs.short }}
     needs: [resolve-latest]
+    if: needs.check-upstream-workflow.outputs.changed != 'true'
     runs-on: ubuntu-latest
     env:
       NDK_VERSION: r26b
       BUILD_TYPE:  Release
 
     steps:
-      # --- 초경량 가드: 커밋 동일 시 즉시 종료 (설치 전에) ---
-      - name: Skip if already built same commit
+      # --- ultra-fast guard: exit early if same commit already released ---
+      - name: Skip if already built same commit (API-based)
         id: guard_commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -75,8 +157,10 @@ jobs:
           SHA:      ${{ needs.resolve-latest.outputs.sha }}
         run: |
           set -Eeuo pipefail
-          BODY="$(gh release view BOX64-BIONIC-NIGHTLY --repo "$REPO" --json body --jq '.body' 2>/dev/null || true)"
-          if echo "$BODY" | grep -q "commit/${SHA}"; then
+          API="https://api.github.com/repos/${REPO}/releases/tags/BOX64-BIONIC-NIGHTLY"
+          HTTP="$(curl -s -o /tmp/release.json -w '%{http_code}' \
+                   -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$API" || true)"
+          if [ "$HTTP" = "200" ] && jq -e --arg S "$SHA" '.body | contains($S)' /tmp/release.json >/dev/null; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Same upstream commit already released; skipping."
           else
@@ -87,16 +171,15 @@ jobs:
         id: dupe
         if: steps.guard_commit.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
+          GH_TOKEN:  ${{ github.token }}
+          REPO:      ${{ github.repository }}
+          DATECODE:  ${{ needs.resolve-latest.outputs.datecode }}
         run: |
           set -Eeuo pipefail
           API="https://api.github.com"
-          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-          ver=(-H "Accept: application/vnd.github+json")
           FILENAME="box64-bionic-nightly-${DATECODE}.wcp"
-          HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+          HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' \
+                  -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
                   "$API/repos/${REPO}/releases/tags/BOX64-BIONIC-NIGHTLY" || true)"
           if [ "$HTTP" = "200" ] && jq -e --arg N "$FILENAME" '.assets[]?.name == $N' /tmp/nightly.json >/dev/null; then
             echo "skip=true"  >> "$GITHUB_OUTPUT"
@@ -105,13 +188,15 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # --- 여기서부터 무거운 작업: 변화 있을 때만 실행 ---
-      - name: Install build deps
+      # --- heavy work: only if something changed ---
+      - name: Install build deps (minimal)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
-          sudo apt-get update
-          sudo apt-get install -y git cmake make ninja-build python3 patchelf zstd file jq wget curl gh binutils
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends \
+            git cmake make ninja-build python3 zstd file jq curl unzip ca-certificates \
+            binutils  # readelf/strip
 
       - name: Checkout upstream Box64 (exact commit)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
@@ -123,23 +208,24 @@ jobs:
           path: src
           fetch-depth: 1
 
-      - name: Prepare Android NDK r26b (upstream style)
+      - name: Prepare Android NDK r26b (download & wire compilers)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
-          curl -fsSL -o ndk.zip https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip
+          curl -fsSL -o ndk.zip "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
           unzip -qq ndk.zip
           echo "NDK=$PWD/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
           echo "BOX64_COMPILER=$PWD/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang" >> $GITHUB_ENV
           echo "BOX64_PLATFORM_MACRO=-DANDROID=1 -DARM_DYNAREC=1 -DBAD_SIGNAL=1" >> $GITHUB_ENV
 
-      - name: Configure (upstream-like CMake)
+      - name: Configure (CMake, upstream-like flags)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
           cd src
           mkdir -p build && cd build
           cmake .. \
+            -G Ninja \
             -DCMAKE_C_COMPILER="${BOX64_COMPILER}" \
             ${BOX64_PLATFORM_MACRO} \
             -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
@@ -149,9 +235,23 @@ jobs:
             -DBOX32=0
           cd -
 
-      - name: Build
+      - name: Build (parallel)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: cmake --build src/build -j"$(nproc)"
+
+      - name: Strip binary (safe, keep needed symbols)
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+        run: |
+          set -Eeuo pipefail
+          BIN="src/build/box64"
+          [[ -f "$BIN" ]] || { echo "::error::Missing binary: $BIN"; exit 1; }
+          STRIP_BIN="${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          if [[ -x "$STRIP_BIN" ]]; then
+            "$STRIP_BIN" --strip-unneeded "$BIN"
+          else
+            strip --strip-unneeded "$BIN"
+          fi
+          file "$BIN"
 
       - name: Verify ELF (Bionic traits)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
@@ -182,15 +282,13 @@ jobs:
             "versionCode": ${DATECODE},
             "description": "${DATECODE} Box64-Bionic Build by Ari",
             "files": [
-              {
-                "source": "box64",
-                "target": "\${bindir}/box64"
-              }
+              { "source": "box64", "target": "\${bindir}/box64" }
             ]
           }
           JSON
 
-          (cd Box64_WCP && tar --zstd -cf "../artifacts/box64-bionic-nightly-${DATECODE}.wcp" profile.json box64)
+          (cd Box64_WCP && tar --zstd --format=gnu --owner=0 --group=0 --numeric-owner --sort=name \
+                -cf "../artifacts/box64-bionic-nightly-${DATECODE}.wcp" profile.json box64)
 
       - name: Ensure/Update release (BOX64-BIONIC-NIGHTLY)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
@@ -202,11 +300,10 @@ jobs:
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
           set -Eeuo pipefail
-
           printf -v BODY '%s\n\n%s\n%s' \
             '🌙 Automated BOX64-BIONIC-NIGHTLY builds (rolling)' \
             "Commit: [${SHORT}](https://github.com/ptitSeb/box64/commit/${SHA})" \
-            "_Based on ptitSeb's release workflow_"
+            "_Based on ptitSeb'\''s release workflow_"
 
           if ! gh release view "BOX64-BIONIC-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "BOX64-BIONIC-NIGHTLY" --repo "$REPO" \
@@ -240,51 +337,4 @@ jobs:
             done
           else
             echo "::notice::Asset count $count (≤5), nothing to delete."
-          fi
-
-  watch-upstream-workflow:
-    name: Watch upstream workflow changes
-    runs-on: ubuntu-latest
-    steps:
-      - name: Install tools
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update
-          sudo apt-get install -y jq curl gh
-
-      - name: Fetch upstream workflow (raw)
-        id: grab
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -Eeuo pipefail
-          RAW_URL="https://raw.githubusercontent.com/ptitSeb/box64/HEAD/.github/workflows/release.yml"
-          curl -fsSL "$RAW_URL" -o /tmp/upstream_release.yml
-          echo "sha=$(sha256sum /tmp/upstream_release.yml | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout this repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Compare & PR if changed
-        env:
-          SHA_UP: ${{ steps.grab.outputs.sha }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -Eeuo pipefail
-          mkdir -p .github/upstream-cache
-          CACHE=.github/upstream-cache/box64-release-workflow.sha256
-          OLD_SHA="$(cat "$CACHE" 2>/dev/null || true)"
-          if [ "$SHA_UP" != "$OLD_SHA" ]; then
-            echo "$SHA_UP" > "$CACHE"
-            BR="sync/upstream-release-$(date +%Y%m%d%H%M%S)"
-            git switch -c "$BR"
-            cp /tmp/upstream_release.yml .github/upstream-cache/box64-release.yml
-            git add .github/upstream-cache/box64-release.yml "$CACHE"
-            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "chore: update cached upstream release workflow (sha=$SHA_UP)"
-            git push -u origin "$BR"
-            gh pr create --fill --title "Sync: Upstream release workflow changed" --body "Auto-detected change in ptitSeb/box64 .github/workflows/release.yml. Review and mirror relevant flags/steps here if needed."
-          else
-            echo "No changes detected."
           fi
