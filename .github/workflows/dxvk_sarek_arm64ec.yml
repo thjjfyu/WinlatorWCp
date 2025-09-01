@@ -147,6 +147,48 @@ jobs:
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
           export PATH="$TOOLCHAIN_DIR/bin:$PATH"
 
+      - name: Write ARM64EC macro shim (pre-include)
+        run: |
+          set -Eeuo pipefail
+          cat > "${GITHUB_WORKSPACE}/arm64ec_shim.h" <<'EOF'
+          #ifndef ARM64EC_SHIM_ON
+          #define ARM64EC_SHIM_ON 1
+      
+          /* 명시적으로 ARM64EC + aarch64로 고정 */
+          #ifndef _M_ARM64EC
+          #define _M_ARM64EC 1
+          #endif
+          #ifndef __ARM64EC__
+          #define __ARM64EC__ 1
+          #endif
+          #ifndef __aarch64__
+          #define __aarch64__ 1
+          #endif
+      
+          /* x86/x64 관련 매크로 및 ISA 플래그는 전부 차단 */
+          #undef __x86_64__
+          #undef __i386__
+          #undef _M_X64
+          #undef _M_AMD64
+          #undef _AMD64_
+          #undef _M_IX86
+          #undef __MMX__
+          #undef __SSE__
+          #undef __SSE2__
+          #undef __AVX__
+          #undef __AVX2__
+      
+          /* 인라인 충돌 회피 */
+          #ifndef NOWINBASEINTERLOCK
+          #define NOWINBASEINTERLOCK 1
+          #endif
+          #ifndef __CRT__NO_INLINE
+          #define __CRT__NO_INLINE 1
+          #endif
+      
+          #endif /* ARM64EC_SHIM_ON */
+          EOF
+
       - name: Create Meson cross files (DXVK-style; arm64ec + i686)
         run: |
           set -Eeuo pipefail
@@ -179,13 +221,17 @@ jobs:
           needs_exe_wrapper = true
           [built-in options]
           c_args = ['-Wno-nontrivial-memcall',
+                    '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
                     '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE',
-                    '-D_M_ARM64EC=1','-D__ARM64EC__=1',
-                    '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86']
+                    '-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
+                    '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86',
+                    '-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__']
           cpp_args = ['-Wno-nontrivial-memcall',
+                      '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
                       '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE',
-                      '-D_M_ARM64EC=1','-D__ARM64EC__=1',
-                      '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86']
+                      '-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
+                      '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86',
+                      '-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__']
           EOF
 
           # --- i686 (strip/rc 정리; DXVK와 동일) ---
