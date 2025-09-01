@@ -35,7 +35,7 @@ jobs:
             echo "$BIN" >> "$GITHUB_PATH"
           fi
 
-      - name: Download bylaws llvm-mingw (by release title = date; 20.04 only)
+      - name: Download bylaws llvm-mingw (latest by release title=date; 20.04 only)
         run: |
           set -Eeuo pipefail
           mkdir -p "$LLVM_MINGW_DIR"
@@ -43,15 +43,13 @@ jobs:
           API="https://api.github.com/repos/bylaws/llvm-mingw/releases/latest"
           json="$(curl -fsSL -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer $GH_TOKEN" "$API")"
 
-          # 릴리스 제목(=날짜)에서 숫자만 추출 (예: "20250305")
-          DATE="$(echo "$json" | jq -r '.name' | sed 's/[^0-9]//g')"
+          DATE="$(echo "$json" | jq -r '.name' | sed 's/[^0-9]//g')"   # ex) 20250305
           [ -n "$DATE" ] || { echo "::error::Failed to parse release date (title)"; exit 1; }
 
-          # 정확히 20.04 자산만 선택
           cand="llvm-mingw-${DATE}-ucrt-ubuntu-20.04-x86_64.tar.xz"
           url="$(echo "$json" | jq -r --arg N "$cand" '.assets[] | select(.name==$N) .browser_download_url')"
 
-          # 같은 날짜에서 ubuntu x86_64 tar.* 임의 선택(해당 리포는 20.04만 배포한다고 하셨으니 여전히 안전)
+          # 같은 날짜에서 ubuntu x86_64 tar.* 임의 선택(해당 리포는 20.04만 배포)
           if [ -z "$url" ] || [ "$url" = "null" ]; then
             url="$(echo "$json" | jq -r --arg D "$DATE" '
               .assets[] |
@@ -83,16 +81,29 @@ jobs:
           export PATH="$LLVM_MINGW_DIR/bin:$PATH"
           hash -r
 
-          # 필수 바이너리 빠르게 점검 (ARM64EC + i686)
-          need=(arm64ec-w64-mingw32-clang arm64ec-w64-mingw32-clang++ i686-w64-mingw32-clang i686-w64-mingw32-clang++)
+          # 필수 바이너리 확인 (x86_64 프론트엔드 + i686)
+          need=(x86_64-w64-mingw32-clang x86_64-w64-mingw32-clang++ i686-w64-mingw32-clang i686-w64-mingw32-clang++)
           for b in "${need[@]}"; do
             command -v "$b" >/dev/null || { echo "::error::missing tool: $b"; exit 1; }
           done
 
-          # windres가 없으면 나중에 llvm-rc로 대체
-          for b in arm64ec-w64-mingw32-windres i686-w64-mingw32-windres llvm-rc llvm-strip llvm-ar; do
-            command -v "$b" >/dev/null || echo "::warning::missing (will fallback if possible): $b"
-          done
+          # windres 후보 확인 (래퍼 없이 직접 사용)
+          if command -v arm64ec-w64-mingw32-windres >/dev/null 2>&1; then
+            echo "ARM64EC_WINDRES=arm64ec-w64-mingw32-windres" >> "$GITHUB_ENV"
+            echo "ARM64EC_WINDRES_NEEDS_FLAG=false" >> "$GITHUB_ENV"
+          elif command -v x86_64-w64-mingw32-windres >/dev/null 2>&1; then
+            echo "ARM64EC_WINDRES=x86_64-w64-mingw32-windres" >> "$GITHUB_ENV"
+            echo "ARM64EC_WINDRES_NEEDS_FLAG=true" >> "$GITHUB_ENV"
+          else
+            # llvm-rc는 Meson windres 스타일(-i/-o)에 약하므로 최후수단 경고만
+            if command -v llvm-rc >/dev/null 2>&1; then
+              echo "ARM64EC_WINDRES=llvm-rc" >> "$GITHUB_ENV"
+              echo "ARM64EC_WINDRES_NEEDS_FLAG=false" >> "$GITHUB_ENV"
+              echo "::warning::Using llvm-rc for ARM64EC .rc — may fail; prefer *-windres"
+            else
+              echo "::error::No windres found (need arm64ec-w64-mingw32-windres or x86_64-w64-mingw32-windres or llvm-rc)"; exit 1
+            fi
+          fi
 
       - name: Clone DXVK-Sarek (main + submodules)
         run: |
@@ -103,32 +114,45 @@ jobs:
           git checkout -f main
           git submodule update --init --recursive --checkout
 
-      - name: Create Meson cross files (ARM64EC & i686)
+      - name: Create Meson cross files (ARM64EC & i686) — no wrapper, no $@
         working-directory: src
         run: |
           set -Eeuo pipefail
-      
+
           ARM_INC="$LLVM_MINGW_DIR/arm64ec-w64-mingw32/include"
           ARM_LIB="$LLVM_MINGW_DIR/arm64ec-w64-mingw32/lib"
-      
-          # ARM64EC: 컴파일러는 x86_64 프론트엔드, 타깃은 ARM64EC로 링크
+
+          # windres 라인 구성 (배열 형태로 -F pe-arm64ec 부착 가능)
+          if [ "${ARM64EC_WINDRES_NEEDS_FLAG:-false}" = "true" ]; then
+            WINDRES_LINE="['${ARM64EC_WINDRES}', '-F', 'pe-arm64ec']"
+          else
+            WINDRES_LINE="'${ARM64EC_WINDRES}'"
+          fi
+
+          # ARM64EC (x86_64 프론트엔드로 컴파일, 링크는 ARM64EC)
           cat > cross-arm64ec.txt <<EOF
           [binaries]
           c = 'x86_64-w64-mingw32-clang'
           cpp = 'x86_64-w64-mingw32-clang++'
           ar = 'llvm-ar'
-          windres = 'llvm-rc'
+          windres = ${WINDRES_LINE}
           strip = 'llvm-strip'
           pkg-config = 'pkg-config'
-      
+
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
+
+          [built-in options]
+          c_args = ['-Wno-nontrivial-memcall','-Wno-macro-redefined','-D__ARM64EC__=1','-D_M_ARM64EC=1','-isystem','${ARM_INC}']
+          cpp_args = ['-Wno-nontrivial-memcall','-Wno-macro-redefined','-D__ARM64EC__=1','-D_M_ARM64EC=1','-isystem','${ARM_INC}']
+          c_link_args = ['-Wl,/machine:arm64ec','-L','${ARM_LIB}']
+          cpp_link_args = ['-Wl,/machine:arm64ec','-L','${ARM_LIB}']
           EOF
-      
-          # i686 그대로
+
+          # i686
           cat > cross-i686.txt <<'EOF'
           [binaries]
           c = 'i686-w64-mingw32-clang'
@@ -137,16 +161,22 @@ jobs:
           windres = 'i686-w64-mingw32-windres'
           strip = 'llvm-strip'
           pkg-config = 'pkg-config'
+
           [host_machine]
           system = 'windows'
           cpu_family = 'x86'
           cpu = 'i686'
           endian = 'little'
+
+          [built-in options]
+          c_args = ['-Wno-nontrivial-memcall','-Wno-macro-redefined']
+          cpp_args = ['-Wno-nontrivial-memcall','-Wno-macro-redefined']
           EOF
-      
-          # windres 없으면 llvm-rc로 대체
-          command -v i686-w64-mingw32-windres >/dev/null || \
+
+          # i686 windres 없으면 llvm-rc로 대체
+          if ! command -v i686-w64-mingw32-windres >/dev/null 2>&1 && command -v llvm-rc >/dev/null 2>&1; then
             sed -i "s|^windres = .*|windres = 'llvm-rc'|" cross-i686.txt
+          fi
 
       - name: Build ARM64EC (DLLs)
         working-directory: src
@@ -154,19 +184,11 @@ jobs:
           PREFIX_ARM64EC: ${{ github.workspace }}/dist-arm64ec
         run: |
           set -Eeuo pipefail
-          ARM_INC="$LLVM_MINGW_DIR/arm64ec-w64-mingw32/include"
-          ARM_LIB="$LLVM_MINGW_DIR/arm64ec-w64-mingw32/lib"
-      
           meson setup "$GITHUB_WORKSPACE/build.arm64ec" \
             --cross-file cross-arm64ec.txt \
             --buildtype release \
             --prefix "$PREFIX_ARM64EC" \
-            -Dbuild_id=false -Dstrip=true \
-            -Dc_args="-Wno-nontrivial-memcall -D__ARM64EC__=1 -D_M_ARM64EC=1 -DWIN32_LEAN_AND_MEAN -isystem $ARM_INC" \
-            -Dcpp_args="-Wno-nontrivial-memcall -D__ARM64EC__=1 -D_M_ARM64EC=1 -DWIN32_LEAN_AND_MEAN -isystem $ARM_INC" \
-            -Dc_link_args="-Wl,/machine:arm64ec -L$ARM_LIB" \
-            -Dcpp_link_args="-Wl,/machine:arm64ec -L$ARM_LIB"
-      
+            -Dbuild_id=false -Dstrip=true
           ninja -C "$GITHUB_WORKSPACE/build.arm64ec" -j"$(nproc)"
           meson install --no-rebuild -C "$GITHUB_WORKSPACE/build.arm64ec"
 
@@ -180,9 +202,7 @@ jobs:
             --cross-file cross-i686.txt \
             --buildtype release \
             --prefix "$PREFIX_I686" \
-            -Dbuild_id=false -Dstrip=true \
-            -Dc_args='-Wno-nontrivial-memcall' \
-            -Dcpp_args='-Wno-nontrivial-memcall'
+            -Dbuild_id=false -Dstrip=true
           ninja -C "$GITHUB_WORKSPACE/build.i686" -j"$(nproc)"
           meson install --no-rebuild -C "$GITHUB_WORKSPACE/build.i686"
 
