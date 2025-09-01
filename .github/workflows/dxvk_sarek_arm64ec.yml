@@ -12,6 +12,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# 기본은 PowerShell. (Windows 잡에 적용)
 defaults:
   run:
     shell: pwsh
@@ -28,12 +29,9 @@ jobs:
       REPO: ${{ github.repository }}
       SAREK_REPO: pythonlover02/DXVK-Sarek
       RELEASE_TAG: DXVK-SAREK-ARM64EC
-    # Guard 잡은 bash 스크립트이므로 이 잡에 한해 shell을 bash로 오버라이드
-    defaults:
-      run:
-        shell: bash
     steps:
       - name: Install jq, curl
+        shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -y
@@ -41,6 +39,7 @@ jobs:
 
       - name: Collect already-published versions (DXVK-SAREK-ARM64EC)
         id: have
+        shell: bash
         run: |
           set -euo pipefail
           API="https://api.github.com"
@@ -61,6 +60,7 @@ jobs:
         id: detect
         env:
           MIN_VER: "1.10.8"
+        shell: bash
         run: |
           set -euo pipefail
           API="https://api.github.com"
@@ -98,6 +98,7 @@ jobs:
 
       - name: Decide build
         id: decide
+        shell: bash
         run: |
           set -euo pipefail
           if [ "${{ steps.detect.outputs.missing }}" = "true" ]; then
@@ -163,7 +164,7 @@ void main(){}
 
       - name: Clone DXVK-Sarek (tags + submodules)
         run: |
-          git clone --recurse-submodules https://github.com/${env:SAREK_REPO}.git src
+          git clone --recurse-submodules "https://github.com/$($env:SAREK_REPO).git" src
           cd src
           git fetch --tags --force
           git fetch origin main --force
@@ -287,7 +288,6 @@ void main(){}
             Remove-Item -Recurse -Force "$env:GITHUB_WORKSPACE\build.ec","$env:GITHUB_WORKSPACE\build.w32","$env:PREFIX_X64","$env:PREFIX_X86","$env:GITHUB_WORKSPACE\DXVK_WCP" -ErrorAction SilentlyContinue
 
             # ---------- ARM64EC (system32) ----------
-            # (Env is from ilammy/msvc-dev-cmd@v1 with arch: x64)
             meson setup "$env:GITHUB_WORKSPACE\build.ec" `
               --cross-file "$env:GITHUB_WORKSPACE\arm64ec.msvc" `
               --buildtype release `
