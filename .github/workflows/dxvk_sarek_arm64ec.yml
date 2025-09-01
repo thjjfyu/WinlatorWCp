@@ -103,7 +103,7 @@ jobs:
           git checkout -f main
           git submodule update --init --recursive --checkout
 
-      - name: Patch for ARM64EC: guard x86 intrinsics includes
+      - name: "Patch for ARM64EC: guard x86 intrinsics includes"
         working-directory: src
         run: |
           set -Eeuo pipefail
