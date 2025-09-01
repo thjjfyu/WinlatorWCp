@@ -254,11 +254,12 @@ jobs:
             ROOT="${PWD}"
             # 1) v2.5: constexpr enum init error (UnmappedSubresource) → const cast
             TEX="src/d3d11/d3d11_texture.h"
-            if [[ -f "$TEX" ]] \
-               && grep -qE 'static[[:space:]]+constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource[[:space:]]*=[[:space:]]*D3D11_MAP\(-1u\);' "$TEX"; then
-              echo "Patch: UnmappedSubresource constexpr → const (${TEX})"
+            if [[ -f "$TEX" ]] && grep -qE '\bUnmappedSubresource\b' "$TEX"; then
+              echo "Patch: UnmappedSubresource → inline static const (${TEX})"
               cp "$TEX" "${TEX}.bak"
-              perl -0777 -pe 's/static\s+constexpr\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*D3D11_MAP\(-1u\);\s*/static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);\n/s' -i "$TEX"
+              perl -0777 -pe \
+                's/\bstatic\s+(?:const|constexpr)\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
+                -i "$TEX"
             fi
 
             # 2) Latest mingw headers: remove duplicate _D3DDEVINFO_RESOURCEMANAGER typedef (if present)
