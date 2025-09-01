@@ -267,40 +267,55 @@ jobs:
           sudo mv "$tmp" "$HDR"
           echo "[ok] injected ARM64EC override into $(basename "$HDR")"
 
-      - name: Remap intrin builders AFTER their original #define (stop inline asm paths)
+      - name: Remap intrin builders AFTER their original #define (force replace)
         run: |
           set -Eeuo pipefail
           HDR="$TOOLCHAIN_DIR/arm64ec-w64-mingw32/include/psdk_inc/intrin-impl.h"
           [ -f "$HDR" ] || { echo "::error::intrin-impl.h not found at $HDR"; exit 1; }
           sudo cp -f "$HDR" "${HDR}.pre-map.bak"
-
+      
+          # 멀티라인 매크로 본문을 통째로 스킵하고, ARM64EC일 때 우리 구현으로 치환
           tmp="$(mktemp)"
           sudo awk '
-            BEGIN{d32=0; d64=0}
+            function emit32() {
+              print "#if defined(_M_ARM64EC) || defined(__ARM64EC__)"
+              print "#undef __buildbittesti"
+              print "#define __buildbittesti(NAME, TYP, OP, EXTRA) __IMPL32_##NAME"
+              print "#endif"
+            }
+            function emit64() {
+              print "#if defined(_M_ARM64EC) || defined(__ARM64EC__)"
+              print "#undef __buildbittesti64"
+              print "#define __buildbittesti64(NAME, TYP, OP, EXTRA) __IMPL64_##NAME"
+              print "#endif"
+            }
+      
+            BEGIN { skip=0; mode=0 }  # mode: 0=일반, 32=__buildbittesti 본문 스킵, 64=__buildbittesti64 본문 스킵
             {
+              if (mode==32) {
+                # 매크로 본문은 백슬래시가 끝날 때까지 스킵
+                if ($0 ~ /\\$/) next; else { mode=0; next }
+              } else if (mode==64) {
+                if ($0 ~ /\\$/) next; else { mode=0; next }
+              }
+      
+              # 원본 매크로 정의 라인을 만나면 그 줄도 버리고, 대신 우리 치환 블록 출력
+              if ($0 ~ /^#[[:space:]]*define[[:space:]]+__buildbittesti\(/) { emit32(); mode=32; next }
+              if ($0 ~ /^#[[:space:]]*define[[:space:]]+__buildbittesti64\(/) { emit64(); mode=64; next }
+      
               print
-              if (!d32 && $0 ~ /^#[[:space:]]*define[[:space:]]+__buildbittesti\(/) {
-                print "#if defined(_M_ARM64EC) || defined(__ARM64EC__)"
-                print "#undef __buildbittesti"
-                print "#define __buildbittesti(NAME, TYP, OP, EXTRA) __IMPL32_##NAME"
-                print "#endif"
-                d32=1
-              }
-              if (!d64 && $0 ~ /^#[[:space:]]*define[[:space:]]+__buildbittesti64\(/) {
-                print "#if defined(_M_ARM64EC) || defined(__ARM64EC__)"
-                print "#undef __buildbittesti64"
-                print "#define __buildbittesti64(NAME, TYP, OP, EXTRA) __IMPL64_##NAME"
-                print "#endif"
-                d64=1
-              }
-            }' "${HDR}.pre-map.bak" | sudo tee "$tmp" >/dev/null
-
+            }
+          ' "${HDR}.pre-map.bak" | sudo tee "$tmp" >/dev/null
+      
+          # 플래그 제약도 안전하게: __FLAGCONSTRAINT가 "=@ccc"로 가지 않게 고정
+          # (혹여 원본이 다시 정의했다 쳐도, 아래 sed로 마지막에 "=r"로 덮어쓴다)
           sudo mv "$tmp" "$HDR"
-
-          echo "---- sanity (should see our remap right after the #define lines) ----"
-          grep -n "__buildbittesti" "$HDR" | head -n 10 || true
-          grep -n "__buildbittesti64" "$HDR" | head -n 10 || true
-
+          sudo sed -i 's/^#define[[:space:]]\+__FLAGCONSTRAINT.*/#define __FLAGCONSTRAINT "=r"/' "$HDR"
+      
+          echo "---- sanity: should show our remap (IMPL32/64) and no inline asm use ----"
+          grep -n "^#define[[:space:]]\+__buildbittesti" "$HDR" | head -n 2 || true
+          grep -n "^#define[[:space:]]\+__buildbittesti64" "$HDR" | head -n 2 || true
+     
       - name: Create Meson cross files (DXVK-style; arm64ec + i686)
         run: |
           set -Eeuo pipefail
