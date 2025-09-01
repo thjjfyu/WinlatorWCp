@@ -123,7 +123,6 @@ jobs:
           #version 450
           void main() {}
           GLSL
-          # availability check only; 1.1 is enough
           try() { command -v "$1" >/dev/null 2>&1 || return 1; "$1" --quiet --target-env vulkan1.1 --vn testvar -o /tmp/min.h /tmp/min.comp; }
           if try glslang; then :
           elif try glslangValidator; then
@@ -147,11 +146,15 @@ jobs:
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
           export PATH="$TOOLCHAIN_DIR/bin:$PATH"
 
-      - name: Write ARM64EC macro shim (pre-include)
+      - name: Write ARM64EC shim (force safe intrinsics path)
         run: |
           cat > "${GITHUB_WORKSPACE}/arm64ec_shim.h" <<'EOF'
-          #ifndef ARM64EC_SHIM_ON
-          #define ARM64EC_SHIM_ON 1
+          #pragma once
+          /* Force mingw-w64 intrin-impl.h to use Clang-safe (=qm) flag outputs, not =@ccc */
+          #ifdef __GCC_ASM_FLAG_OUTPUTS__
+          #undef __GCC_ASM_FLAG_OUTPUTS__
+          #endif
+          /* Target marks for ARM64EC toolchain */
           #ifndef _M_ARM64EC
           #define _M_ARM64EC 1
           #endif
@@ -161,116 +164,20 @@ jobs:
           #ifndef __aarch64__
           #define __aarch64__ 1
           #endif
-          /* x86/x64 & ISA 플래그 무력화 */
-          #undef __x86_64__
-          #undef __i386__
-          #undef _M_X64
-          #undef _M_AMD64
-          #undef _AMD64_
-          #undef _M_IX86
-          #undef __MMX__
-          #undef __SSE__
-          #undef __SSE2__
-          #undef __AVX__
-          #undef __AVX2__
-          /* 인라인 충돌 회피 */
+          /* Avoid inline conflicts in winbase.h */
           #ifndef NOWINBASEINTERLOCK
           #define NOWINBASEINTERLOCK 1
           #endif
           #ifndef __CRT__NO_INLINE
           #define __CRT__NO_INLINE 1
           #endif
-          #endif
           EOF
-
-      - name: Override mingw-w64 bit-test intrinsics for ARM64EC (no inline asm)
-        run: |
-          set -Eeuo pipefail
-          HDR="$TOOLCHAIN_DIR/arm64ec-w64-mingw32/include/psdk_inc/intrin-impl.h"
-          [ -f "$HDR" ] || { echo "::error::intrin-impl.h not found at $HDR"; exit 1; }
-          sudo cp -f "$HDR" "${HDR}.bak"
-      
-          # 파일 맨 앞에 ARM64EC용 매크로 오버라이드 블록 삽입
-          tmp="$(mktemp)"
-          awk 'NR==1{
-            print "/* ---- ARM64EC override (inject by CI) ---- */";
-            print "#if defined(_M_ARM64EC) || defined(__ARM64EC__)";
-            print "#undef __buildbittesti";
-            print "#undef __buildbittesti64";
-            print "";
-            # 32-bit 구현들 (_/PascalCase 둘 다)
-            print "#define __IMPL32__interlockedbittestandset \\";
-            print "static __forceinline unsigned char _interlockedbittestandset(long volatile* Base, long Offset){ \\";
-            print "  unsigned long idx=((unsigned long)Offset>>5); unsigned long m=1u<<(Offset&31); \\";
-            print "  volatile unsigned long* p=(volatile unsigned long*)Base+idx; \\";
-            print "  unsigned long old=__atomic_fetch_or((unsigned long*)p,m,__ATOMIC_SEQ_CST); \\";
-            print "  return (old&m)?1:0; }";
-            print "#define __IMPL32__interlockedbittestandreset \\";
-            print "static __forceinline unsigned char _interlockedbittestandreset(long volatile* Base, long Offset){ \\";
-            print "  unsigned long idx=((unsigned long)Offset>>5); unsigned long m=1u<<(Offset&31); \\";
-            print "  volatile unsigned long* p=(volatile unsigned long*)Base+idx; \\";
-            print "  unsigned long old=__atomic_fetch_and((unsigned long*)p,~m,__ATOMIC_SEQ_CST); \\";
-            print "  return (old&m)?1:0; }";
-            print "#define __IMPL32__interlockedbittestandcomplement \\";
-            print "static __forceinline unsigned char _interlockedbittestandcomplement(long volatile* Base, long Offset){ \\";
-            print "  unsigned long idx=((unsigned long)Offset>>5); unsigned long m=1u<<(Offset&31); \\";
-            print "  volatile unsigned long* p=(volatile unsigned long*)Base+idx; \\";
-            print "  unsigned long old=__atomic_fetch_xor((unsigned long*)p,m,__ATOMIC_SEQ_CST); \\";
-            print "  return (old&m)?1:0; }";
-            print "#define __IMPL32_InterlockedBitTestAndSet \\";
-            print "static __forceinline unsigned char InterlockedBitTestAndSet(long volatile* Base, long Offset){ \\";
-            print "  return _interlockedbittestandset(Base,Offset); }";
-            print "#define __IMPL32_InterlockedBitTestAndReset \\";
-            print "static __forceinline unsigned char InterlockedBitTestAndReset(long volatile* Base, long Offset){ \\";
-            print "  return _interlockedbittestandreset(Base,Offset); }";
-            print "#define __IMPL32_InterlockedBitTestAndComplement \\";
-            print "static __forceinline unsigned char InterlockedBitTestAndComplement(long volatile* Base, long Offset){ \\";
-            print "  return _interlockedbittestandcomplement(Base,Offset); }";
-            print "";
-            # 64-bit 구현들 (_/PascalCase 둘 다)
-            print "#define __IMPL64__interlockedbittestandset64 \\";
-            print "static __forceinline unsigned char _interlockedbittestandset64(long long volatile* Base, long long Offset){ \\";
-            print "  unsigned long long idx=((unsigned long long)Offset>>6); unsigned long long m=1ull<<(Offset&63); \\";
-            print "  volatile unsigned long long* p=(volatile unsigned long long*)Base+idx; \\";
-            print "  unsigned long long old=__atomic_fetch_or((unsigned long long*)p,m,__ATOMIC_SEQ_CST); \\";
-            print "  return (old&m)?1:0; }";
-            print "#define __IMPL64__interlockedbittestandreset64 \\";
-            print "static __forceinline unsigned char _interlockedbittestandreset64(long long volatile* Base, long long Offset){ \\";
-            print "  unsigned long long idx=((unsigned long long)Offset>>6); unsigned long long m=1ull<<(Offset&63); \\";
-            print "  volatile unsigned long long* p=(volatile unsigned long long*)Base+idx; \\";
-            print "  unsigned long long old=__atomic_fetch_and((unsigned long long*)p,~m,__ATOMIC_SEQ_CST); \\";
-            print "  return (old&m)?1:0; }";
-            print "#define __IMPL64__interlockedbittestandcomplement64 \\";
-            print "static __forceinline unsigned char _interlockedbittestandcomplement64(long long volatile* Base, long long Offset){ \\";
-            print "  unsigned long long idx=((unsigned long long)Offset>>6); unsigned long long m=1ull<<(Offset&63); \\";
-            print "  volatile unsigned long long* p=(volatile unsigned long long*)Base+idx; \\";
-            print "  unsigned long long old=__atomic_fetch_xor((unsigned long long*)p,m,__ATOMIC_SEQ_CST); \\";
-            print "  return (old&m)?1:0; }";
-            print "#define __IMPL64_InterlockedBitTestAndSet64 \\";
-            print "static __forceinline unsigned char InterlockedBitTestAndSet64(long long volatile* Base, long long Offset){ \\";
-            print "  return _interlockedbittestandset64(Base,Offset); }";
-            print "#define __IMPL64_InterlockedBitTestAndReset64 \\";
-            print "static __forceinline unsigned char InterlockedBitTestAndReset64(long long volatile* Base, long long Offset){ \\";
-            print "  return _interlockedbittestandreset64(Base,Offset); }";
-            print "#define __IMPL64_InterlockedBitTestAndComplement64 \\";
-            print "static __forceinline unsigned char InterlockedBitTestAndComplement64(long long volatile* Base, long long Offset){ \\";
-            print "  return _interlockedbittestandcomplement64(Base,Offset); }";
-            print "";
-            # 빌더 매크로를 이름별 구현으로 맵
-            print "#define __buildbittesti(NAME, TYP, OP, EXTRA) __IMPL32_##NAME";
-            print "#define __buildbittesti64(NAME, TYP, OP, EXTRA) __IMPL64_##NAME";
-            print "#endif /* ARM64EC override */";
-            print "/* ---- end of ARM64EC override ---- */";
-          }1' "${HDR}.bak" > "$tmp"
-          sudo mv "$tmp" "$HDR"
-      
-          echo "[ok] ARM64EC intrinsics override injected into $(basename "$HDR")"
 
       - name: Create Meson cross files (DXVK-style; arm64ec + i686)
         run: |
           set -Eeuo pipefail
           pick() { command -v "$1" >/dev/null 2>&1 && echo "$1" || echo "$2"; }
-      
+
           # --- arm64ec (prefer GCC wrappers; robust fallbacks) ---
           A_AR=$(pick arm64ec-w64-mingw32-ar arm64ec-w64-mingw32-ar)
           A_CC=$(pick arm64ec-w64-mingw32-gcc arm64ec-w64-mingw32-clang)
@@ -279,7 +186,7 @@ jobs:
           A_STRIP=$(pick llvm-strip arm64ec-w64-mingw32-strip)
           A_WIDL=$(pick arm64ec-w64-mingw32-widl widl)
           A_PKG=$(pick aarch64-linux-gnu-pkg-config pkg-config)
-      
+
           cat > "${{ github.workspace }}/arm64ec.cross" <<EOF
           [binaries]
           ar = '${A_AR}'
@@ -297,10 +204,10 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args = ['-Wno-nontrivial-memcall','-DWIN32_LEAN_AND_MEAN','-DVC_EXTRALEAN','-include','${GITHUB_WORKSPACE}/arm64ec_shim.h','-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1','-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86','-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__']
-          cpp_args = ['-Wno-nontrivial-memcall','-DWIN32_LEAN_AND_MEAN','-DVC_EXTRALEAN','-include','${GITHUB_WORKSPACE}/arm64ec_shim.h','-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1','-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86','-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__']
+          c_args = ['-Wno-nontrivial-memcall','-include','${GITHUB_WORKSPACE}/arm64ec_shim.h','-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1']
+          cpp_args = ['-Wno-nontrivial-memcall','-include','${GITHUB_WORKSPACE}/arm64ec_shim.h','-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1']
           EOF
-      
+
           # --- i686 (strip/rc 정리; DXVK와 동일) ---
           I_AR=$(pick i686-w64-mingw32-ar i686-w64-mingw32-ar)
           I_CC=$(pick i686-w64-mingw32-gcc i686-w64-mingw32-clang)
@@ -308,7 +215,7 @@ jobs:
           I_RC=$(pick i686-w64-mingw32-windres llvm-rc)
           I_STRIP=$(pick llvm-strip i686-w64-mingw32-strip)
           I_PKG=$(pick i686-w64-mingw32-pkg-config pkg-config)
-      
+
           cat > "${{ github.workspace }}/i686.cross" <<EOF
           [binaries]
           ar = '${I_AR}'
@@ -325,48 +232,9 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args = ['-Wno-nontrivial-memcall','-DWIN32_LEAN_AND_MEAN','-DVC_EXTRALEAN']
-          cpp_args = ['-Wno-nontrivial-memcall','-DWIN32_LEAN_AND_MEAN','-DVC_EXTRALEAN']
+          c_args = ['-Wno-nontrivial-memcall']
+          cpp_args = ['-Wno-nontrivial-memcall']
           EOF
-
-      - name: Patch mingw-w64 intrinsics for ARM64EC (avoid x86 asm paths)
-        run: |
-          set -Eeuo pipefail
-          HDR="$TOOLCHAIN_DIR/arm64ec-w64-mingw32/include/psdk_inc/intrin-impl.h"
-          [ -f "$HDR" ] || exit 0
-          sudo sed -i -E \
-            -e 's/#if[[:space:]]+defined\(__x86_64__\)/#if defined(__x86_64__) \&\& !defined(_M_ARM64EC) \&\& !defined(__ARM64EC__)/g' \
-            -e 's/#ifdef[[:space:]]+__x86_64__/#if defined(__x86_64__) \&\& !defined(_M_ARM64EC) \&\& !defined(__ARM64EC__)/g' \
-            "$HDR" || true
-
-      - name: Hard-disable x86 inline asm in intrin-impl.h for ARM64EC
-        run: |
-          set -Eeuo pipefail
-          HDR="$TOOLCHAIN_DIR/arm64ec-w64-mingw32/include/psdk_inc/intrin-impl.h"
-          [ -f "$HDR" ] || { echo "::warning::intrin-impl.h not found"; exit 0; }
-      
-          echo "[info] Patching $HDR"
-      
-          # 1) 파일 맨 앞에 'ARM64EC면 x86 ASM 비활성' 매크로 선언 삽입
-          sudo cp -f "$HDR" "${HDR}.bak"
-          sudo awk 'NR==1{print "#if defined(_M_ARM64EC) || defined(__ARM64EC__)"; \
-                           print "#define __MINGW_DISABLE_X86_ASM_FOR_ARM64EC 1"; \
-                           print "#endif"}1' "${HDR}.bak" | sudo tee "$HDR" >/dev/null
-      
-          # 2) 다양한 분기 형태에 대해, x86 조건에 ARM64EC 예외를 추가
-          sudo sed -i -E \
-            -e 's/#if([^\n]*defined\(__x86_64__\)[^\n]*)/#if\1 \&\& \!defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
-            -e 's/#if([^\n]*defined\(__i386__\)[^\n]*)/#if\1 \&\& \!defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
-            -e 's/#if([^\n]*defined\(_M_AMD64\)[^\n]*)/#if\1 \&\& \!defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
-            -e 's/#if([^\n]*defined\(_M_X64\)[^\n]*)/#if\1 \&\& \!defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
-            -e 's/#if([^\n]*defined\(_M_IX86\)[^\n]*)/#if\1 \&\& \!defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
-            -e 's/#if([^\n]*defined\(_AMD64_\)[^\n]*)/#if\1 \&\& \!defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
-            -e 's/#ifdef[[:space:]]+(__x86_64__|__i386__|_M_AMD64|_M_X64|_M_IX86|_AMD64_)/#if defined(\1) \&\& !defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
-            "$HDR"
-      
-          # (선택) 패치가 적용됐는지 빠르게 확인
-          echo "---- grep sanity ----"
-          grep -n "__MINGW_DISABLE_X86_ASM_FOR_ARM64EC" "$HDR" || true
 
       - name: Clone DXVK-Sarek (tags + submodules)
         run: |
@@ -417,10 +285,9 @@ jobs:
         run: |
           echo "---- predefines (raw toolchain) ----"
           echo | arm64ec-w64-mingw32-g++ -dM -E -xc++ - | egrep '__ARM64EC__|_M_ARM64EC|__aarch64__|__arm|__x86_64__|__i386__|_M_X64|_M_AMD64|_M_IX86|_AMD64_' || true
-          echo "---- intended flags (expect: ARM64EC yes / x86/x64 no) ----"
+          echo "---- with shim (expect: ARM64EC yes / x86/x64 no) ----"
           echo | arm64ec-w64-mingw32-g++ -dM -E -xc++ - \
-            -DNOWINBASEINTERLOCK -D__CRT__NO_INLINE -D_M_ARM64EC=1 -D__ARM64EC__=1 \
-            -U__x86_64__ -U__i386__ -U_M_X64 -U_M_AMD64 -U_AMD64_ -U_M_IX86 \
+            -include "${GITHUB_WORKSPACE}/arm64ec_shim.h" \
             | egrep '__ARM64EC__|_M_ARM64EC|__aarch64__|__arm|__x86_64__|__i386__|_M_X64|_M_AMD64|_M_IX86|_AMD64_' || true
 
       - name: Build NEW versions only (DXVK-Sarek → WCP)
