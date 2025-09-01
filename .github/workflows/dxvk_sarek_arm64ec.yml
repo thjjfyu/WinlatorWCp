@@ -1,16 +1,16 @@
-name: Build DXVK-Sarek arm64ec
+name: Build DXVK-Sarek arm64ec (MSVC/Windows SDK)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"
+    - cron: "0 18 * * *"   # Daily (UTC)
 
 permissions:
   contents: write
 
 defaults:
   run:
-    shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
+    shell: bash
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -95,280 +95,50 @@ jobs:
           fi
 
   build-and-release:
-    name: Build & release DXVK-Sarek (ARM64EC + 32-bit)
-    runs-on: ubuntu-24.04
+    name: Build & release DXVK-Sarek (ARM64EC + 32-bit) – MSVC
+    runs-on: windows-latest
     needs: guard
     if: needs.guard.outputs.build == 'true'
     env:
       SAREK_REPO: pythonlover02/DXVK-Sarek
-      PREFIX_X64: ${{ github.workspace }}/dist-arm64ec
-      PREFIX_X86: ${{ github.workspace }}/dist-x86
-      TOOLCHAIN_DIR: /opt/llvm-mingw
+      PREFIX_X64: ${{ github.workspace }}\dist-arm64ec   # system32 (ARM64EC)
+      PREFIX_X86: ${{ github.workspace }}\dist-x86       # syswow64 (Win32)
       RELEASE_TAG: DXVK-SAREK-ARM64EC
       GH_TOKEN: ${{ github.token }}
 
     steps:
-      - name: Install host tooling (lean)
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools (Python, Meson/Ninja, jq, 7zip, zstd, Vulkan SDK)
+        shell: powershell
         run: |
-          sudo apt-get -yq update
-          sudo apt-get -yq install --no-install-recommends \
-            curl xz-utils jq ca-certificates \
-            git meson ninja-build glslang-tools pkg-config \
-            build-essential python3 zstd file rsync gh
+          python -m pip install --upgrade pip
+          python -m pip install meson ninja
+          choco install -y jq 7zip zstd vulkan-sdk
+          $vk = (Get-ChildItem "C:\\VulkanSDK" | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          if (-not $vk) { Write-Error "Vulkan SDK not found" }
+          $env:Path += ";$vk\Bin"  # glslangValidator
 
       - name: Ensure glslang (--vn) available
+        shell: powershell
         run: |
-          cat > /tmp/min.comp <<'GLSL'
+          @"
           #version 450
           void main() {}
-          GLSL
-          try() { command -v "$1" >/dev/null 2>&1 || return 1; "$1" --quiet --target-env vulkan1.1 --vn testvar -o /tmp/min.h /tmp/min.comp; }
-          if try glslang; then :
-          elif try glslangValidator; then
-            BIN="$HOME/.local/bin"; mkdir -p "$BIN"
-            ln -sf "$(command -v glslangValidator)" "$BIN/glslang"
-            echo "$BIN" >> "$GITHUB_PATH"
-          else
-            echo "::error::No glslang/glslangValidator with working --vn"; exit 1
-          fi
-
-      - name: Download llvm-mingw (ucrt, ubuntu x86_64) from mstorsjo
-        run: |
-          set -Eeuo pipefail
-          json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                 https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
-          url=$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)
-          [[ -n "$url" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
-          sudo mkdir -p "$TOOLCHAIN_DIR"
-          curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
-          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
-          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
-          export PATH="$TOOLCHAIN_DIR/bin:$PATH"
-
-      - name: Write ARM64EC shim (pre-include)
-        run: |
-          cat > "${GITHUB_WORKSPACE}/arm64ec_shim.h" <<'EOF'
-          #pragma once
-          /* Force ARM64EC view and avoid winbase.h inline noise */
-          #ifndef NOWINBASEINTERLOCK
-          #define NOWINBASEINTERLOCK 1
-          #endif
-          #ifndef __CRT__NO_INLINE
-          #define __CRT__NO_INLINE 1
-          #endif
-          #ifndef _M_ARM64EC
-          #define _M_ARM64EC 1
-          #endif
-          #ifndef __ARM64EC__
-          #define __ARM64EC__ 1
-          #endif
-          #ifndef __aarch64__
-          #define __aarch64__ 1
-          #endif
-          /* Kill x86/x64 feature macros in case the toolchain predefines them */
-          #ifdef __x86_64__
-          #undef __x86_64__
-          #endif
-          #ifdef __i386__
-          #undef __i386__
-          #endif
-          #ifdef _M_X64
-          #undef _M_X64
-          #endif
-          #ifdef _M_AMD64
-          #undef _M_AMD64
-          #endif
-          #ifdef _AMD64_
-          #undef _AMD64_
-          #endif
-          #ifdef _M_IX86
-          #undef _M_IX86
-          #endif
-          #ifdef __MMX__
-          #undef __MMX__
-          #endif
-          #ifdef __SSE__
-          #undef __SSE__
-          #endif
-          #ifdef __SSE2__
-          #undef __SSE2__
-          #endif
-          #ifdef __AVX__
-          #undef __AVX__
-          #endif
-          #ifdef __AVX2__
-          #undef __AVX2__
-          #endif
-          /* Disallow gcc-style flag outputs paths */
-          #ifdef __GCC_ASM_FLAG_OUTPUTS__
-          #undef __GCC_ASM_FLAG_OUTPUTS__
-          #endif
-          EOF
-
-      - name: Write ARM64EC intrinsics override header (no asm)
-        run: |
-          cat > "${GITHUB_WORKSPACE}/arm64ec_intrin_override.h" <<'EOF'
-          #if defined(_M_ARM64EC) || defined(__ARM64EC__)
-          #if !defined(__x86_64__) && !defined(__i386__)
-          #ifndef __MINGW_ARM64EC_BTEST_OVERRIDE
-          #define __MINGW_ARM64EC_BTEST_OVERRIDE 1
-          #undef __GCC_ASM_FLAG_OUTPUTS__
-          #undef __FLAGCONSTRAINT
-          #define __FLAGCONSTRAINT "=r"
-          /* 32-bit bit-test via atomics */
-          static inline unsigned char _interlockedbittestandset(long volatile* Base, long Offset){
-            unsigned long idx=((unsigned long)Offset>>5), m=1u<<(Offset&31);
-            volatile unsigned long* p=(volatile unsigned long*)Base+idx;
-            unsigned long old=__atomic_fetch_or((unsigned long*)p,m,__ATOMIC_SEQ_CST);
-            return (old&m)?1:0;
-          }
-          static inline unsigned char _interlockedbittestandreset(long volatile* Base, long Offset){
-            unsigned long idx=((unsigned long)Offset>>5), m=1u<<(Offset&31);
-            volatile unsigned long* p=(volatile unsigned long*)Base+idx;
-            unsigned long old=__atomic_fetch_and((unsigned long*)p,~m,__ATOMIC_SEQ_CST);
-            return (old&m)?1:0;
-          }
-          static inline unsigned char _interlockedbittestandcomplement(long volatile* Base, long Offset){
-            unsigned long idx=((unsigned long)Offset>>5), m=1u<<(Offset&31);
-            volatile unsigned long* p=(volatile unsigned long*)Base+idx;
-            unsigned long old=__atomic_fetch_xor((unsigned long*)p,m,__ATOMIC_SEQ_CST);
-            return (old&m)?1:0;
-          }
-          static inline unsigned char InterlockedBitTestAndSet(long volatile* Base, long Offset){
-            return _interlockedbittestandset(Base,Offset);
-          }
-          static inline unsigned char InterlockedBitTestAndReset(long volatile* Base, long Offset){
-            return _interlockedbittestandreset(Base,Offset);
-          }
-          static inline unsigned char InterlockedBitTestAndComplement(long volatile* Base, long Offset){
-            return _interlockedbittestandcomplement(Base,Offset);
-          }
-          /* 64-bit */
-          static inline unsigned char _interlockedbittestandset64(long long volatile* Base, long long Offset){
-            unsigned long long idx=((unsigned long long)Offset>>6), m=1ull<<(Offset&63);
-            volatile unsigned long long* p=(volatile unsigned long long*)Base+idx;
-            unsigned long long old=__atomic_fetch_or((unsigned long long*)p,m,__ATOMIC_SEQ_CST);
-            return (old&m)?1:0;
-          }
-          static inline unsigned char _interlockedbittestandreset64(long long volatile* Base, long long Offset){
-            unsigned long long idx=((unsigned long long)Offset>>6), m=1ull<<(Offset&63);
-            volatile unsigned long long* p=(volatile unsigned long long*)Base+idx;
-            unsigned long long old=__atomic_fetch_and((unsigned long long*)p,~m,__ATOMIC_SEQ_CST);
-            return (old&m)?1:0;
-          }
-          static inline unsigned char _interlockedbittestandcomplement64(long long volatile* Base, long long Offset){
-            unsigned long long idx=((unsigned long long)Offset>>6), m=1ull<<(Offset&63);
-            volatile unsigned long long* p=(volatile unsigned long long*)Base+idx;
-            unsigned long long old=__atomic_fetch_xor((unsigned long long*)p,m,__ATOMIC_SEQ_CST);
-            return (old&m)?1:0;
-          }
-          static inline unsigned char InterlockedBitTestAndSet64(long long volatile* Base, long long Offset){
-            return _interlockedbittestandset64(Base,Offset);
-          }
-          static inline unsigned char InterlockedBitTestAndReset64(long long volatile* Base, long long Offset){
-            return _interlockedbittestandreset64(Base,Offset);
-          }
-          static inline unsigned char InterlockedBitTestAndComplement64(long long volatile* Base, long long Offset){
-            return _interlockedbittestandcomplement64(Base,Offset);
-          }
-          #endif
-          #endif
-          EOF
-
-      # === Sanity: x86 매크로가 남아있으면 즉시 실패시켜서 원인 추적 용이하게 ===
-      - name: Sanity – no x86 predefines
-        run: |
-          arm64ec-w64-mingw32-gcc -dM -E -xc /dev/null \
-            | egrep "__x86_64__|__i386__|_M_X64|_M_AMD64|_AMD64_|_M_IX86|__MMX__|__SSE__|__SSE2__|__AVX__|__AVX2__" \
-            && { echo "::error::x86 macros pre-defined; wrong toolchain wrapper"; exit 1; } || true
-
-      - name: Create Meson cross files (DXVK-style; arm64ec + i686)
-        run: |
-          set -Eeuo pipefail
-          pick() { command -v "$1" >/dev/null 2>&1 && echo "$1" || echo "$2"; }
-
-          # --- arm64ec ---
-          A_AR=$(pick arm64ec-w64-mingw32-ar arm64ec-w64-mingw32-ar)
-          A_CC=$(pick arm64ec-w64-mingw32-gcc arm64ec-w64-mingw32-clang)
-          A_CXX=$(pick arm64ec-w64-mingw32-g++ arm64ec-w64-mingw32-clang++)
-          A_RC=$(pick arm64ec-w64-mingw32-windres llvm-rc)
-          A_STRIP=$(pick llvm-strip arm64ec-w64-mingw32-strip)
-          A_WIDL=$(pick arm64ec-w64-mingw32-widl widl)
-          A_PKG=$(pick aarch64-linux-gnu-pkg-config pkg-config)
-
-          cat > "${{ github.workspace }}/arm64ec.cross" <<EOF
-          [binaries]
-          ar = '${A_AR}'
-          c = '${A_CC}'
-          cpp = '${A_CXX}'
-          windres = '${A_RC}'
-          strip = '${A_STRIP}'
-          widl = '${A_WIDL}'
-          pkgconfig = '${A_PKG}'
-          [host_machine]
-          system = 'windows'
-          cpu_family = 'aarch64'
-          cpu = 'aarch64'
-          endian = 'little'
-          [properties]
-          needs_exe_wrapper = true
-          [built-in options]
-          c_args  = [
-            '-Wno-nontrivial-memcall',
-            '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
-            '-include','${GITHUB_WORKSPACE}/arm64ec_intrin_override.h',
-            '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
-            '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86',
-            '-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__',
-            '-U__GCC_ASM_FLAG_OUTPUTS__','-U__FLAGCONSTRAINT','-D__FLAGCONSTRAINT="=r"'
-          ]
-          cpp_args= [
-            '-Wno-nontrivial-memcall',
-            '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
-            '-include','${GITHUB_WORKSPACE}/arm64ec_intrin_override.h',
-            '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
-            '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86',
-            '-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__',
-            '-U__GCC_ASM_FLAG_OUTPUTS__','-U__FLAGCONSTRAINT','-D__FLAGCONSTRAINT="=r"'
-          ]
-          EOF
-
-          # --- i686 (32-bit) ---
-          I_AR=$(pick i686-w64-mingw32-ar i686-w64-mingw32-ar)
-          I_CC=$(pick i686-w64-mingw32-gcc i686-w64-mingw32-clang)
-          I_CXX=$(pick i686-w64-mingw32-g++ i686-w64-mingw32-clang++)
-          I_RC=$(pick i686-w64-mingw32-windres llvm-rc)
-          I_STRIP=$(pick llvm-strip i686-w64-mingw32-strip)
-          I_PKG=$(pick i686-w64-mingw32-pkg-config pkg-config)
-
-          cat > "${{ github.workspace }}/i686.cross" <<EOF
-          [binaries]
-          ar = '${I_AR}'
-          c = '${I_CC}'
-          cpp = '${I_CXX}'
-          windres = '${I_RC}'
-          strip = '${I_STRIP}'
-          pkgconfig = '${I_PKG}'
-          [host_machine]
-          system = 'windows'
-          cpu_family = 'x86'
-          cpu = 'i686'
-          endian = 'little'
-          [properties]
-          needs_exe_wrapper = true
-          [built-in options]
-          c_args = ['-Wno-nontrivial-memcall']
-          cpp_args = ['-Wno-nontrivial-memcall']
-          EOF
+          "@ | Out-File -Encoding ascii $env:RUNNER_TEMP\min.comp
+          glslangValidator --quiet --target-env vulkan1.1 --vn testvar -o $env:RUNNER_TEMP\min.h $env:RUNNER_TEMP\min.comp
 
       - name: Clone DXVK-Sarek (tags + submodules)
+        shell: bash
         run: |
           git clone --recurse-submodules https://github.com/${SAREK_REPO}.git src
           cd src
           git fetch --tags --force
           git fetch origin main --force
 
-      - name: Resolve Sarek tags (>= v1.10.8, Async 제외) & compute NEW
+      - name: Resolve Sarek tags (>= v1.10.8) & compute NEW
+        shell: bash
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
@@ -406,128 +176,142 @@ jobs:
           echo "Already uploaded:"; cat "$EXIST" || true
           echo "To build:";         cat "${GITHUB_WORKSPACE}/to_build.txt" || true
 
-      - name: Build NEW versions only (DXVK-Sarek → WCP)
-        env:
-          GITHUB_WORKSPACE: ${{ github.workspace }}
+      - name: Prepare native files for MSVC (ARM64EC & Win32)
+        shell: powershell
         run: |
-          set -Eeuo pipefail
-          OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
-          cd "${GITHUB_WORKSPACE}/src"
+          @"
+          [binaries]
+          c = 'cl'
+          cpp = 'cl'
+          ar = 'lib'
+          strip = '':
 
-          LIST="${GITHUB_WORKSPACE}/to_build.txt"
-          if [[ ! -f "$LIST" || ! -s "$LIST" ]]; then
-            echo "No new versions to build."; exit 0; fi
+          [built-in options]
+          c_args = ['/Zc:preprocessor','/permissive-','/W3','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/DVC_EXTRALEAN','/D_WIN32_WINNT=0x0A00','/arm64EC']
+          cpp_args = ['/Zc:preprocessor','/permissive-','/W3','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/DVC_EXTRALEAN','/D_WIN32_WINNT=0x0A00','/arm64EC']
+          "@ | Out-File -Encoding ASCII $env:GITHUB_WORKSPACE\arm64ec.native
 
-          while read -r tag base; do
-            echo "::group::Build ${tag} (dxvk-sarek ARM64EC + 32-bit)"
-            git checkout -f "$tag"
-            git submodule update --init --recursive --checkout
+          @"
+          [binaries]
+          c = 'cl'
+          cpp = 'cl'
+          ar = 'lib'
 
-            git config user.name  "ci"
-            git config user.email "ci@local"
-            git config --global --add safe.directory "$(pwd)"
-            git add -A
-            git commit -m "local compat patches for ${base}" || true
-            git tag -d "$tag" || true
-            git tag -a "$tag" -m "clean retag for HUD version"
-            git reset --hard HEAD
-            git clean -xdf
+          [built-in options]
+          c_args = ['/Zc:preprocessor','/permissive-','/W3','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/DVC_EXTRALEAN','/D_WIN32_WINNT=0x0A00']
+          cpp_args = ['/Zc:preprocessor','/permissive-','/W3','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/DVC_EXTRALEAN','/D_WIN32_WINNT=0x0A00']
+          "@ | Out-File -Encoding ASCII $env:GITHUB_WORKSPACE\win32.native
 
-            rm -rf "${GITHUB_WORKSPACE}/build.ec" "${GITHUB_WORKSPACE}/build.w32" \
-                   "${PREFIX_X64}" "${PREFIX_X86}" "${GITHUB_WORKSPACE}/DXVK_WCP"
+      # ===== ARM64EC BUILD =====
+      - name: MSVC DevCmd (ARM64EC)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64ec
 
-            # ARM64EC (system32)
-            meson setup "${GITHUB_WORKSPACE}/build.ec" \
-              --cross-file "${GITHUB_WORKSPACE}/arm64ec.cross" \
-              --buildtype release \
-              --prefix "${PREFIX_X64}" \
-              -Dbuild_id=false -Dstrip=true
-            ninja -C "${GITHUB_WORKSPACE}/build.ec" -j"$(nproc)"
-            meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.ec"
+      - name: Build (ARM64EC → system32)
+        shell: cmd
+        env:
+          PREFIX_X64: ${{ env.PREFIX_X64 }}
+        run: |
+          setlocal EnableExtensions EnableDelayedExpansion
+          if not exist "%PREFIX_X64%" mkdir "%PREFIX_X64%"
+          cd src
+          meson setup "..\build.ec" --native-file "..\arm64ec.native" --buildtype release --prefix "%PREFIX_X64%"
+          meson compile -C "..\build.ec" -j %NUMBER_OF_PROCESSORS%
+          meson install -C "..\build.ec" --no-rebuild
 
-            # 32-bit (syswow64)
-            meson setup "${GITHUB_WORKSPACE}/build.w32" \
-              --cross-file "${GITHUB_WORKSPACE}/i686.cross" \
-              --buildtype release \
-              --prefix "${PREFIX_X86}" \
-              -Dbuild_id=false -Dstrip=true
-            ninja -C "${GITHUB_WORKSPACE}/build.w32" -j"$(nproc)"
-            meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.w32"
+      # ===== 32-bit BUILD =====
+      - name: MSVC DevCmd (Win32)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
 
-            mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
-            cp -v "${PREFIX_X64}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
-            cp -v "${PREFIX_X86}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
+      - name: Build (Win32 → syswow64)
+        shell: cmd
+        env:
+          PREFIX_X86: ${{ env.PREFIX_X86 }}
+        run: |
+          setlocal EnableExtensions EnableDelayedExpansion
+          if not exist "%PREFIX_X86%" mkdir "%PREFIX_X86%"
+          cd src
+          meson setup "..\build.w32" --native-file "..\win32.native" --buildtype release --prefix "%PREFIX_X86%"
+          meson compile -C "..\build.w32" -j %NUMBER_OF_PROCESSORS%
+          meson install -C "..\build.w32" --no-rebuild
 
-            (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x64.txt || true
-            (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x86.txt || true
-            if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
-              echo "::error::No DLLs discovered for ${base}"; exit 1; fi
+      - name: Package to WCP (tar+zstd)
+        shell: powershell
+        run: |
+          $out = "$env:GITHUB_WORKSPACE\out"; New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $wcpRoot = "$env:GITHUB_WORKSPACE\DXVK_WCP"; New-Item -ItemType Directory -Force -Path $wcpRoot | Out-Null
+          New-Item -ItemType Directory -Force -Path "$wcpRoot\system32" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$wcpRoot\syswow64" | Out-Null
 
-            jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
-            jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
+          Copy-Item -Force "$env:PREFIX_X64\bin\*.dll" "$wcpRoot\system32" -ErrorAction SilentlyContinue
+          Copy-Item -Force "$env:PREFIX_X86\bin\*.dll" "$wcpRoot\syswow64" -ErrorAction SilentlyContinue
 
-            jq -n \
-              --arg VN "sarek-${base}" \
-              --argjson VC 0 \
-              --arg DESC "DXVK-Sarek arm64ec build by Ari" \
-              --arg SYS '${system32}/' \
-              --arg WOW '${syswow64}/' \
-              --slurpfile x64 /tmp/x64.json \
-              --slurpfile x86 /tmp/x86.json \
-              '
-              ($x64[0] // []) as $A |
-              ($x86[0] // []) as $B |
-              {
-                type: "DXVK",
-                versionName: $VN,
-                versionCode: $VC,
-                description: $DESC,
-                files: [
-                  ($A[]? | {source: ("system32/"+.), target: ($SYS + .)}),
-                  ($B[]? | {source: ("syswow64/"+.), target: ($WOW + .)})
-                ]
-              }' > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
+          $x64 = Get-ChildItem "$wcpRoot\system32" -Filter *.dll | Select-Object -ExpandProperty Name | Sort-Object
+          $x86 = Get-ChildItem "$wcpRoot\syswow64" -Filter *.dll | Select-Object -ExpandProperty Name | Sort-Object
+          if (-not $x64 -and -not $x86) { Write-Error "No DLLs discovered" }
 
-            mkdir -p "${GITHUB_WORKSPACE}/out"
-            wcp="dxvk-sarek-arm64ec-${base}.wcp"
-            tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd \
-                --format=gnu --owner=0 --group=0 --numeric-owner \
-                -cf "${GITHUB_WORKSPACE}/out/${wcp}" profile.json system32 syswow64
-            echo "::endgroup::"
-          done < "$LIST"
+          $profile = [ordered]@{
+            type = "DXVK"
+            versionName = "sarek-UNKNOWN"
+            versionCode = 0
+            description = "DXVK-Sarek arm64ec build by MSVC CI"
+            files = @()
+          }
+          foreach ($f in $x64) { $profile.files += @{ source = "system32/$f"; target = '${system32}/' + $f } }
+          foreach ($f in $x86) { $profile.files += @{ source = "syswow64/$f"; target = '${syswow64}/' + $f } }
+          $profile | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 "$wcpRoot\profile.json"
+
+          # Determine current version from built tag list (if any)
+          $list = Get-Content "$env:GITHUB_WORKSPACE\to_build.txt" -ErrorAction SilentlyContinue
+          if ($list -and $list.Length -gt 0) {
+            $last = ($list | Select-Object -Last 1).Trim().Split(' ')[1]
+            (Get-Content "$wcpRoot\profile.json") -replace 'sarek-UNKNOWN', "sarek-$last" | Set-Content "$wcpRoot\profile.json"
+            $env:CURRENT_VER = $last
+          } else {
+            $env:CURRENT_VER = "manual"
+          }
+
+          Push-Location $wcpRoot
+          # Create tar then zstd with 7zip
+          7z a -ttar "$out\DXVK_WCP.tar" .\profile.json .\system32 .\syswow64 | Out-Null
+          7z a -m0=ZSTD "$out\dxvk-sarek-arm64ec-$env:CURRENT_VER.wcp" "$out\DXVK_WCP.tar" | Out-Null
+          Pop-Location
 
       - name: Build release notes (with Current)
+        shell: powershell
         run: |
-          set -Eeuo pipefail
-          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          printf '🤖 Automated DXVK-Sarek arm64ec builds (1.10.8+).\n\n' > "$NOTES"
-          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-sarek-arm64ec-*.wcp" > /dev/null; then
-            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-sarek-arm64ec-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
-            cur="${latest#dxvk-sarek-arm64ec-}"; cur="${cur%.wcp}"
-            echo "Current: ${cur}" >> "$NOTES"
-          fi
-          cat "$NOTES"
+          $notes = "$env:GITHUB_WORKSPACE\RELEASE_NOTES.md"
+          "`U+1F916 Automated DXVK-Sarek arm64ec builds (1.10.8+).`n" | Out-File -Encoding UTF8 $notes
+          $latest = Get-ChildItem "$env:GITHUB_WORKSPACE\out" -Filter "dxvk-sarek-arm64ec-*.wcp" | Sort-Object Name | Select-Object -Last 1
+          if ($latest) {
+            $cur = [System.IO.Path]::GetFileNameWithoutExtension($latest.Name).Substring("dxvk-sarek-arm64ec-".Length)
+            Add-Content -Encoding UTF8 $notes "Current: $cur"
+          }
+          Get-Content $notes
 
       - name: Create/Update GitHub Release (DXVK-SAREK-ARM64EC) + upload WCPs
+        shell: powershell
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -Eeuo pipefail
-          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          RELEASE_TAG="${RELEASE_TAG}"
-
-          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
-          else
-            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
-          fi
-
-          if compgen -G "${GITHUB_WORKSPACE}/out/*.wcp" > /dev/null; then
-            gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
-          else
+          $notes = "$env:GITHUB_WORKSPACE\RELEASE_NOTES.md"
+          $tag = "$env:RELEASE_TAG"
+          gh release view $tag --repo "$env:REPO" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo "$env:REPO" -t $tag -F $notes
+          } else {
+            gh release edit   $tag --repo "$env:REPO" -t $tag -F $notes
+          }
+          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\out" -Filter *.wcp | Select-Object -ExpandProperty FullName
+          if ($files) {
+            gh release upload $tag $files --repo "$env:REPO" --clobber
+          } else {
             echo "No new WCP files to upload."
-          fi
+          }
 
       - name: Upload build logs on failure
         if: failure()
@@ -535,5 +319,5 @@ jobs:
         with:
           name: meson-logs
           path: |
-            ${{ github.workspace }}/build.ec/meson-logs/**
-            ${{ github.workspace }}/build.w32/meson-logs/**
+            ${{ github.workspace }}\build.ec\meson-logs\**
+            ${{ github.workspace }}\build.w32\meson-logs\**
