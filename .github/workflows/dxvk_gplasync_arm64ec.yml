@@ -391,7 +391,7 @@ jobs:
               -Dbuild_id=false -Dstrip=true \
               ${MESON_D3D8}
             ninja -C "${GITHUB_WORKSPACE}/build.x86" -j"$(nproc)"
-            meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x86}"
+            meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x86"
 
             # Collect DLLs (system32 = ARM64EC, syswow64 = i686)
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
