@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 60
     env:
       VKD3D_REPO: HansKristian-Work/vkd3d-proton
-      TOOLCHAIN_DIR: ${{ runner.temp }}/llvm-mingw        # Use runner temp to avoid sudo/permission issues
+      TOOLCHAIN_DIR: ${{ github.workspace }}/.tmp/llvm-mingw        # Use runner temp to avoid sudo/permission issues
       PREFIX_EC: ${{ github.workspace }}/stage-arm64ec
       PREFIX_X86: ${{ github.workspace }}/stage-i686
       RELEASE_TAG: VKD3D-PROTON-ARM64EC
