@@ -35,6 +35,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -Eeuo pipefail
           API="https://api.github.com"
           OWNER="doitsujin"; REPO="dxvk"
           LATEST="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
@@ -53,6 +54,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO:     ${{ github.repository }}
         run: |
+          set -Eeuo pipefail
           API="https://api.github.com/repos/${REPO}/releases/tags/DXVK"
           HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' \
                   -H "Authorization: Bearer ${GH_TOKEN}" \
@@ -70,6 +72,7 @@ jobs:
       - name: Decide build                                      # Build only if upstream > mirrored
         id: decide
         run: |
+          set -Eeuo pipefail
           UP="${{ steps.upstream.outputs.tag }}"
           CUR="${{ steps.local.outputs.cur }}"
           up_base="${UP#v}"
@@ -105,6 +108,7 @@ jobs:
 
       - name: Ensure glslang (--vn) is available            # Use glslang or link glslangValidator → glslang
         run: |
+          set -Eeuo pipefail
           cat > /tmp/min.comp <<'GLSL'
           #version 450
           void main() {}
@@ -122,6 +126,7 @@ jobs:
       - name: Download llvm-mingw (ucrt, ubuntu x86_64)     # Toolchain for x86/x64 Windows targets
         id: llvm
         run: |
+          set -Eeuo pipefail
           json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
           url=$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)
           [[ -n "$url" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
@@ -132,6 +137,7 @@ jobs:
 
       - name: Create Meson cross files (clang; llvm-strip first with robust fallbacks)
         run: |
+          set -Eeuo pipefail
           cat > "${{ github.workspace }}/x86_64.cross" << 'EOF'
           [binaries]
           ar = 'x86_64-w64-mingw32-ar'
@@ -185,6 +191,7 @@ jobs:
 
       - name: Clone DXVK (tags + submodules)                # Full tag list required for multi-version loop
         run: |
+          set -Eeuo pipefail
           git clone --recurse-submodules https://github.com/${DXVK_REPO}.git src
           cd src && git fetch --tags --force
 
@@ -193,10 +200,11 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -Eeuo pipefail
           cd src
           git tag -l 'v*' \
             | { grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' || true; } \
-            | sort -V \
+            | LC_ALL=C sort -V \
             | awk '
                 function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
                   for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1}return 0}
@@ -210,7 +218,7 @@ jobs:
             gh api repos/"${REPO}"/releases/tags/"${RELEASE_TAG}" \
               | jq -r '.assets[].name' \
               | sed -n -E 's/^dxvk-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
-              | sort -V > "$EXIST" || true
+              | LC_ALL=C sort -V > "$EXIST" || true
           fi
 
           while IFS= read -r tag; do
@@ -242,22 +250,39 @@ jobs:
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
 
-            # Optional compatibility tweaks (guarded by pattern checks)
-            hdr="src/d3d9/d3d9_include.h"
-            if [[ -f "$hdr" ]]; then
-              for sym in _D3DDEVINFO_RESOURCEMANAGER _D3DDEVINFO_D3D9PIPELINETIMINGS _D3DDEVINFO_VCACHE _D3DDEVINFO_PRIVATEDATA _D3DDEVINFO_VERTEXSTATS; do
-                if grep -q "typedef struct ${sym}" "$hdr"; then
-                  awk -v pat="typedef struct ${sym}" 'BEGIN{drop=0}
-                    index($0, pat){drop=1; next}
-                    drop==1 && /\}[[:space:]]*[^;]*;[[:space:]]*$/ {drop=0; next}
-                    drop==0 {print}' "$hdr" > "$hdr.new" && mv "$hdr.new" "$hdr"
-                fi
-              done
+            # ── DXVK compatibility patches (idempotent) : v2.5 constexpr, d3d9 typedef, mismatched-tags ──
+            ROOT="${PWD}"
+            # 1) v2.5: constexpr enum init error (UnmappedSubresource) → const cast
+            TEX="src/d3d11/d3d11_texture.h"
+            if [[ -f "$TEX" ]] \
+               && grep -qE 'static[[:space:]]+constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource[[:space:]]*=[[:space:]]*D3D11_MAP\(-1u\);' "$TEX"; then
+              echo "Patch: UnmappedSubresource constexpr → const (${TEX})"
+              cp "$TEX" "${TEX}.bak"
+              perl -0777 -pe 's/static\s+constexpr\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*D3D11_MAP\(-1u\);\s*/static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);\n/s' -i "$TEX"
             fi
-            hdr2="src/d3d11/d3d11_texture.h"
-            if [[ -f "$hdr2" ]] && grep -qE 'constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource' "$hdr2"; then
-              sed -i -E 's/static[[:space:]]+constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource[[:space:]]*=[[:space:]]*D3D11_MAP\(-1u\);/inline static const D3D11_MAP UnmappedSubresource = (D3D11_MAP)0xFFFFFFFFu;/' "$hdr2" || true
+
+            # 2) Latest mingw headers: remove duplicate _D3DDEVINFO_RESOURCEMANAGER typedef (if present)
+            INC="src/d3d9/d3d9_include.h"
+            TOOL_X64="/opt/llvm-mingw/x86_64-w64-mingw32/include/d3d9types.h"
+            TOOL_X86="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
+            if [[ -f "$INC" ]] && (grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X64" || grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X86"); then
+              if grep -qE 'typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b' "$INC"; then
+                echo "Patch: remove duplicate _D3DDEVINFO_RESOURCEMANAGER typedef (${INC})"
+                cp "$INC" "${INC}.bak"
+                perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;//s' -i "$INC"
+              fi
             fi
+
+            # 3) (optional) Mismatched-tags warning: align forward decl to 'struct'
+            MEM="src/dxvk/dxvk_memory.h"
+            if [[ -f "$MEM" ]] \
+               && grep -qE '^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;' "$MEM" \
+               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*\{' "$MEM"; then
+              echo "Patch: forward declaration class→struct for DxvkMemoryChunk (${MEM})"
+              cp "$MEM" "${MEM}.bak2"
+              sed -E -i 's/^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;/struct DxvkMemoryChunk;/' "$MEM"
+            fi
+            # ── End compatibility patches ──
 
             ver="${tag#v}"
 
@@ -287,8 +312,8 @@ jobs:
             export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct "$tag")"
 
             # Collect file lists and generate profile.json
-            (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x64.txt || true
-            (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/x86.txt || true
+            (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
+            (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
             if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
               echo "::error::No DLLs discovered for ${ver}"; exit 1; fi
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
@@ -312,6 +337,7 @@ jobs:
 
       - name: Build release notes (minimal)                  # Mention current if any artifacts were created
         run: |
+          set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           printf '🤖 Automated DXVK builds (2.3.1+).\n\n' > "$NOTES"
           if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-*.wcp" > /dev/null; then
