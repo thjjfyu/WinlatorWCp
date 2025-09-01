@@ -149,6 +149,7 @@ jobs:
         run: |
           cat > "${GITHUB_WORKSPACE}/arm64ec_shim.h" <<'EOF'
           #pragma once
+          /* Force ARM64EC view and avoid winbase.h inline noise */
           #ifndef NOWINBASEINTERLOCK
           #define NOWINBASEINTERLOCK 1
           #endif
@@ -164,22 +165,57 @@ jobs:
           #ifndef __aarch64__
           #define __aarch64__ 1
           #endif
+          /* Kill x86/x64 feature macros in case the toolchain predefines them */
+          #ifdef __x86_64__
+          #undef __x86_64__
+          #endif
+          #ifdef __i386__
+          #undef __i386__
+          #endif
+          #ifdef _M_X64
+          #undef _M_X64
+          #endif
+          #ifdef _M_AMD64
+          #undef _M_AMD64
+          #endif
+          #ifdef _AMD64_
+          #undef _AMD64_
+          #endif
+          #ifdef _M_IX86
+          #undef _M_IX86
+          #endif
+          #ifdef __MMX__
+          #undef __MMX__
+          #endif
+          #ifdef __SSE__
+          #undef __SSE__
+          #endif
+          #ifdef __SSE2__
+          #undef __SSE2__
+          #endif
+          #ifdef __AVX__
+          #undef __AVX__
+          #endif
+          #ifdef __AVX2__
+          #undef __AVX2__
+          #endif
+          /* Disallow gcc-style flag outputs paths */
           #ifdef __GCC_ASM_FLAG_OUTPUTS__
           #undef __GCC_ASM_FLAG_OUTPUTS__
           #endif
           EOF
 
-      - name: Write ARM64EC intrinsics override header (no asm, no backslashes)
+      - name: Write ARM64EC intrinsics override header (no asm)
         run: |
           cat > "${GITHUB_WORKSPACE}/arm64ec_intrin_override.h" <<'EOF'
           #if defined(_M_ARM64EC) || defined(__ARM64EC__)
+          #if !defined(__x86_64__) && !defined(__i386__)
           #ifndef __MINGW_ARM64EC_BTEST_OVERRIDE
           #define __MINGW_ARM64EC_BTEST_OVERRIDE 1
           #undef __GCC_ASM_FLAG_OUTPUTS__
           #undef __FLAGCONSTRAINT
           #define __FLAGCONSTRAINT "=r"
-          /* function-like builders will be nulled by -D from cflags */
-          /* 32-bit */
+          /* 32-bit bit-test via atomics */
           static inline unsigned char _interlockedbittestandset(long volatile* Base, long Offset){
             unsigned long idx=((unsigned long)Offset>>5), m=1u<<(Offset&31);
             volatile unsigned long* p=(volatile unsigned long*)Base+idx;
@@ -239,11 +275,18 @@ jobs:
           #endif
           EOF
 
+      # === Sanity: x86 매크로가 남아있으면 즉시 실패시켜서 원인 추적 용이하게 ===
+      - name: Sanity – no x86 predefines
+        run: |
+          arm64ec-w64-mingw32-gcc -dM -E -xc /dev/null \
+            | egrep "__x86_64__|__i386__|_M_X64|_M_AMD64|_AMD64_|_M_IX86|__MMX__|__SSE__|__SSE2__|__AVX__|__AVX2__" \
+            && { echo "::error::x86 macros pre-defined; wrong toolchain wrapper"; exit 1; } || true
+
       - name: Create Meson cross files (DXVK-style; arm64ec + i686)
         run: |
           set -Eeuo pipefail
           pick() { command -v "$1" >/dev/null 2>&1 && echo "$1" || echo "$2"; }
-      
+
           # --- arm64ec ---
           A_AR=$(pick arm64ec-w64-mingw32-ar arm64ec-w64-mingw32-ar)
           A_CC=$(pick arm64ec-w64-mingw32-gcc arm64ec-w64-mingw32-clang)
@@ -252,7 +295,7 @@ jobs:
           A_STRIP=$(pick llvm-strip arm64ec-w64-mingw32-strip)
           A_WIDL=$(pick arm64ec-w64-mingw32-widl widl)
           A_PKG=$(pick aarch64-linux-gnu-pkg-config pkg-config)
-      
+
           cat > "${{ github.workspace }}/arm64ec.cross" <<EOF
           [binaries]
           ar = '${A_AR}'
@@ -275,10 +318,8 @@ jobs:
             '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
             '-include','${GITHUB_WORKSPACE}/arm64ec_intrin_override.h',
             '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
-            # === x86 경로 완전 차단 ===
             '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86',
             '-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__',
-            # === 플래그 출력/제약 무력화 ===
             '-U__GCC_ASM_FLAG_OUTPUTS__','-U__FLAGCONSTRAINT','-D__FLAGCONSTRAINT="=r"'
           ]
           cpp_args= [
@@ -291,15 +332,15 @@ jobs:
             '-U__GCC_ASM_FLAG_OUTPUTS__','-U__FLAGCONSTRAINT','-D__FLAGCONSTRAINT="=r"'
           ]
           EOF
-      
-          # --- i686 (변경 없음) ---
+
+          # --- i686 (32-bit) ---
           I_AR=$(pick i686-w64-mingw32-ar i686-w64-mingw32-ar)
           I_CC=$(pick i686-w64-mingw32-gcc i686-w64-mingw32-clang)
           I_CXX=$(pick i686-w64-mingw32-g++ i686-w64-mingw32-clang++)
           I_RC=$(pick i686-w64-mingw32-windres llvm-rc)
           I_STRIP=$(pick llvm-strip i686-w64-mingw32-strip)
           I_PKG=$(pick i686-w64-mingw32-pkg-config pkg-config)
-      
+
           cat > "${{ github.workspace }}/i686.cross" <<EOF
           [binaries]
           ar = '${I_AR}'
