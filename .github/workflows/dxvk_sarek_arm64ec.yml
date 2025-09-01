@@ -123,7 +123,7 @@ jobs:
           #version 450
           void main() {}
           GLSL
-          # use a permissive target-env for availability check only
+          # availability check only; 1.1 is enough
           try() { command -v "$1" >/dev/null 2>&1 || return 1; "$1" --quiet --target-env vulkan1.1 --vn testvar -o /tmp/min.h /tmp/min.comp; }
           if try glslang; then :
           elif try glslangValidator; then
@@ -147,39 +147,84 @@ jobs:
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
           export PATH="$TOOLCHAIN_DIR/bin:$PATH"
 
-      - name: Create ARM64EC wrapper shims if missing (clang target fallback)
+      - name: Create Meson cross files (DXVK-style; arm64ec + i686)
         run: |
           set -Eeuo pipefail
-          BIN="$HOME/.local/bin"; mkdir -p "$BIN"
-          path_add=0
-          add() { [ $path_add -eq 0 ] && { echo "$BIN" >> "$GITHUB_PATH"; path_add=1; }; chmod +x "$1"; }
-          make_shim() { f="$BIN/$1"; shift; printf '#!/usr/bin/env bash\nexec %s "$@"\n' "$*" > "$f"; add "$f"; }
+          pick() { command -v "$1" >/dev/null 2>&1 && echo "$1" || echo "$2"; }
 
-          have_cc=0
-          command -v arm64ec-w64-mingw32-gcc >/dev/null 2>&1 && have_cc=1
-          command -v arm64ec-w64-mingw32-clang >/dev/null 2>&1 && have_cc=1
+          # --- arm64ec (prefer GCC wrappers; robust fallbacks) ---
+          A_AR=$(pick arm64ec-w64-mingw32-ar arm64ec-w64-mingw32-ar)
+          A_CC=$(pick arm64ec-w64-mingw32-gcc arm64ec-w64-mingw32-clang)
+          A_CXX=$(pick arm64ec-w64-mingw32-g++ arm64ec-w64-mingw32-clang++)
+          A_RC=$(pick arm64ec-w64-mingw32-windres llvm-rc)
+          A_STRIP=$(pick llvm-strip arm64ec-w64-mingw32-strip)
+          A_WIDL=$(pick arm64ec-w64-mingw32-widl widl)
+          A_PKG=$(pick aarch64-linux-gnu-pkg-config pkg-config)
 
-          if [ $have_cc -eq 0 ]; then
-            # Use clang with explicit arm64ec target triple as fallback
-            make_shim arm64ec-w64-mingw32-gcc   "clang --target=arm64ec-w64-mingw32"
-            make_shim arm64ec-w64-mingw32-g++   "clang++ --target=arm64ec-w64-mingw32"
-            make_shim arm64ec-w64-mingw32-clang "clang --target=arm64ec-w64-mingw32"
-            make_shim arm64ec-w64-mingw32-clang++ "clang++ --target=arm64ec-w64-mingw32"
-            make_shim arm64ec-w64-mingw32-ar    "llvm-ar"
-            make_shim arm64ec-w64-mingw32-strip "llvm-strip"
-            make_shim arm64ec-w64-mingw32-windres "llvm-rc"
-          fi
+          cat > "${{ github.workspace }}/arm64ec.cross" <<EOF
+          [binaries]
+          ar = '${A_AR}'
+          c = '${A_CC}'
+          cpp = '${A_CXX}'
+          windres = '${A_RC}'
+          strip = '${A_STRIP}'
+          widl = '${A_WIDL}'
+          pkgconfig = '${A_PKG}'
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          [properties]
+          needs_exe_wrapper = true
+          [built-in options]
+          c_args = ['-Wno-nontrivial-memcall',
+                    '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE',
+                    '-D_M_ARM64EC=1','-D__ARM64EC__=1',
+                    '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86']
+          cpp_args = ['-Wno-nontrivial-memcall',
+                      '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE',
+                      '-D_M_ARM64EC=1','-D__ARM64EC__=1',
+                      '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86']
+          EOF
 
-      - name: Verify toolchain in PATH (arm64ec + i686)
+          # --- i686 (strip/rc 정리; DXVK와 동일) ---
+          I_AR=$(pick i686-w64-mingw32-ar i686-w64-mingw32-ar)
+          I_CC=$(pick i686-w64-mingw32-gcc i686-w64-mingw32-clang)
+          I_CXX=$(pick i686-w64-mingw32-g++ i686-w64-mingw32-clang++)
+          I_RC=$(pick i686-w64-mingw32-windres llvm-rc)
+          I_STRIP=$(pick llvm-strip i686-w64-mingw32-strip)
+          I_PKG=$(pick i686-w64-mingw32-pkg-config pkg-config)
+
+          cat > "${{ github.workspace }}/i686.cross" <<EOF
+          [binaries]
+          ar = '${I_AR}'
+          c = '${I_CC}'
+          cpp = '${I_CXX}'
+          windres = '${I_RC}'
+          strip = '${I_STRIP}'
+          pkgconfig = '${I_PKG}'
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'x86'
+          cpu = 'i686'
+          endian = 'little'
+          [properties]
+          needs_exe_wrapper = true
+          [built-in options]
+          c_args = ['-Wno-nontrivial-memcall']
+          cpp_args = ['-Wno-nontrivial-memcall']
+          EOF
+
+      - name: Patch mingw-w64 intrinsics for ARM64EC (avoid x86 asm paths)
         run: |
           set -Eeuo pipefail
-          (which arm64ec-w64-mingw32-gcc || which arm64ec-w64-mingw32-clang)
-          (arm64ec-w64-mingw32-gcc --version || arm64ec-w64-mingw32-clang --version)
-          which i686-would-be-missing || true
-          which i686-w64-mingw32-gcc
-          i686-w64-mingw32-gcc --version
-          which llvm-strip || true
-          which llvm-rc || true
+          HDR="$TOOLCHAIN_DIR/arm64ec-w64-mingw32/include/psdk_inc/intrin-impl.h"
+          [ -f "$HDR" ] || exit 0
+          sudo sed -i -E \
+            -e 's/#if[[:space:]]+defined\(__x86_64__\)/#if defined(__x86_64__) \&\& !defined(_M_ARM64EC) \&\& !defined(__ARM64EC__)/g' \
+            -e 's/#ifdef[[:space:]]+__x86_64__/#if defined(__x86_64__) \&\& !defined(_M_ARM64EC) \&\& !defined(__ARM64EC__)/g' \
+            "$HDR" || true
 
       - name: Clone DXVK-Sarek (tags + submodules)
         run: |
@@ -226,58 +271,15 @@ jobs:
           echo "Already uploaded:"; cat "$EXIST" || true
           echo "To build:";         cat "${GITHUB_WORKSPACE}/to_build.txt" || true
 
-      - name: Ensure cross files prefer llvm-strip (and windres fallback) for i686
-        working-directory: src
-        run: |
-          set -Eeuo pipefail
-          f="build-win32.txt"
-          [ -f "$f" ] || exit 0
-          if grep -q '^[[:space:]]*strip[[:space:]]*=' "$f"; then
-            sed -i "s|^[[:space:]]*strip[[:space:]]*=.*|strip = 'llvm-strip'|" "$f" || true
-          else
-            sed -i "/^\[binaries\]/a strip = 'llvm-strip'" "$f" || true
-          fi
-          if ! command -v i686-w64-mingw32-windres >/dev/null; then
-            sed -i "s|^[[:space:]]*windres[[:space:]]*=.*|windres = 'llvm-rc'|" "$f" || true
-          fi
-
-      - name: Prepare ARM64EC Meson cross file
-        working-directory: src
-        run: |
-          set -Eeuo pipefail
-          cat > build-arm64ec.txt <<'EOF'
-          [binaries]
-          ar = 'arm64ec-w64-mingw32-ar'
-          c = 'arm64ec-w64-mingw32-gcc'
-          cpp = 'arm64ec-w64-mingw32-g++'
-          windres = 'arm64ec-w64-mingw32-windres'
-          strip = 'llvm-strip'
-          [host_machine]
-          system = 'windows'
-          cpu_family = 'aarch64'
-          cpu = 'aarch64'
-          endian = 'little'
-          EOF
-          # If gcc wrappers are missing, switch to clang wrappers
-          if ! command -v arm64ec-w64-mingw32-gcc >/dev/null 2>&1; then
-            sed -i "s/arm64ec-w64-mingw32-gcc/arm64ec-w64-mingw32-clang/" build-arm64ec.txt
-            sed -i "s/arm64ec-w64-mingw32-g\\+\\+/arm64ec-w64-mingw32-clang++/" build-arm64ec.txt
-          fi
-          # windres fallback
-          command -v arm64ec-w64-mingw32-windres >/dev/null 2>&1 || \
-            sed -i "s|windres = '.*'|windres = 'llvm-rc'|" build-arm64ec.txt
-          # Add optional tools only if present
-          if command -v widl >/dev/null 2>&1; then
-            sed -i "/^\[binaries\]/a widl = 'widl'" build-arm64ec.txt
-          fi
-          if command -v pkg-config >/dev/null 2>&1; then
-            sed -i "/^\[binaries\]/a pkgconfig = 'pkg-config'" build-arm64ec.txt
-          fi
-
       - name: Sanity-check target predefines (debug)
         run: |
-          echo "---- arm64ec clang++ predefineds (subset) ----"
-          echo | arm64ec-w64-mingw32-g++ -U__x86_64__ -U__i386__ -dM -E -xc++ - | egrep '__arm|__x86_64__|__i386__|_M_ARM64EC|__SSE' || true
+          echo "---- predefines (raw toolchain) ----"
+          echo | arm64ec-w64-mingw32-g++ -dM -E -xc++ - | egrep '__ARM64EC__|_M_ARM64EC|__aarch64__|__arm|__x86_64__|__i386__|_M_X64|_M_AMD64|_M_IX86|_AMD64_' || true
+          echo "---- intended flags (expect: ARM64EC yes / x86/x64 no) ----"
+          echo | arm64ec-w64-mingw32-g++ -dM -E -xc++ - \
+            -DNOWINBASEINTERLOCK -D__CRT__NO_INLINE -D_M_ARM64EC=1 -D__ARM64EC__=1 \
+            -U__x86_64__ -U__i386__ -U_M_X64 -U_M_AMD64 -U_AMD64_ -U_M_IX86 \
+            | egrep '__ARM64EC__|_M_ARM64EC|__aarch64__|__arm|__x86_64__|__i386__|_M_X64|_M_AMD64|_M_IX86|_AMD64_' || true
 
       - name: Build NEW versions only (DXVK-Sarek → WCP)
         env:
@@ -317,29 +319,19 @@ jobs:
 
             # ARM64EC (system32)
             meson setup "${GITHUB_WORKSPACE}/build.ec" \
-              --cross-file build-arm64ec.txt \
+              --cross-file "${GITHUB_WORKSPACE}/arm64ec.cross" \
               --buildtype release \
               --prefix "${PREFIX_X64}" \
-              -Dbuild_id=false -Dstrip=true \
-              -Dc_args='-Wno-nontrivial-memcall \
-                        -U__x86_64__ -U__i386__ -U_M_X64 -U_M_AMD64 -U_AMD64_ -U_M_IX86 \
-                        -DNOWINBASEINTERLOCK -D__CRT__NO_INLINE \
-                        -D_M_ARM64EC=1 -D__ARM64EC__=1 -D__aarch64__=1' \
-              -Dcpp_args='-Wno-nontrivial-memcall \
-                          -U__x86_64__ -U__i386__ -U_M_X64 -U_M_AMD64 -U_AMD64_ -U_M_IX86 \
-                          -DNOWINBASEINTERLOCK -D__CRT__NO_INLINE \
-                          -D_M_ARM64EC=1 -D__ARM64EC__=1 -D__aarch64__=1'
+              -Dbuild_id=false -Dstrip=true
             ninja -C "${GITHUB_WORKSPACE}/build.ec" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.ec"
 
             # 32-bit (syswow64)
             meson setup "${GITHUB_WORKSPACE}/build.w32" \
-              --cross-file build-win32.txt \
+              --cross-file "${GITHUB_WORKSPACE}/i686.cross" \
               --buildtype release \
               --prefix "${PREFIX_X86}" \
-              -Dbuild_id=false -Dstrip=true \
-              -Dc_args='-Wno-nontrivial-memcall' \
-              -Dcpp_args='-Wno-nontrivial-memcall'
+              -Dbuild_id=false -Dstrip=true
             ninja -C "${GITHUB_WORKSPACE}/build.w32" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.w32"
 
