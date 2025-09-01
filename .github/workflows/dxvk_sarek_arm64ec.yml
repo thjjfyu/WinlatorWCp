@@ -212,10 +212,10 @@ jobs:
       # ──────────────────────────────────────────────────────────────────────
       # ARM64EC 준비: MSVC 환경(ARM64EC) + shim + lib 래퍼 + Meson 크로스파일
       # ──────────────────────────────────────────────────────────────────────
-      - name: Configure MSVC for ARM64EC (native)
+      - name: Configure MSVC for ARM64EC (x64 host)
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: arm64ec   # ← ARM64EC Dev Prompt 직접 사용
+          arch: amd64     # ← x64 호스트로 열기
 
       - name: Drop-in shim for ARM64EC (SSE/BMI guard + tz/lz count fallback)
         run: |
@@ -407,6 +407,10 @@ jobs:
             } catch { }
 
             # ---------- ARM64EC (system32) ----------
+            # ARM64EC 전용 플래그 주입
+            $env:CL   = "/arm64EC $env:CL"
+            $env:LINK = "/MACHINE:ARM64EC $env:LINK"
+            
             meson setup "$env:GITHUB_WORKSPACE\build.ec" `
               --cross-file "$env:GITHUB_WORKSPACE\arm64ec.msvc" `
               --buildtype release `
@@ -426,6 +430,9 @@ jobs:
             Assert-AnyDll "$env:PREFIX_X64\bin" 'machine.*ARM64EC'
 
             # ---------- Win32 (syswow64) ----------
+            # ARM64EC 오염 플래그 제거 후 x86 환경 전환
+            $env:CL = ""
+            $env:LINK = ""
             Invoke-VsDev -Arch x86 -HostArch x64
             meson setup "$env:GITHUB_WORKSPACE\build.w32" `
               --cross-file "$env:GITHUB_WORKSPACE\i686.msvc" `
