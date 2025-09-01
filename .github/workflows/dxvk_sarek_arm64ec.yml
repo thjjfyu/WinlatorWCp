@@ -106,17 +106,35 @@ jobs:
       - name: Create ARM64EC preinclude (force ARM path in mingw headers)
         run: |
           cat > "$GITHUB_WORKSPACE/arm64ec-preinclude.h" <<'EOF'
+          /* Make sure headers take the ARM/AArch64 branches for ARM64EC */
           #ifndef __aarch64__
           #define __aarch64__ 1
           #endif
           #ifndef _M_ARM64
           #define _M_ARM64 1
           #endif
+          #ifndef __arm64ec__
+          #define __arm64ec__ 1
+          #endif
           #ifndef __ARM64EC__
           #define __ARM64EC__ 1
           #endif
           #ifndef _M_ARM64EC
           #define _M_ARM64EC 1
+          #endif
+      
+          /* And explicitly disable any x86/x64 branches some headers might take */
+          #ifdef __i386__
+          #undef __i386__
+          #endif
+          #ifdef __x86_64__
+          #undef __x86_64__
+          #endif
+          #ifdef _M_IX86
+          #undef _M_IX86
+          #endif
+          #ifdef _M_X64
+          #undef _M_X64
           #endif
           EOF
 
