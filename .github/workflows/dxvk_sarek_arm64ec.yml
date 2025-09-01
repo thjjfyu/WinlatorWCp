@@ -53,6 +53,34 @@ jobs:
               }
             }
 
+      - name: Ensure VS ARM64EC toolset (best effort)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${Env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { Write-Warning "vswhere not found"; exit 0 }
+      
+          # VS 설치 루트 (예: C:\Program Files\Microsoft Visual Studio\2022\Enterprise)
+          $inst = & $vswhere -latest -products * -property installationPath
+          if (-not $inst) { Write-Warning "Visual Studio installation path not found"; exit 0 }
+      
+          # ❗ 실제 vs_installer.exe 위치는 Installer 폴더
+          $installer = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe"
+          if (-not (Test-Path $installer)) { Write-Warning "vs_installer.exe not found at $installer"; exit 0 }
+      
+          & "$installer" modify `
+            --installPath "$inst" `
+            --add Microsoft.VisualStudio.Component.VC.Tools.ARM64EC `
+            --norestart --quiet --nocache
+      
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "VS ARM64EC tool add attempt failed or not needed (exit $LASTEXITCODE)"
+          }
+      
+          # 가볍게 확인
+          $vc = $env:VCToolsInstallDir
+          if ($vc) { Write-Host "VCToolsInstallDir = $vc" } else { Write-Warning "VCToolsInstallDir not set (run VsDevCmd earlier)" }
+
       - name: Create cl/lib wrappers + ARM64EC shim
         run: |
           $ErrorActionPreference = 'Stop'
@@ -174,7 +202,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-
+      
           function Find-Arm64ecSdk {
             $candidates = @()
             if ($env:WindowsSdkDir) { $candidates += $env:WindowsSdkDir }
@@ -184,7 +212,7 @@ jobs:
             } catch {}
             $candidates += 'C:\Program Files (x86)\Windows Kits\10\'
             $candidates = $candidates | Select-Object -Unique | Where-Object { $_ -and (Test-Path $_) }
-
+      
             foreach ($root in $candidates) {
               $libRoot = Join-Path $root 'Lib'
               if (-not (Test-Path $libRoot)) { continue }
@@ -201,39 +229,40 @@ jobs:
             }
             return $null
           }
-
+      
           function Ensure-SdkArm64ec {
             $sdk = Find-Arm64ecSdk
             if ($sdk) { return $sdk }
-
-            Write-Warning 'ARM64EC SDK libs not found; attempting to install Windows 11 SDK (26100) via vs_installer...'
+            Write-Warning 'ARM64EC SDK libs not found; attempting Windows 11 SDK (26100) install via vs_installer...'
+      
             $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
             $inst = & $vswhere -latest -products * -property installationPath
-            if ($inst) {
-              $installer = Join-Path $inst 'vs_installer.exe'
-              & $installer modify `
+            $installer = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe"
+            if ($inst -and (Test-Path $installer)) {
+              & "$installer" modify `
                 --installPath "$inst" `
                 --add Microsoft.VisualStudio.Component.Windows11SDK.26100 `
                 --norestart --quiet --nocache
             }
             return (Find-Arm64ecSdk)
           }
-
+      
           # VC toolset ARM64EC lib (필수)
+          if (-not $env:VCToolsInstallDir) { throw 'VCToolsInstallDir is not set (ensure VsDevCmd ran successfully)' }
           $vcArm64ec = Join-Path $env:VCToolsInstallDir 'lib\arm64ec'
           if (-not (Test-Path $vcArm64ec)) { throw "VC arm64ec libs not found at $vcArm64ec" }
-
-          # Windows SDK (UCRT/UM) ARM64EC 경로 확보
+      
+          # Windows SDK (UCRT/UM) ARM64EC 경로
           $sdk = Ensure-SdkArm64ec
-          if (-not $sdk) { throw "Windows 11 SDK ARM64EC libs not found; cannot proceed." }
-
-          # 최종 LIB 경로 구성
+          if (-not $sdk) { throw 'Windows 11 SDK ARM64EC libs not found; cannot proceed.' }
+      
+          # 최종 LIB
           $env:LIB = "$vcArm64ec;$($sdk.UCRT);$($sdk.UM);" + $env:LIB
-          Write-Host "LIB configured:"
+          Write-Host 'LIB configured:'
           Write-Host "  VC:   $vcArm64ec"
           Write-Host "  UCRT: $($sdk.UCRT)"
           Write-Host "  UM:   $($sdk.UM) (SDK $($sdk.Version))"
-
+      
           # d3d9.lib 없으면 스텁 생성(링커 체크 통과용)
           $hasD3D9 = $false
           foreach ($p in ($env:LIB -split ';')) {
@@ -243,7 +272,7 @@ jobs:
             $stubDir = Join-Path $env:GITHUB_WORKSPACE 'stublibs\ARM64EC'
             New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
             & lib.exe /nologo /machine:ARM64EC /OUT:(Join-Path $stubDir 'd3d9.lib')
-            if ($LASTEXITCODE -ne 0) { throw "Failed to create stub d3d9.lib (ARM64EC)" }
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to create stub d3d9.lib (ARM64EC)' }
             $env:LIB = "$stubDir;" + $env:LIB
             Write-Host "Injected stub d3d9.lib -> $stubDir"
           }
