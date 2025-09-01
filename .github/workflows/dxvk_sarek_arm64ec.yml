@@ -267,6 +267,40 @@ jobs:
           sudo mv "$tmp" "$HDR"
           echo "[ok] injected ARM64EC override into $(basename "$HDR")"
 
+      - name: Remap intrin builders AFTER their original #define (stop inline asm paths)
+        run: |
+          set -Eeuo pipefail
+          HDR="$TOOLCHAIN_DIR/arm64ec-w64-mingw32/include/psdk_inc/intrin-impl.h"
+          [ -f "$HDR" ] || { echo "::error::intrin-impl.h not found at $HDR"; exit 1; }
+          sudo cp -f "$HDR" "${HDR}.pre-map.bak"
+
+          tmp="$(mktemp)"
+          sudo awk '
+            BEGIN{d32=0; d64=0}
+            {
+              print
+              if (!d32 && $0 ~ /^#[[:space:]]*define[[:space:]]+__buildbittesti\(/) {
+                print "#if defined(_M_ARM64EC) || defined(__ARM64EC__)"
+                print "#undef __buildbittesti"
+                print "#define __buildbittesti(NAME, TYP, OP, EXTRA) __IMPL32_##NAME"
+                print "#endif"
+                d32=1
+              }
+              if (!d64 && $0 ~ /^#[[:space:]]*define[[:space:]]+__buildbittesti64\(/) {
+                print "#if defined(_M_ARM64EC) || defined(__ARM64EC__)"
+                print "#undef __buildbittesti64"
+                print "#define __buildbittesti64(NAME, TYP, OP, EXTRA) __IMPL64_##NAME"
+                print "#endif"
+                d64=1
+              }
+            }' "${HDR}.pre-map.bak" | sudo tee "$tmp" >/dev/null
+
+          sudo mv "$tmp" "$HDR"
+
+          echo "---- sanity (should see our remap right after the #define lines) ----"
+          grep -n "__buildbittesti" "$HDR" | head -n 10 || true
+          grep -n "__buildbittesti64" "$HDR" | head -n 10 || true
+
       - name: Create Meson cross files (DXVK-style; arm64ec + i686)
         run: |
           set -Eeuo pipefail
