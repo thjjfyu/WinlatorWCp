@@ -183,88 +183,88 @@ jobs:
           #endif
           EOF
 
-      - name: Patch mingw-w64 intrinsics for ARM64EC (replace inline asm with atomics)
+      - name: Override mingw-w64 bit-test intrinsics for ARM64EC (no inline asm)
         run: |
           set -Eeuo pipefail
           HDR="$TOOLCHAIN_DIR/arm64ec-w64-mingw32/include/psdk_inc/intrin-impl.h"
-          if [ ! -f "$HDR" ]; then
-            echo "::error::intrin-impl.h not found at $HDR"; exit 1
-          fi
-      
+          [ -f "$HDR" ] || { echo "::error::intrin-impl.h not found at $HDR"; exit 1; }
           sudo cp -f "$HDR" "${HDR}.bak"
       
-          # awk로 특정 매크로 호출을 C 인라인 구현으로 치환
+          # 파일 맨 앞에 ARM64EC용 매크로 오버라이드 블록 삽입
           tmp="$(mktemp)"
-          awk '
-            function repl32_set() {
-              print "static __forceinline unsigned char _interlockedbittestandset(long volatile* Base, long Offset) {";
-              print "  unsigned long idx = ((unsigned long)Offset >> 5);";
-              print "  unsigned long mask = 1u << (Offset & 31);";
-              print "  volatile unsigned long* p = (volatile unsigned long*)Base + idx;";
-              print "  unsigned long old = __atomic_fetch_or((unsigned long*)p, mask, __ATOMIC_SEQ_CST);";
-              print "  return (old & mask) ? 1 : 0;";
-              print "}";
-            }
-            function repl32_reset() {
-              print "static __forceinline unsigned char _interlockedbittestandreset(long volatile* Base, long Offset) {";
-              print "  unsigned long idx = ((unsigned long)Offset >> 5);";
-              print "  unsigned long mask = 1u << (Offset & 31);";
-              print "  volatile unsigned long* p = (volatile unsigned long*)Base + idx;";
-              print "  unsigned long old = __atomic_fetch_and((unsigned long*)p, ~mask, __ATOMIC_SEQ_CST);";
-              print "  return (old & mask) ? 1 : 0;";
-              print "}";
-            }
-            function repl32_xor() {
-              print "static __forceinline unsigned char _interlockedbittestandcomplement(long volatile* Base, long Offset) {";
-              print "  unsigned long idx = ((unsigned long)Offset >> 5);";
-              print "  unsigned long mask = 1u << (Offset & 31);";
-              print "  volatile unsigned long* p = (volatile unsigned long*)Base + idx;";
-              print "  unsigned long old = __atomic_fetch_xor((unsigned long*)p, mask, __ATOMIC_SEQ_CST);";
-              print "  return (old & mask) ? 1 : 0;";
-              print "}";
-            }
-            function repl64_set() {
-              print "static __forceinline unsigned char _interlockedbittestandset64(long long volatile* Base, long long Offset) {";
-              print "  unsigned long long idx = ((unsigned long long)Offset >> 6);";
-              print "  unsigned long long mask = 1ull << (Offset & 63);";
-              print "  volatile unsigned long long* p = (volatile unsigned long long*)Base + idx;";
-              print "  unsigned long long old = __atomic_fetch_or((unsigned long long*)p, mask, __ATOMIC_SEQ_CST);";
-              print "  return (old & mask) ? 1 : 0;";
-              print "}";
-            }
-            function repl64_reset() {
-              print "static __forceinline unsigned char _interlockedbittestandreset64(long long volatile* Base, long long Offset) {";
-              print "  unsigned long long idx = ((unsigned long long)Offset >> 6);";
-              print "  unsigned long long mask = 1ull << (Offset & 63);";
-              print "  volatile unsigned long long* p = (volatile unsigned long long*)Base + idx;";
-              print "  unsigned long long old = __atomic_fetch_and((unsigned long long*)p, ~mask, __ATOMIC_SEQ_CST);";
-              print "  return (old & mask) ? 1 : 0;";
-              print "}";
-            }
-            function repl64_xor() {
-              print "static __forceinline unsigned char _interlockedbittestandcomplement64(long long volatile* Base, long long Offset) {";
-              print "  unsigned long long idx = ((unsigned long long)Offset >> 6);";
-              print "  unsigned long long mask = 1ull << (Offset & 63);";
-              print "  volatile unsigned long long* p = (volatile unsigned long long*)Base + idx;";
-              print "  unsigned long long old = __atomic_fetch_xor((unsigned long long*)p, mask, __ATOMIC_SEQ_CST);";
-              print "  return (old & mask) ? 1 : 0;";
-              print "}";
-            }
-      
-            # 매크로 호출 라인을 발견하면 해당 함수의 C 구현으로 교체
-            /^__buildbittesti\(_interlockedbittestandset, /           { repl32_set();  next }
-            /^__buildbittesti\(_interlockedbittestandreset, /         { repl32_reset();next }
-            /^__buildbittesti\(_interlockedbittestandcomplement, /    { repl32_xor();  next }
-            /^__buildbittesti\(_interlockedbittestandset64, /         { repl64_set();  next }
-            /^__buildbittesti\(_interlockedbittestandreset64, /       { repl64_reset();next }
-            /^__buildbittesti\(_interlockedbittestandcomplement64, /  { repl64_xor();  next }
-      
-            { print }
-          ' "$HDR" > "$tmp"
-      
+          awk 'NR==1{
+            print "/* ---- ARM64EC override (inject by CI) ---- */";
+            print "#if defined(_M_ARM64EC) || defined(__ARM64EC__)";
+            print "#undef __buildbittesti";
+            print "#undef __buildbittesti64";
+            print "";
+            # 32-bit 구현들 (_/PascalCase 둘 다)
+            print "#define __IMPL32__interlockedbittestandset \\";
+            print "static __forceinline unsigned char _interlockedbittestandset(long volatile* Base, long Offset){ \\";
+            print "  unsigned long idx=((unsigned long)Offset>>5); unsigned long m=1u<<(Offset&31); \\";
+            print "  volatile unsigned long* p=(volatile unsigned long*)Base+idx; \\";
+            print "  unsigned long old=__atomic_fetch_or((unsigned long*)p,m,__ATOMIC_SEQ_CST); \\";
+            print "  return (old&m)?1:0; }";
+            print "#define __IMPL32__interlockedbittestandreset \\";
+            print "static __forceinline unsigned char _interlockedbittestandreset(long volatile* Base, long Offset){ \\";
+            print "  unsigned long idx=((unsigned long)Offset>>5); unsigned long m=1u<<(Offset&31); \\";
+            print "  volatile unsigned long* p=(volatile unsigned long*)Base+idx; \\";
+            print "  unsigned long old=__atomic_fetch_and((unsigned long*)p,~m,__ATOMIC_SEQ_CST); \\";
+            print "  return (old&m)?1:0; }";
+            print "#define __IMPL32__interlockedbittestandcomplement \\";
+            print "static __forceinline unsigned char _interlockedbittestandcomplement(long volatile* Base, long Offset){ \\";
+            print "  unsigned long idx=((unsigned long)Offset>>5); unsigned long m=1u<<(Offset&31); \\";
+            print "  volatile unsigned long* p=(volatile unsigned long*)Base+idx; \\";
+            print "  unsigned long old=__atomic_fetch_xor((unsigned long*)p,m,__ATOMIC_SEQ_CST); \\";
+            print "  return (old&m)?1:0; }";
+            print "#define __IMPL32_InterlockedBitTestAndSet \\";
+            print "static __forceinline unsigned char InterlockedBitTestAndSet(long volatile* Base, long Offset){ \\";
+            print "  return _interlockedbittestandset(Base,Offset); }";
+            print "#define __IMPL32_InterlockedBitTestAndReset \\";
+            print "static __forceinline unsigned char InterlockedBitTestAndReset(long volatile* Base, long Offset){ \\";
+            print "  return _interlockedbittestandreset(Base,Offset); }";
+            print "#define __IMPL32_InterlockedBitTestAndComplement \\";
+            print "static __forceinline unsigned char InterlockedBitTestAndComplement(long volatile* Base, long Offset){ \\";
+            print "  return _interlockedbittestandcomplement(Base,Offset); }";
+            print "";
+            # 64-bit 구현들 (_/PascalCase 둘 다)
+            print "#define __IMPL64__interlockedbittestandset64 \\";
+            print "static __forceinline unsigned char _interlockedbittestandset64(long long volatile* Base, long long Offset){ \\";
+            print "  unsigned long long idx=((unsigned long long)Offset>>6); unsigned long long m=1ull<<(Offset&63); \\";
+            print "  volatile unsigned long long* p=(volatile unsigned long long*)Base+idx; \\";
+            print "  unsigned long long old=__atomic_fetch_or((unsigned long long*)p,m,__ATOMIC_SEQ_CST); \\";
+            print "  return (old&m)?1:0; }";
+            print "#define __IMPL64__interlockedbittestandreset64 \\";
+            print "static __forceinline unsigned char _interlockedbittestandreset64(long long volatile* Base, long long Offset){ \\";
+            print "  unsigned long long idx=((unsigned long long)Offset>>6); unsigned long long m=1ull<<(Offset&63); \\";
+            print "  volatile unsigned long long* p=(volatile unsigned long long*)Base+idx; \\";
+            print "  unsigned long long old=__atomic_fetch_and((unsigned long long*)p,~m,__ATOMIC_SEQ_CST); \\";
+            print "  return (old&m)?1:0; }";
+            print "#define __IMPL64__interlockedbittestandcomplement64 \\";
+            print "static __forceinline unsigned char _interlockedbittestandcomplement64(long long volatile* Base, long long Offset){ \\";
+            print "  unsigned long long idx=((unsigned long long)Offset>>6); unsigned long long m=1ull<<(Offset&63); \\";
+            print "  volatile unsigned long long* p=(volatile unsigned long long*)Base+idx; \\";
+            print "  unsigned long long old=__atomic_fetch_xor((unsigned long long*)p,m,__ATOMIC_SEQ_CST); \\";
+            print "  return (old&m)?1:0; }";
+            print "#define __IMPL64_InterlockedBitTestAndSet64 \\";
+            print "static __forceinline unsigned char InterlockedBitTestAndSet64(long long volatile* Base, long long Offset){ \\";
+            print "  return _interlockedbittestandset64(Base,Offset); }";
+            print "#define __IMPL64_InterlockedBitTestAndReset64 \\";
+            print "static __forceinline unsigned char InterlockedBitTestAndReset64(long long volatile* Base, long long Offset){ \\";
+            print "  return _interlockedbittestandreset64(Base,Offset); }";
+            print "#define __IMPL64_InterlockedBitTestAndComplement64 \\";
+            print "static __forceinline unsigned char InterlockedBitTestAndComplement64(long long volatile* Base, long long Offset){ \\";
+            print "  return _interlockedbittestandcomplement64(Base,Offset); }";
+            print "";
+            # 빌더 매크로를 이름별 구현으로 맵
+            print "#define __buildbittesti(NAME, TYP, OP, EXTRA) __IMPL32_##NAME";
+            print "#define __buildbittesti64(NAME, TYP, OP, EXTRA) __IMPL64_##NAME";
+            print "#endif /* ARM64EC override */";
+            print "/* ---- end of ARM64EC override ---- */";
+          }1' "${HDR}.bak" > "$tmp"
           sudo mv "$tmp" "$HDR"
       
-          echo "Patched: $(grep -n \"_interlockedbittestandset\\(64\\)\\?\" \"$HDR\" | sed -n '1,6p' || true)"
+          echo "[ok] ARM64EC intrinsics override injected into $(basename "$HDR")"
 
       - name: Create Meson cross files (DXVK-style; arm64ec + i686)
         run: |
