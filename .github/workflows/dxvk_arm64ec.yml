@@ -246,6 +246,21 @@ jobs:
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
 
+            # --- Fix: avoid duplicate _D3DDEVINFO_RESOURCEMANAGER when using latest mingw headers ---
+            TOOL_INC_A="/opt/llvm-mingw/arm64ec-w64-mingw32/include/d3d9types.h"
+            TOOL_INC_I="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
+            DXVK_INC="src/d3d9/d3d9_include.h"
+          
+            if [[ -f "$DXVK_INC" ]] && \
+               (grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_INC_A" || grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_INC_I"); then
+              if grep -Fq "typedef struct _D3DDEVINFO_RESOURCEMANAGER" "$DXVK_INC"; then
+                echo "Patching duplicate _D3DDEVINFO_RESOURCEMANAGER in ${DXVK_INC}"
+                cp "$DXVK_INC" "${DXVK_INC}.bak"
+                sed -i '/typedef struct _D3DDEVINFO_RESOURCEMANAGER/,/} D3DDEVINFO_RESOURCEMANAGER;/d' "$DXVK_INC"
+              fi
+            fi
+            # --- End fix ---
+
             # Clean previous artifacts
             rm -rf "${GITHUB_WORKSPACE}/build.ec" "${GITHUB_WORKSPACE}/build.x86" \
                    "${PREFIX_EC}" "${PREFIX_X86}" "${GITHUB_WORKSPACE}/DXVK_WCP"
