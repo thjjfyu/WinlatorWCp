@@ -246,6 +246,15 @@ jobs:
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
 
+            # --- Fix: DXVK v2.5 clang enum constexpr 오류 회피 (UnmappedSubresource) ---
+            DXVK_TEX_H="src/d3d11/d3d11_texture.h"
+            if [[ -f "$DXVK_TEX_H" ]] && grep -qE 'static[[:space:]]+constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource[[:space:]]*=[[:space:]]*D3D11_MAP\(-1u\);' "$DXVK_TEX_H"; then
+              echo "Patching UnmappedSubresource constexpr → const in ${DXVK_TEX_H}"
+              cp "$DXVK_TEX_H" "${DXVK_TEX_H}.bak"
+              perl -0777 -pe 's/static\s+constexpr\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*D3D11_MAP\(-1u\);\s*/static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);\n/s' -i "$DXVK_TEX_H"
+            fi
+            # --- End fix ---
+
             # --- Fix: avoid duplicate _D3DDEVINFO_RESOURCEMANAGER with latest mingw headers (robust) ---
             set -Eeuo pipefail
 
