@@ -214,14 +214,55 @@ jobs:
           $toBuild | Out-File -Encoding ascii "$env:GITHUB_WORKSPACE\to_build.txt"
           Get-Content "$env:GITHUB_WORKSPACE\to_build.txt"
 
+      # ──────────────────────────────────────────────────────────────────────
+      # ARM64EC 준비: MSVC 환경 + shim 헤더 생성 + Meson 크로스파일 작성
+      # ──────────────────────────────────────────────────────────────────────
       - name: Configure MSVC for ARM64EC
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          # x64 호스트 → ARM64EC 타깃
+          # x64 호스트 → ARM64 타깃 (ARM64EC는 플래그로 지정)
           arch: amd64_arm64
+
+      - name: Drop-in shim for ARM64EC (SSE/BMI guard + tz/lz count fallback)
+        run: |
+          $h = @"
+          #pragma once
+          #include <intrin.h>
+
+          // 1) ARM64EC에서 x86 SIMD 경로로 빠지는 것 방지
+          #if defined(_M_ARM64EC)
+            #undef __SSE__
+            #undef __SSE2__
+            #undef __AVX__
+            #undef __AVX2__
+          #endif
+
+          // 2) x86 전용 BMI/LZCNT/TZCNT 대체 - BitScan 기반
+          #if defined(_M_ARM64) || defined(_M_ARM64EC)
+            static __forceinline unsigned int __dxvk_tzcnt_u32(unsigned int x) {
+              unsigned long idx;
+              if (_BitScanForward(&idx, x)) return (unsigned int)idx;
+              return 32u;
+            }
+            static __forceinline unsigned int __dxvk_lzcnt_u32(unsigned int x) {
+              if (!x) return 32u;
+              unsigned long msb;
+              _BitScanReverse(&msb, x);
+              return 31u - (unsigned int)msb;
+            }
+            #ifndef _tzcnt_u32
+            #define _tzcnt_u32 __dxvk_tzcnt_u32
+            #endif
+            #ifndef _lzcnt_u32
+            #define _lzcnt_u32 __dxvk_lzcnt_u32
+            #endif
+          #endif
+          "@
+          Set-Content -Path "$env:GITHUB_WORKSPACE\arm64ec_shim.h" -Value $h -Encoding ascii
 
       - name: Create Meson cross files (MSVC; ARM64EC + Win32)
         run: |
+          $shim = ("$env:GITHUB_WORKSPACE\arm64ec_shim.h" -replace '\\','\\')
           $arm = @"
           [binaries]
           c = 'cl'
@@ -235,8 +276,14 @@ jobs:
           endian = 'little'
           [built-in options]
           cpp_std = 'c++17'
-          c_args = ['/O2','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/permissive-','/EHsc']
-          cpp_args = ['/O2','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/permissive-','/EHsc']
+          c_args = ['/arm64EC','/O2','/DNOMINMAX','/permissive-','/EHsc',
+                    '/FI','$shim','/U_M_X64','/U_M_AMD64',
+                    '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0']
+          cpp_args = ['/arm64EC','/O2','/DNOMINMAX','/permissive-','/EHsc',
+                      '/FI','$shim','/U_M_X64','/U_M_AMD64',
+                      '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0']
+          c_link_args = ['/MACHINE:ARM64EC']
+          cpp_link_args = ['/MACHINE:ARM64EC']
           "@
           $x86 = @"
           [binaries]
@@ -251,8 +298,8 @@ jobs:
           endian = 'little'
           [built-in options]
           cpp_std = 'c++17'
-          c_args = ['/O2','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/EHsc']
-          cpp_args = ['/O2','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/EHsc']
+          c_args = ['/O2','/DNOMINMAX','/permissive-','/EHsc']
+          cpp_args = ['/O2','/DNOMINMAX','/permissive-','/EHsc']
           "@
           Set-Content -Path "$env:GITHUB_WORKSPACE/arm64ec.msvc" -Value $arm -Encoding ascii
           Set-Content -Path "$env:GITHUB_WORKSPACE/i686.msvc"   -Value $x86 -Encoding ascii
@@ -271,7 +318,11 @@ jobs:
 
           function Invoke-VsDev {
             param([string]$Arch,[string]$HostArch='x64')
-            $bat = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"
+            $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            if (-not (Test-Path $vswhere)) { throw "vswhere not found at $vswhere" }
+            $instPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if (-not $instPath) { throw "VS installation not found by vswhere" }
+            $bat = Join-Path $instPath "Common7\Tools\VsDevCmd.bat"
             if (-not (Test-Path $bat)) { throw "VsDevCmd not found at $bat" }
             & cmd /c "`"$bat`" -arch=$Arch -host_arch=$HostArch >nul && set" |
               ForEach-Object {
@@ -305,6 +356,18 @@ jobs:
             # Clean previous artifacts
             Remove-Item -Recurse -Force "$env:GITHUB_WORKSPACE\build.ec","$env:GITHUB_WORKSPACE\build.w32","$env:PREFIX_X64","$env:PREFIX_X86","$env:GITHUB_WORKSPACE\DXVK_WCP" -ErrorAction SilentlyContinue
 
+            # --- ARM64EC 라이브러리 경로 보강 (있으면 선행) ---
+            try {
+              $vc  = $env:VCToolsInstallDir
+              $sdk = $env:WindowsSdkDir
+              $ver = $env:WindowsSDKLibVersion
+              $extra = @()
+              if ($vc -and (Test-Path "$vc\lib\arm64ec")) { $extra += "$vc\lib\arm64ec" }
+              if ($sdk -and $ver -and (Test-Path "$sdk\Lib\$ver\ucrt\arm64ec")) { $extra += "$sdk\Lib\$ver\ucrt\arm64ec" }
+              if ($sdk -and $ver -and (Test-Path "$sdk\Lib\$ver\um\arm64ec"))   { $extra += "$sdk\Lib\$ver\um\arm64ec" }
+              if ($extra.Count -gt 0) { $env:LIB = ($extra -join ';') + ';' + $env:LIB }
+            } catch { }
+
             # ---------- ARM64EC (system32) ----------
             meson setup "$env:GITHUB_WORKSPACE\build.ec" `
               --cross-file "$env:GITHUB_WORKSPACE\arm64ec.msvc" `
@@ -315,7 +378,7 @@ jobs:
             meson install --no-rebuild -C "$env:GITHUB_WORKSPACE\build.ec"
 
             # ---------- Win32 (syswow64) ----------
-            Write-Host "Switching MSVC env to x86 for 32-bit build"
+            Write-Host "Switching MSVC env to x86 for 32-bit build (via vswhere + VsDevCmd)"
             Invoke-VsDev -Arch x86 -HostArch x64
             meson setup "$env:GITHUB_WORKSPACE\build.w32" `
               --cross-file "$env:GITHUB_WORKSPACE\i686.msvc" `
