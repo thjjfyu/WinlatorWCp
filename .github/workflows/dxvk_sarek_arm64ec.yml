@@ -199,14 +199,33 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
       
-          function Find-Arm64ecSdk {
+          function Get-VCLibArm64EC {
+            if ($env:VCToolsInstallDir) {
+              $p = Join-Path $env:VCToolsInstallDir 'lib\arm64ec'
+              if (Test-Path $p) { return $p }
+            }
+            # fallback: vswhere로 VC Tools 찾아서 최신 버전 사용
+            $vswhere = "${Env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            if (-not (Test-Path $vswhere)) { throw "vswhere not found and VCToolsInstallDir unset" }
+            $inst = & $vswhere -latest -products * -property installationPath
+            if (-not $inst) { throw "VS installation path not found and VCToolsInstallDir unset" }
+            $msvcRoot = Join-Path $inst 'VC\Tools\MSVC'
+            if (-not (Test-Path $msvcRoot)) { throw "MSVC tools root not found: $msvcRoot" }
+            $ver = Get-ChildItem $msvcRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+            if (-not $ver) { throw "No MSVC tool versions found under $msvcRoot" }
+            $p = Join-Path $ver.FullName 'lib\arm64ec'
+            if (-not (Test-Path $p)) { throw "VC arm64ec libs not found at $p" }
+            return $p
+          }
+      
+          function Get-Win10SdkArm64EC {
             $candidates = @()
-            if ($env:WindowsSdkDir) { $candidates += $env:WindowsSdkDir }
+            if ($env:WindowsSdkDir) { $candidates += $env:WindowsSdkDir.TrimEnd('\','/') }
             try {
               $reg = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -ErrorAction Stop
-              if ($reg.KitsRoot10) { $candidates += $reg.KitsRoot10 }
+              if ($reg.KitsRoot10) { $candidates += $reg.KitsRoot10.TrimEnd('\','/') }
             } catch {}
-            $candidates += 'C:\Program Files (x86)\Windows Kits\10\'
+            $candidates += 'C:\Program Files (x86)\Windows Kits\10'
             $candidates = $candidates | Select-Object -Unique | Where-Object { $_ -and (Test-Path $_) }
       
             foreach ($root in $candidates) {
@@ -226,31 +245,12 @@ jobs:
             return $null
           }
       
-          function Ensure-SdkArm64ec {
-            $sdk = Find-Arm64ecSdk
-            if ($sdk) { return $sdk }
-            Write-Warning 'ARM64EC SDK libs not found; attempting Windows 11 SDK (26100) install via vs_installer...'
-      
-            $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-            $inst = & $vswhere -latest -products * -property installationPath
-            $installer = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe"
-            if ($inst -and (Test-Path $installer)) {
-              & "$installer" modify `
-                --installPath "$inst" `
-                --add Microsoft.VisualStudio.Component.Windows11SDK.26100 `
-                --norestart --quiet --nocache
-            }
-            return (Find-Arm64ecSdk)
-          }
-      
-          # VC toolset ARM64EC lib (필수)
-          if (-not $env:VCToolsInstallDir) { throw 'VCToolsInstallDir is not set (ensure VsDevCmd ran successfully)' }
-          $vcArm64ec = Join-Path $env:VCToolsInstallDir 'lib\arm64ec'
-          if (-not (Test-Path $vcArm64ec)) { throw "VC arm64ec libs not found at $vcArm64ec" }
+          # VC toolset (ARM64EC) 경로
+          $vcArm64ec = Get-VCLibArm64EC
       
           # Windows SDK (UCRT/UM) ARM64EC 경로
-          $sdk = Ensure-SdkArm64ec
-          if (-not $sdk) { throw 'Windows 11 SDK ARM64EC libs not found; cannot proceed.' }
+          $sdk = Get-Win10SdkArm64EC
+          if (-not $sdk) { throw 'Windows 10/11 SDK ARM64EC libs not found (ucrt/um both missing)' }
       
           # 최종 LIB
           $env:LIB = "$vcArm64ec;$($sdk.UCRT);$($sdk.UM);" + $env:LIB
