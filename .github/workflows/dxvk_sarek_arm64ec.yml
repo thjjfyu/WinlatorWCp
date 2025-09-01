@@ -123,7 +123,8 @@ jobs:
           #version 450
           void main() {}
           GLSL
-          try() { command -v "$1" >/dev/null 2>&1 || return 1; "$1" --quiet --target-env vulkan1.3 --vn testvar -o /tmp/min.h /tmp/min.comp; }
+          # use a permissive target-env for availability check only
+          try() { command -v "$1" >/dev/null 2>&1 || return 1; "$1" --quiet --target-env vulkan1.1 --vn testvar -o /tmp/min.h /tmp/min.comp; }
           if try glslang; then :
           elif try glslangValidator; then
             BIN="$HOME/.local/bin"; mkdir -p "$BIN"
@@ -276,7 +277,7 @@ jobs:
       - name: Sanity-check target predefines (debug)
         run: |
           echo "---- arm64ec clang++ predefineds (subset) ----"
-          echo | arm64ec-w64-mingw32-g++ -dM -E -xc++ - | egrep '__arm|__x86_64__|__i386__|_M_ARM64EC|__SSE' || true
+          echo | arm64ec-w64-mingw32-g++ -U__x86_64__ -U__i386__ -dM -E -xc++ - | egrep '__arm|__x86_64__|__i386__|_M_ARM64EC|__SSE' || true
 
       - name: Build NEW versions only (DXVK-Sarek → WCP)
         env:
@@ -320,8 +321,8 @@ jobs:
               --buildtype release \
               --prefix "${PREFIX_X64}" \
               -Dbuild_id=false -Dstrip=true \
-              -Dc_args='-Wno-nontrivial-memcall -D_M_ARM64EC=1 -D__ARM64EC__=1 -U__x86_64__ -U__i386__' \
-              -Dcpp_args='-Wno-nontrivial-memcall -D_M_ARM64EC=1 -D__ARM64EC__=1 -U__x86_64__ -U__i386__'
+              -Dc_args='-Wno-nontrivial-memcall -U__x86_64__ -U__i386__' \
+              -Dcpp_args='-Wno-nontrivial-memcall -U__x86_64__ -U__i386__'
             ninja -C "${GITHUB_WORKSPACE}/build.ec" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.ec"
 
@@ -411,3 +412,12 @@ jobs:
           else
             echo "No new WCP files to upload."
           fi
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meson-logs
+          path: |
+            ${{ github.workspace }}/build.ec/meson-logs/**
+            ${{ github.workspace }}/build.w32/meson-logs/**
