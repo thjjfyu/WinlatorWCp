@@ -62,7 +62,7 @@
 
 
 ---
-✨ All credit goes to the original creators and those who inspired this work<br>
+✨ All credit goes to the original creators and those who inspired this work <br>
 [ptitSeb](https://github.com/ptitSeb)  
 [doitsujin](https://github.com/doitsujin)  
 [pythonlover02](https://github.com/pythonlover02)  
