@@ -60,11 +60,11 @@ jobs:
           $vswhere = "${Env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           if (-not (Test-Path $vswhere)) { Write-Warning "vswhere not found"; exit 0 }
       
-          # Visual Studio 설치 루트 (예: C:\Program Files\Microsoft Visual Studio\2022\Enterprise)
+          # VS 설치 루트 (예: C:\Program Files\Microsoft Visual Studio\2022\Enterprise)
           $inst = & $vswhere -latest -products * -property installationPath
           if (-not $inst) { Write-Warning "Visual Studio not found"; exit 0 }
       
-          # ❗ 실제 vs_installer.exe 경로는 Installer 폴더임
+          # ❗vs_installer.exe 는 Installer 폴더 고정 경로에 있음 (VS 루트가 아님)
           $installer = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe"
           if (-not (Test-Path $installer)) { Write-Warning "vs_installer.exe not found at $installer"; exit 0 }
       
