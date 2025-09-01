@@ -63,7 +63,8 @@
 
 ---
 ✨ All credit goes to the original creators and those who inspired this work <br>
-[bylaws](https://github.com/bylaws)
+
+[bylaws](https://github.com/bylaws)<br>
 [ptitSeb](https://github.com/ptitSeb)  
 [doitsujin](https://github.com/doitsujin)  
 [pythonlover02](https://github.com/pythonlover02)  
