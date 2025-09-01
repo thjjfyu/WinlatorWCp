@@ -12,7 +12,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# 기본은 PowerShell. (Windows 잡에 적용)
 defaults:
   run:
     shell: pwsh
@@ -137,19 +136,14 @@ jobs:
         run: |
           $tmp = Join-Path $env:RUNNER_TEMP "glsl-min"
           New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-      
-          # 컴퓨트 셰이더 최소 구성: 버전 + 워크그룹 크기 + main
           $comp = Join-Path $tmp "min.comp"
           Set-Content -Path $comp -Encoding ascii -Value @(
             '#version 450'
             'layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;'
             'void main(){}'
           )
-      
-          # .comp 확장자로도 추론되지만, 명시적으로 -S comp 지정
           glslangValidator -S comp --target-env vulkan1.1 --vn testvar `
             -o (Join-Path $tmp "min.h") $comp
-      
           Get-Item (Join-Path $tmp "min.h") | Format-List -Property Length,FullName
 
       - name: Fetch zstd (Windows x64)
@@ -176,36 +170,29 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Set-Location src
-      
+
           $tags = (git tag --merged origin/main -l 'v*') |
             Where-Object { $_ -match '^v\d+\.\d+(\.\d+)?$' } |
             Sort-Object {[version]($_.TrimStart('v'))}
-      
+
           $min   = [version]'1.10.8'
           $cands = $tags | Where-Object { [version]($_.TrimStart('v')) -ge $min }
-      
+
           $exist = @()
-      
-          # --- 여기만 교체 ---
           $rel = & gh api repos/$env:REPO/releases/tags/$env:RELEASE_TAG --jq '.assets[].name' 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            # Release가 없으면 404 -> $rel 비우고 종료코드 정리
-            $rel = $null
-            $global:LASTEXITCODE = 0
-          }
+          if ($LASTEXITCODE -ne 0) { $rel = $null; $global:LASTEXITCODE = 0 }
           if ($rel) {
             $exist = $rel | ForEach-Object {
               if ($_ -match '^dxvk-sarek-arm64ec-(\d+\.\d+(\.\d+)?)\.wcp$') { $matches[1] }
             }
           }
-          # --- 여기까지 ---
-      
+
           $toBuild = @()
           foreach ($t in $cands) {
             $base = $t.TrimStart('v')
             if (-not ($exist -contains $base)) { $toBuild += "${t} ${base}" }
           }
-      
+
           if ($toBuild.Count -eq 0) {
             Write-Host "No new versions to build."
             "" | Out-File "$env:GITHUB_WORKSPACE\to_build.txt"
@@ -267,7 +254,8 @@ jobs:
           [binaries]
           c = 'cl'
           cpp = 'cl'
-          ar = 'lib'
+          # 정적 라이브러리도 ARM64EC로 마킹
+          ar = ['lib','/MACHINE:ARM64EC']
           windres = 'rc'
           [host_machine]
           system = 'windows'
@@ -278,10 +266,10 @@ jobs:
           cpp_std = 'c++17'
           c_args = ['/arm64EC','/O2','/DNOMINMAX','/permissive-','/EHsc',
                     '/FI','$shim','/U_M_X64','/U_M_AMD64',
-                    '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0']
+                    '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0','/wd4146']
           cpp_args = ['/arm64EC','/O2','/DNOMINMAX','/permissive-','/EHsc',
                       '/FI','$shim','/U_M_X64','/U_M_AMD64',
-                      '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0']
+                      '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0','/wd4146']
           c_link_args = ['/MACHINE:ARM64EC']
           cpp_link_args = ['/MACHINE:ARM64EC']
           "@
@@ -352,6 +340,19 @@ jobs:
             git tag -a $tag -m "clean retag for HUD version"
             git reset --hard HEAD
             git clean -xdf
+
+            # --- MSVC 환경에서 d3d8 비활성화 (WinSDK엔 d3d8.h 없음) ---
+            $mesonFiles = @("meson.build","src\meson.build")
+            foreach ($f in $mesonFiles) {
+              if (Test-Path $f) {
+                $txt = Get-Content $f -Raw
+                $new = $txt -replace "(?m)^\s*subdir\('d3d8'\)\s*$",""
+                if ($new -ne $txt) {
+                  Set-Content -Encoding ascii $f $new
+                  Write-Host "Patched $f: disabled subdir('d3d8') for MSVC build"
+                }
+              }
+            }
 
             # Clean previous artifacts
             Remove-Item -Recurse -Force "$env:GITHUB_WORKSPACE\build.ec","$env:GITHUB_WORKSPACE\build.w32","$env:PREFIX_X64","$env:PREFIX_X86","$env:GITHUB_WORKSPACE\DXVK_WCP" -ErrorAction SilentlyContinue
