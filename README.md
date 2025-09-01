@@ -1,7 +1,7 @@
 # Yet Another Winlator Resources Repo
 <br>
 🤖 Automated builds & unified format <br>
-🚧 WIP
+🚧 WIP! Warning! You may be downloading unstable files.
 <br><br>
 
 
