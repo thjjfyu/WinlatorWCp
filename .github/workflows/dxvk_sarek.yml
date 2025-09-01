@@ -107,7 +107,7 @@ jobs:
       SAREK_REPO: pythonlover02/DXVK-Sarek
       PREFIX_X64: ${{ github.workspace }}/dist-x64
       PREFIX_X86: ${{ github.workspace }}/dist-x86
-      TOOLCHAIN_DIR: ${{ runner.temp }}/llvm-mingw   # Use runner temp to avoid permission issues
+      TOOLCHAIN_DIR: ${{ github.workspace }}/.tmp/llvm-mingw   # Use runner temp to avoid permission issues
       RELEASE_TAG: DXVK-SAREK
       GH_TOKEN: ${{ github.token }}
 
