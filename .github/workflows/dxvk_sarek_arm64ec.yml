@@ -244,14 +244,11 @@ jobs:
             #ifndef _tzcnt_u32
             #define _tzcnt_u32 __dxvk_tzcnt_u32
             #endif
-            #ifndef _lzcnt_u2
-            #define _lzcnt_u2 __dxvk_lzcnt_u32
+            #ifndef _lzcnt_u32
+            #define _lzcnt_u32 __dxvk_lzcnt_u32
             #endif
           #endif
           "@
-          # 위 오타 보정
-          $h = $h -replace '#ifndef _lzcnt_u2','#ifndef _lzcnt_u32'
-          $h = $h -replace '#define _lzcnt_u2','#define _lzcnt_u32'
           Set-Content -Path "$env:GITHUB_WORKSPACE\arm64ec_shim.h" -Value $h -Encoding ascii
 
       - name: Add lib.exe response-file wrapper (avoid long command lines)
@@ -290,7 +287,6 @@ jobs:
           endian = 'little'
           [built-in options]
           cpp_std = 'c++17'
-          # ⚠️ 여기엔 /arm64EC 절대 넣지 않음
           c_args = ['/O2','/DNOMINMAX','/permissive-','/EHsc',
                     '/FI','@SHIM@',
                     '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0','/wd4146']
@@ -328,6 +324,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandErrorActionPreference = 'Stop'
+
           function Invoke-VsDev {
             param([string]$Arch,[string]$HostArch='x64')
             $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -353,6 +350,20 @@ jobs:
             if ($dump -notmatch $ArchMatch) {
               throw "Unexpected machine for $($dll.Name). Expected '$ArchMatch' in dumpbin headers."
             }
+          }
+
+          function Add-LibPathsFor([string]$Arch){
+            $vc  = $env:VCToolsInstallDir
+            $sdk = $env:WindowsSdkDir
+            $ver = $env:WindowsSDKLibVersion
+            $paths = @()
+            if ($vc)  { $paths += "$vc\lib\$Arch" }
+            if ($sdk -and $ver) {
+              $paths += "$sdk\Lib\$ver\ucrt\$Arch"
+              $paths += "$sdk\Lib\$ver\um\$Arch"
+            }
+            $paths = $paths | Where-Object { Test-Path $_ }
+            if ($paths.Count -gt 0) { $env:LIB = ($paths -join ';') + ';' + $env:LIB }
           }
 
           $out = "$env:GITHUB_WORKSPACE\out"
@@ -402,27 +413,30 @@ jobs:
             # Clean previous artifacts
             Remove-Item -Recurse -Force "$env:GITHUB_WORKSPACE\build.ec","$env:GITHUB_WORKSPACE\build.w32","$env:PREFIX_X64","$env:PREFIX_X86","$env:GITHUB_WORKSPACE\DXVK_WCP" -ErrorAction SilentlyContinue
 
-            # --- ARM64EC 라이브러리 경로 보강(있으면 추가) ---
-            try {
-              $vc  = $env:VCToolsInstallDir
-              $sdk = $env:WindowsSdkDir
-              $ver = $env:WindowsSDKLibVersion
-              $extra = @()
-              if ($vc -and (Test-Path "$vc\lib\arm64ec")) { $extra += "$vc\lib\arm64ec" }
-              if ($sdk -and $ver -and (Test-Path "$sdk\Lib\$ver\ucrt\arm64ec")) { $extra += "$sdk\Lib\$ver\ucrt\arm64ec" }
-              if ($sdk -and $ver -and (Test-Path "$sdk\Lib\$ver\um\arm64ec"))   { $extra += "$sdk\Lib\$ver\um\arm64ec" }
-              if ($extra.Count -gt 0) { $env:LIB = ($extra -join ';') + ';' + $env:LIB }
-            } catch { }
+            # --- 링커 라이브러리 경로 보강: ARM64EC + x64(폴백) ---
+            Add-LibPathsFor 'arm64ec'
+            Add-LibPathsFor 'x64'
+
+            # --- d3d9 임포트 라이브러리 존재 여부 선검사 (Fail-fast) ---
+            $hasD3D9 = $false
+            foreach ($p in ($env:LIB -split ';')) {
+              if ($p -and (Test-Path (Join-Path $p 'd3d9.lib'))) { $hasD3D9 = $true; break }
+            }
+            if (-not $hasD3D9) {
+              throw "d3d9.lib not found in LIB path (checked arm64ec/x64). Install Windows 10/11 SDK with Direct3D 9 import libs."
+            }
 
             # ---------- ARM64EC (system32) ----------
-            # 1) 환경 정리: 하이픈 버전 잔재 제거 + 빌드 플래그 초기화
+            # 1) 환경 정리: 하이픈/디버그 플래그 제거
             $env:CFLAGS   = ""
             $env:CXXFLAGS = ""
             $env:CPPFLAGS = ""
-            if ($env:CL) { $env:CL = ($env:CL -replace '(?i)(^|\s)-arm64ec(\s|$)',' ').Trim() }
-
-            # 2) ARM64EC 전용 플래그 주입(슬래시)
-            $env:CL   = "/arm64EC $env:CL"
+            if ($env:CL) {
+              $env:CL = ($env:CL -replace '(?i)(^|\s)-arm64ec(\s|$)',' ').Trim()
+              $env:CL = ($env:CL -replace '(?i)(^|\s)/O[d0123szy](\s|$)',' ').Trim()
+            }
+            # 2) 최종 플래그 주입: /arm64EC + /O2
+            $env:CL   = "/arm64EC /O2 $env:CL"
             $env:LINK = "/MACHINE:ARM64EC $env:LINK"
 
             meson setup "$env:GITHUB_WORKSPACE\build.ec" `
@@ -433,11 +447,11 @@ jobs:
               -Dbuild_id=false
             Check-Last "meson setup (ARM64EC)"
 
-            # Meson 로그에 '-arm64EC' 흔적 있으면 바로 실패
+            # Meson 로그에 '-arm64EC' 흔적 있으면 즉시 실패
             $mlog = Join-Path "$env:GITHUB_WORKSPACE\build.ec" "meson-logs\meson-log.txt"
             if (Test-Path $mlog) {
               $txt = Get-Content $mlog -Raw
-              if ($txt -match '(?i)\-arm64EC') { throw "Detected '-arm64EC' in meson-log; remove any dash-style arm64EC flags" }
+              if ($txt -match '(?i)\-arm64EC') { throw "Detected '-arm64EC' in meson-log; purge dash-style arm64ec flags" }
             }
 
             ninja -C "$env:GITHUB_WORKSPACE\build.ec" -j 2
@@ -451,7 +465,6 @@ jobs:
             Assert-AnyDll "$env:PREFIX_X64\bin" 'machine.*ARM64EC'
 
             # ---------- Win32 (syswow64) ----------
-            # ARM64EC 플래그 제거 후 x86 전환
             $env:CL = ""
             $env:LINK = ""
             Invoke-VsDev -Arch x86 -HostArch x64
@@ -523,7 +536,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $notes = "$env:GITHUB_WORKSPACE\RELEASE_NOTES.md"
-          if (-not (gh release view "$env:RELEASE_TAG" --repo "$env:REPO" > $null 2>&1)) {
+          if (-not (gh release view "$env:RELEASE_TAG" --repo "$env:REPO" > $ null 2>&1)) {
             gh release create "$env:RELEASE_TAG" --repo "$env:REPO" -t "$env:RELEASE_TAG" -F $notes
           } else {
             gh release edit   "$env:RELEASE_TAG" --repo "$env:REPO" -t "$env:RELEASE_TAG" -F $notes
