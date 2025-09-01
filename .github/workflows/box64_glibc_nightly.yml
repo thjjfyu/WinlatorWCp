@@ -95,7 +95,7 @@ jobs:
           HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' \
                   -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
                   "$API/repos/${REPO}/releases/tags/BOX64-NIGHTLY" || true)"
-          if [ "$HTTP" = "200" ] && jq -e --arg N "$FILENAME" '.assets[]?.name == $N' /tmp/nightly.json >/dev/null; then
+          if [ "$HTTP" = "200" ] && jq -e --arg N "$FILENAME" 'any(.assets[]?; .name == $N)' /tmp/nightly.json >/dev/null; then
             echo "skip=true"  >> "$GITHUB_OUTPUT"
             echo "Found asset ${FILENAME}; skipping build."
           else
@@ -107,7 +107,7 @@ jobs:
         run: |
           sudo apt-get -yq update
           sudo apt-get -yq install --no-install-recommends \
-            git cmake ninja-build build-essential zstd file jq curl unzip ca-certificates gh binutils
+            git cmake ninja-build build-essential zstd file jq curl unzip ca-certificates gh binutils patchelf
 
       - name: Checkout upstream Box64 (exact commit)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
@@ -147,6 +147,8 @@ jobs:
 
           mkdir -p Box64_WCP artifacts
           install -m 0755 src/build/box64 Box64_WCP/box64
+
+          patchelf --set-interpreter /data/data/com.winlator/files/imagefs/usr/lib/ld-linux-aarch64.so.1 Box64_WCP/box64
 
           cat > Box64_WCP/profile.json <<JSON
           {
