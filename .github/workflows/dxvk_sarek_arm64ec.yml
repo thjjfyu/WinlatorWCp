@@ -176,25 +176,41 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Set-Location src
-          $tags = (git tag --merged origin/main -l 'v*') | Where-Object { $_ -match '^v\d+\.\d+(\.\d+)?$' } | Sort-Object {[version]($_.TrimStart('v'))}
-          $min = [version]'1.10.8'
+      
+          $tags = (git tag --merged origin/main -l 'v*') |
+            Where-Object { $_ -match '^v\d+\.\d+(\.\d+)?$' } |
+            Sort-Object {[version]($_.TrimStart('v'))}
+      
+          $min   = [version]'1.10.8'
           $cands = $tags | Where-Object { [version]($_.TrimStart('v')) -ge $min }
-
+      
           $exist = @()
-          try {
-            $rel = gh api repos/$env:REPO/releases/tags/$env:RELEASE_TAG --jq '.assets[].name' 2>$null
-            if ($rel) {
-              $exist = $rel | ForEach-Object { if ($_ -match '^dxvk-sarek-arm64ec-(\d+\.\d+(\.\d+)?)\.wcp$') { $matches[1] } }
+      
+          # --- 여기만 교체 ---
+          $rel = & gh api repos/$env:REPO/releases/tags/$env:RELEASE_TAG --jq '.assets[].name' 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            # Release가 없으면 404 -> $rel 비우고 종료코드 정리
+            $rel = $null
+            $global:LASTEXITCODE = 0
+          }
+          if ($rel) {
+            $exist = $rel | ForEach-Object {
+              if ($_ -match '^dxvk-sarek-arm64ec-(\d+\.\d+(\.\d+)?)\.wcp$') { $matches[1] }
             }
-          } catch {}
-
+          }
+          # --- 여기까지 ---
+      
           $toBuild = @()
           foreach ($t in $cands) {
             $base = $t.TrimStart('v')
             if (-not ($exist -contains $base)) { $toBuild += "${t} ${base}" }
           }
-
-          if ($toBuild.Count -eq 0) { Write-Host "No new versions to build."; "" | Out-File "$env:GITHUB_WORKSPACE\to_build.txt"; return }
+      
+          if ($toBuild.Count -eq 0) {
+            Write-Host "No new versions to build."
+            "" | Out-File "$env:GITHUB_WORKSPACE\to_build.txt"
+            return
+          }
           $toBuild | Out-File -Encoding ascii "$env:GITHUB_WORKSPACE\to_build.txt"
           Get-Content "$env:GITHUB_WORKSPACE\to_build.txt"
 
