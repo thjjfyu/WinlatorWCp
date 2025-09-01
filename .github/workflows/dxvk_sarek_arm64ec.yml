@@ -8,152 +8,96 @@ permissions:
 
 defaults:
   run:
-    shell: bash
+    shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
 
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     env:
       SAREK_REPO: pythonlover02/DXVK-Sarek
       TOOLCHAIN_DIR: ${{ github.workspace }}/.toolchains
       LLVM_MINGW_DIR: ${{ github.workspace }}/.toolchains/llvm-mingw
-      GH_TOKEN: ${{ github.token }}
+      ARM64_ASSET_NAME: llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz
 
     steps:
-      - name: Install host tools
+      - name: Install build deps
         run: |
-          set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
             curl xz-utils zstd jq ca-certificates \
             git meson ninja-build glslang-tools pkg-config \
             python3 build-essential file
 
-          # glslangValidator만 있어도 --vn 대체 가능: 래퍼 링크
+          # glslangValidator만 있을 때 --vn 대체 래퍼
           if command -v glslangValidator >/dev/null && ! command -v glslang >/dev/null; then
-            mkdir -p "$HOME/.local/bin"
-            ln -sf "$(command -v glslangValidator)" "$HOME/.local/bin/glslang"
-            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            BIN="$HOME/.local/bin"; mkdir -p "$BIN"
+            ln -sf "$(command -v glslangValidator)" "$BIN/glslang"
+            echo "$BIN" >> "$GITHUB_PATH"
           fi
 
-      - name: Fetch bylaws/llvm-mingw cross toolchain (Linux x86_64)
-        id: tc
+      - name: Download bylaws llvm-mingw (exact asset)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -Eeuo pipefail
-
-          pick_url() {
-            local page=1 url=""
-            while [ $page -le 5 ]; do
-              json="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
-                              -H "Accept: application/vnd.github+json" \
-                              "https://api.github.com/repos/bylaws/llvm-mingw/releases?per_page=100&page=${page}")"
-              # 리눅스 x86_64용 UCRT 크로스(ubuntu 기반) tar.* 를 선호
-              url="$(echo "$json" | jq -r '
-                .[]?.assets[]?
-                | select(
-                    (.name|test("ubuntu";"i")) and
-                    (.name|test("x86_64";"i")) and
-                    (.name|test("\\.(tar\\.(zst|xz|gz)|t(z|x|g)z)$";"i"))
-                  )
-                | .browser_download_url
-              ' | head -n1)"
-              [ -n "$url" ] && { echo "$url"; return 0; }
-              page=$((page+1))
-            done
-            return 1
-          }
-
-          url="$(pick_url || true)"
-
-          # 폴백: ARM64EC 스크립트가 포함된 것으로 알려진 20240929 태그
-          if [ -z "${url:-}" ]; then
-            json="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
-                            -H "Accept: application/vnd.github+json" \
-                            "https://api.github.com/repos/bylaws/llvm-mingw/releases/tags/20240929")"
-            url="$(echo "$json" | jq -r '
-              .assets[]?
-              | select(
-                  (.name|test("ubuntu";"i")) and
-                  (.name|test("x86_64";"i")) and
-                  (.name|test("\\.(tar\\.(zst|xz|gz)|t(z|x|g)z)$";"i"))
-                )
-              | .browser_download_url
-            ' | head -n1)"
-          fi
-
-          if [ -z "${url:-}" ]; then
-            echo "::group::No suitable llvm-mingw asset found. Recent asset names:"
-            curl -fsSL -H "Accept: application/vnd.github+json" \
-                 "https://api.github.com/repos/bylaws/llvm-mingw/releases?per_page=30&page=1" \
-              | jq -r '.[]?.assets[]?.name'
+          mkdir -p "$LLVM_MINGW_DIR"
+          API="https://api.github.com/repos/bylaws/llvm-mingw/releases/latest"
+          json="$(curl -fsSL -H "Accept: application/vnd.github+json" "$API")"
+          url="$(echo "$json" | jq -r --arg N "$ARM64_ASSET_NAME" '.assets[] | select(.name==$N) .browser_download_url')"
+          if [ -z "$url" ] || [ "$url" = "null" ]; then
+            echo "::group::Available assets in latest release"
+            echo "$json" | jq -r '.assets[].name'
             echo "::endgroup::"
-            echo "::error::llvm-mingw linux x86_64 tarball not found"
+            echo "::error::Asset $ARM64_ASSET_NAME not found in latest release"
             exit 1
           fi
-
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-
-          mkdir -p "$LLVM_MINGW_DIR"
-          f=/tmp/llvm-mingw.any.tar
+          echo "Chosen: $url"
+          f=/tmp/llvm-mingw.tar.xz
           curl -fL "$url" -o "$f"
-
-          case "$url" in
-            *.tar.zst|*.tzst) tar -C "$LLVM_MINGW_DIR" --strip-components=1 --zstd -xvf "$f" ;;
-            *.tar.xz|*.txz)  tar -C "$LLVM_MINGW_DIR" --strip-components=1 -xJf  "$f" ;;
-            *.tar.gz|*.tgz)  tar -C "$LLVM_MINGW_DIR" --strip-components=1 -xzf  "$f" ;;
-            *) echo "::error::Unknown archive format: $url"; exit 1 ;;
-          esac
-
+          tar -C "$LLVM_MINGW_DIR" --strip-components=1 -xJf "$f"
           echo "$LLVM_MINGW_DIR/bin" >> "$GITHUB_PATH"
 
-          # ARM64EC 래퍼/툴 존재 확인
-          need=(arm64ec-w64-mingw32-clang arm64ec-w64-mingw32-ar arm64ec-w64-mingw32-windres)
-          for b in "${need[@]}"; do
-            if ! command -v "$b" >/dev/null 2>&1; then
-              echo "::warning::$b not found in toolchain. Will try llvm-rc fallback for windres."
-            fi
+          # 기대 도구 확인 (없으면 에러)
+          need_bins=(arm64ec-w64-mingw32-clang arm64ec-w64-mingw32-clang++ i686-w64-mingw32-clang i686-w64-mingw32-clang++)
+          for b in "${need_bins[@]}"; do
+            command -v "$b" >/dev/null || { echo "::error::missing tool: $b"; exit 1; }
+          done
+          # 보조 도구 경고만
+          for b in arm64ec-w64-mingw32-windres i686-w64-mingw32-windres llvm-rc llvm-strip llvm-ar; do
+            command -v "$b" >/dev/null || echo "::warning::missing (will fallback if possible): $b"
           done
 
-          # i686도 함께 사용할 것이므로 확인
-          for b in i686-w64-mingw32-clang i686-w64-mingw32-ar; do
-            command -v "$b" >/dev/null || { echo "::error::$b not found in toolchain"; exit 1; }
-          done
-
-      - name: Clone DXVK-Sarek (main)
+      - name: Clone DXVK-Sarek (main + submodules)
         run: |
-          set -Eeuo pipefail
           git clone --recurse-submodules "https://github.com/${SAREK_REPO}.git" src
           cd src
+          git fetch --force
           git checkout -f main
           git submodule update --init --recursive --checkout
 
       - name: Create Meson cross files (ARM64EC & i686)
         working-directory: src
         run: |
-          set -Eeuo pipefail
-
+          # ARM64EC
           cat > cross-arm64ec.txt <<'EOF'
           [binaries]
           c = 'arm64ec-w64-mingw32-clang'
           cpp = 'arm64ec-w64-mingw32-clang++'
           ar = 'arm64ec-w64-mingw32-ar'
-          # windres 없으면 llvm-rc로 대체
           windres = 'arm64ec-w64-mingw32-windres'
           strip = 'llvm-strip'
           pkgconfig = 'pkg-config'
-
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
           EOF
-
-          # windres 대체
-          if ! command -v arm64ec-w64-mingw32-windres >/dev/null && command -v llvm-rc >/dev/null; then
+          # windres 없으면 llvm-rc로 대체
+          command -v arm64ec-w64-mingw32-windres >/dev/null || \
             sed -i "s|^windres = .*|windres = 'llvm-rc'|" cross-arm64ec.txt
-          fi
 
+          # i686
           cat > cross-i686.txt <<'EOF'
           [binaries]
           c = 'i686-w64-mingw32-clang'
@@ -162,53 +106,54 @@ jobs:
           windres = 'i686-w64-mingw32-windres'
           strip = 'llvm-strip'
           pkgconfig = 'pkg-config'
-
           [host_machine]
           system = 'windows'
           cpu_family = 'x86'
           cpu = 'i686'
           endian = 'little'
           EOF
-
-          if ! command -v i686-w64-mingw32-windres >/dev/null && command -v llvm-rc >/divnull; then
+          command -v i686-w64-mingw32-windres >/dev/null || \
             sed -i "s|^windres = .*|windres = 'llvm-rc'|" cross-i686.txt
-          fi
 
-      - name: Build (ARM64EC)
+      - name: Build ARM64EC (DLLs)
         working-directory: src
+        env:
+          PREFIX_ARM64EC: ${{ github.workspace }}/dist-arm64ec
         run: |
-          set -Eeuo pipefail
           meson setup "$GITHUB_WORKSPACE/build.arm64ec" \
             --cross-file cross-arm64ec.txt \
             --buildtype release \
+            --prefix "$PREFIX_ARM64EC" \
             -Dbuild_id=false -Dstrip=true \
             -Dc_args='-Wno-nontrivial-memcall' \
             -Dcpp_args='-Wno-nontrivial-memcall'
           ninja -C "$GITHUB_WORKSPACE/build.arm64ec" -j"$(nproc)"
+          meson install --no-rebuild -C "$GITHUB_WORKSPACE/build.arm64ec"
 
-      - name: Build (i686)
+      - name: Build i686 (DLLs)
         working-directory: src
+        env:
+          PREFIX_I686: ${{ github.workspace }}/dist-i686
         run: |
-          set -Eeuo pipefail
           meson setup "$GITHUB_WORKSPACE/build.i686" \
             --cross-file cross-i686.txt \
             --buildtype release \
+            --prefix "$PREFIX_I686" \
             -Dbuild_id=false -Dstrip=true \
             -Dc_args='-Wno-nontrivial-memcall' \
             -Dcpp_args='-Wno-nontrivial-memcall'
           ninja -C "$GITHUB_WORKSPACE/build.i686" -j"$(nproc)"
+          meson install --no-rebuild -C "$GITHUB_WORKSPACE/build.i686"
 
       - name: Collect DLLs
         run: |
-          set -Eeuo pipefail
           mkdir -p out/arm64ec out/i686
-          find build.arm64ec -type f -name '*.dll' -exec cp -v {} out/arm64ec/ \; || true
-          find build.i686   -type f -name '*.dll' -exec cp -v {} out/i686/    \; || true
+          cp -v "$GITHUB_WORKSPACE"/dist-arm64ec/bin/*.dll out/arm64ec/ || true
+          cp -v "$GITHUB_WORKSPACE"/dist-i686/bin/*.dll  out/i686/    || true
 
           echo "ARM64EC DLLs:"; ls -1 out/arm64ec || true
           echo "i686 DLLs:";   ls -1 out/i686   || true
 
-          # 둘 다 비어있다면 실패로 처리
           if [ -z "$(find out/arm64ec -name '*.dll' -print -quit)" ] && \
              [ -z "$(find out/i686   -name '*.dll' -print -quit)" ]; then
             echo "::error::No DLLs produced"; exit 1
