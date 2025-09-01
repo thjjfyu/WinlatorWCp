@@ -84,7 +84,7 @@ jobs:
             fi
           done < /tmp/candidates.txt
 
-          [ "$(cat /tmp/missing.flag)" = "yes" ] && echo "missing=true"  >> "$GITHUB_OUTPUT" || echo "missing=false" >> "$GITHUB_OUTPUT"
+          [ "$(cat /tmp.missing.flag 2>/dev/null || echo no)" = "yes" ] && echo "missing=true"  >> "$GITHUB_OUTPUT" || echo "missing=false" >> "$GITHUB_OUTPUT"
 
       - name: Decide build
         id: decide
@@ -194,7 +194,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           cd src
-          # Only tags merged into Sarek (exclude Async branch)
           git tag --merged origin/main -l 'v*' \
             | { grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' || true; } \
             | sort -V \
@@ -252,8 +251,6 @@ jobs:
           cpp = 'arm64ec-w64-mingw32-g++'
           windres = 'arm64ec-w64-mingw32-windres'
           strip = 'llvm-strip'
-          widl = 'widl'
-          pkgconfig = 'aarch64-linux-gnu-pkg-config'
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
@@ -268,8 +265,20 @@ jobs:
           # windres fallback
           command -v arm64ec-w64-mingw32-windres >/dev/null 2>&1 || \
             sed -i "s|windres = '.*'|windres = 'llvm-rc'|" build-arm64ec.txt
+          # Add optional tools only if present
+          if command -v widl >/dev/null 2>&1; then
+            sed -i "/^\[binaries\]/a widl = 'widl'" build-arm64ec.txt
+          fi
+          if command -v pkg-config >/dev/null 2>&1; then
+            sed -i "/^\[binaries\]/a pkgconfig = 'pkg-config'" build-arm64ec.txt
+          fi
 
-      - name: Build NEW versions only (DXVK-Sarek → WCP) + compat patches + clean retag
+      - name: Sanity-check target predefines (debug)
+        run: |
+          echo "---- arm64ec clang++ predefineds (subset) ----"
+          echo | arm64ec-w64-mingw32-g++ -dM -E -xc++ - | egrep '__arm|__x86_64__|__i386__|_M_ARM64EC|__SSE' || true
+
+      - name: Build NEW versions only (DXVK-Sarek → WCP)
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
@@ -286,20 +295,6 @@ jobs:
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
 
-            # HUD retag (keep upstream tag name, clean tree)
-            git config user.name  "ci"
-            git config user.email "ci@local"
-            git config --global --add safe.directory "$(pwd)"
-            git add -A
-            git commit -m "local compat patches for ${base}" || true
-            git tag -d "$tag" || true
-            git tag -a "$tag" -m "clean retag for HUD version"
-            git reset --hard HEAD
-            git clean -xdf
-            if [[ -n "$(git status --porcelain)" ]]; then
-              echo "::error::Repo is dirty after retag"; git status; exit 1
-            fi
-
             # Clean previous artifacts
             rm -rf "${GITHUB_WORKSPACE}/build.ec" "${GITHUB_WORKSPACE}/build.w32" \
                    "${PREFIX_X64}" "${PREFIX_X86}" \
@@ -311,8 +306,8 @@ jobs:
               --buildtype release \
               --prefix "${PREFIX_X64}" \
               -Dbuild_id=false -Dstrip=true \
-              -Dc_args='-Wno-nontrivial-memcall -U__i386__ -U__x86_64__ -D_M_ARM64EC=1 -D__ARM64EC__=1 -D__SSE__=0 -D__SSE2__=0' \
-              -Dcpp_args='-Wno-nontrivial-memcall -U__i386__ -U__x86_64__ -D_M_ARM64EC=1 -D__ARM64EC__=1 -D__SSE__=0 -D__SSE2__=0'
+              -Dc_args='-Wno-nontrivial-memcall -D_M_ARM64EC=1 -D__ARM64EC__=1' \
+              -Dcpp_args='-Wno-nontrivial-memcall -D_M_ARM64EC=1 -D__ARM64EC__=1'
             ninja -C "${GITHUB_WORKSPACE}/build.ec" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.ec"
 
@@ -340,7 +335,6 @@ jobs:
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
 
-            # profile.json: keep EXACTLY as in your base workflow
             jq -n \
               --arg VN "sarek-${base}" \
               --argjson VC 0 \
@@ -365,7 +359,6 @@ jobs:
 
             mkdir -p "${GITHUB_WORKSPACE}/out"
             wcp="dxvk-sarek-arm64ec-${base}.wcp"
-            # WCP package: identical structure and naming to your base workflow
             tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd \
                 --format=gnu --owner=0 --group=0 --numeric-owner \
                 -cf "${GITHUB_WORKSPACE}/out/${wcp}" profile.json system32 syswow64
