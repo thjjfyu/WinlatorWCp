@@ -95,7 +95,6 @@ jobs:
             build-essential pkg-config ninja-build meson \
             zstd file rsync libvulkan-dev \
             wine64-tools glslang-tools gh \
-            pkg-config-aarch64-linux-gnu  # provides aarch64-linux-gnu-pkg-config
 
       - name: Install llvm-mingw (ucrt; Ubuntu x86_64 asset)
         if: steps.dupe.outputs.skip != 'true' && steps.tag.outputs.tag != ''
