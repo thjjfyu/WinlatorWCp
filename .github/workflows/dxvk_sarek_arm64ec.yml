@@ -1,9 +1,9 @@
 name: Build DXVK-Sarek arm64ec
 
 on:
-  workflow_dispatch:              # Manual trigger (any branch)
+  workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"         # Daily (UTC)
+    - cron: "0 18 * * *"
 
 permissions:
   contents: write
@@ -101,9 +101,9 @@ jobs:
     if: needs.guard.outputs.build == 'true'
     env:
       SAREK_REPO: pythonlover02/DXVK-Sarek
-      PREFIX_X64: ${{ github.workspace }}/dist-arm64ec   # system32 (ARM64EC)
-      PREFIX_X86: ${{ github.workspace }}/dist-x86       # syswow64 (i686)
-      TOOLCHAIN_DIR: /opt/llvm-mingw                     # mstorsjo/llvm-mingw
+      PREFIX_X64: ${{ github.workspace }}/dist-arm64ec
+      PREFIX_X86: ${{ github.workspace }}/dist-x86
+      TOOLCHAIN_DIR: /opt/llvm-mingw
       RELEASE_TAG: DXVK-SAREK-ARM64EC
       GH_TOKEN: ${{ github.token }}
 
@@ -169,118 +169,82 @@ jobs:
           #endif
           EOF
 
-      # === 핵심 수정: 인라인 ASM 경로 완전 차단 (형식 이슈 없는 함수 정의) ===
-      - name: "ARM64EC: neutralize bit-test builders & define atomic impl (no backslashes)"
+      - name: Write ARM64EC intrinsics override header (no asm, no backslashes)
         run: |
-          set -Eeuo pipefail
-          # Locate header
-          HDR_CANDIDATES=(
-            "$TOOLCHAIN_DIR/arm64ec-w64-mingw32/include/psdk_inc/intrin-impl.h"
-            "$TOOLCHAIN_DIR/arm64ec-w64-mingw32/include/intrin-impl.h"
-          )
-          for H in "${HDR_CANDIDATES[@]}"; do
-            if [ -f "$H" ]; then HDR="$H"; break; fi
-          done
-          [ -n "${HDR:-}" ] || { echo "::error::intrin-impl.h not found"; exit 1; }
-          sudo cp -f "$HDR" "${HDR}.bak"
-
-          tmphdr="$(mktemp)"
-          cat > "$tmphdr" <<'OVR'
+          cat > "${GITHUB_WORKSPACE}/arm64ec_intrin_override.h" <<'EOF'
           #if defined(_M_ARM64EC) || defined(__ARM64EC__)
           #ifndef __MINGW_ARM64EC_BTEST_OVERRIDE
           #define __MINGW_ARM64EC_BTEST_OVERRIDE 1
           #undef __GCC_ASM_FLAG_OUTPUTS__
           #undef __FLAGCONSTRAINT
           #define __FLAGCONSTRAINT "=r"
-          #undef __buildbittesti
-          #undef __buildbittesti64
-          #define __buildbittesti(NAME, TYP, OP, EXTRA)
-          #define __buildbittesti64(NAME, TYP, OP, EXTRA)
-
-          static inline unsigned char _interlockedbittestandset(long volatile* Base, long Offset) {
-            unsigned long idx = ((unsigned long)Offset >> 5);
-            unsigned long m = 1u << (Offset & 31);
-            volatile unsigned long* p = (volatile unsigned long*)Base + idx;
-            unsigned long old = __atomic_fetch_or((unsigned long*)p, m, __ATOMIC_SEQ_CST);
-            return (old & m) ? 1 : 0;
+          /* function-like builders will be nulled by -D from cflags */
+          /* 32-bit */
+          static inline unsigned char _interlockedbittestandset(long volatile* Base, long Offset){
+            unsigned long idx=((unsigned long)Offset>>5), m=1u<<(Offset&31);
+            volatile unsigned long* p=(volatile unsigned long*)Base+idx;
+            unsigned long old=__atomic_fetch_or((unsigned long*)p,m,__ATOMIC_SEQ_CST);
+            return (old&m)?1:0;
           }
-          static inline unsigned char _interlockedbittestandreset(long volatile* Base, long Offset) {
-            unsigned long idx = ((unsigned long)Offset >> 5);
-            unsigned long m = 1u << (Offset & 31);
-            volatile unsigned long* p = (volatile unsigned long*)Base + idx;
-            unsigned long old = __atomic_fetch_and((unsigned long*)p, ~m, __ATOMIC_SEQ_CST);
-            return (old & m) ? 1 : 0;
+          static inline unsigned char _interlockedbittestandreset(long volatile* Base, long Offset){
+            unsigned long idx=((unsigned long)Offset>>5), m=1u<<(Offset&31);
+            volatile unsigned long* p=(volatile unsigned long*)Base+idx;
+            unsigned long old=__atomic_fetch_and((unsigned long*)p,~m,__ATOMIC_SEQ_CST);
+            return (old&m)?1:0;
           }
-          static inline unsigned char _interlockedbittestandcomplement(long volatile* Base, long Offset) {
-            unsigned long idx = ((unsigned long)Offset >> 5);
-            unsigned long m = 1u << (Offset & 31);
-            volatile unsigned long* p = (volatile unsigned long*)Base + idx;
-            unsigned long old = __atomic_fetch_xor((unsigned long*)p, m, __ATOMIC_SEQ_CST);
-            return (old & m) ? 1 : 0;
+          static inline unsigned char _interlockedbittestandcomplement(long volatile* Base, long Offset){
+            unsigned long idx=((unsigned long)Offset>>5), m=1u<<(Offset&31);
+            volatile unsigned long* p=(volatile unsigned long*)Base+idx;
+            unsigned long old=__atomic_fetch_xor((unsigned long*)p,m,__ATOMIC_SEQ_CST);
+            return (old&m)?1:0;
           }
-          static inline unsigned char InterlockedBitTestAndSet(long volatile* Base, long Offset) {
-            return _interlockedbittestandset(Base, Offset);
+          static inline unsigned char InterlockedBitTestAndSet(long volatile* Base, long Offset){
+            return _interlockedbittestandset(Base,Offset);
           }
-          static inline unsigned char InterlockedBitTestAndReset(long volatile* Base, long Offset) {
-            return _interlockedbittestandreset(Base, Offset);
+          static inline unsigned char InterlockedBitTestAndReset(long volatile* Base, long Offset){
+            return _interlockedbittestandreset(Base,Offset);
           }
-          static inline unsigned char InterlockedBitTestAndComplement(long volatile* Base, long Offset) {
-            return _interlockedbittestandcomplement(Base, Offset);
+          static inline unsigned char InterlockedBitTestAndComplement(long volatile* Base, long Offset){
+            return _interlockedbittestandcomplement(Base,Offset);
           }
-
-          static inline unsigned char _interlockedbittestandset64(long long volatile* Base, long long Offset) {
-            unsigned long long idx = ((unsigned long long)Offset >> 6);
-            unsigned long long m = 1ull << (Offset & 63);
-            volatile unsigned long long* p = (volatile unsigned long long*)Base + idx;
-            unsigned long long old = __atomic_fetch_or((unsigned long long*)p, m, __ATOMIC_SEQ_CST);
-            return (old & m) ? 1 : 0;
+          /* 64-bit */
+          static inline unsigned char _interlockedbittestandset64(long long volatile* Base, long long Offset){
+            unsigned long long idx=((unsigned long long)Offset>>6), m=1ull<<(Offset&63);
+            volatile unsigned long long* p=(volatile unsigned long long*)Base+idx;
+            unsigned long long old=__atomic_fetch_or((unsigned long long*)p,m,__ATOMIC_SEQ_CST);
+            return (old&m)?1:0;
           }
-          static inline unsigned char _interlockedbittestandreset64(long long volatile* Base, long long Offset) {
-            unsigned long long idx = ((unsigned long long)Offset >> 6);
-            unsigned long long m = 1ull << (Offset & 63);
-            volatile unsigned long long* p = (volatile unsigned long long*)Base + idx;
-            unsigned long long old = __atomic_fetch_and((unsigned long long*)p, ~m, __ATOMIC_SEQ_CST);
-            return (old & m) ? 1 : 0;
+          static inline unsigned char _interlockedbittestandreset64(long long volatile* Base, long long Offset){
+            unsigned long long idx=((unsigned long long)Offset>>6), m=1ull<<(Offset&63);
+            volatile unsigned long long* p=(volatile unsigned long long*)Base+idx;
+            unsigned long long old=__atomic_fetch_and((unsigned long long*)p,~m,__ATOMIC_SEQ_CST);
+            return (old&m)?1:0;
           }
-          static inline unsigned char _interlockedbittestandcomplement64(long long volatile* Base, long long Offset) {
-            unsigned long long idx = ((unsigned long long)Offset >> 6);
-            unsigned long long m = 1ull << (Offset & 63);
-            volatile unsigned long long* p = (volatile unsigned long long*)Base + idx;
-            unsigned long long old = __atomic_fetch_xor((unsigned long long*)p, m, __ATOMIC_SEQ_CST);
-            return (old & m) ? 1 : 0;
+          static inline unsigned char _interlockedbittestandcomplement64(long long volatile* Base, long long Offset){
+            unsigned long long idx=((unsigned long long)Offset>>6), m=1ull<<(Offset&63);
+            volatile unsigned long long* p=(volatile unsigned long long*)Base+idx;
+            unsigned long long old=__atomic_fetch_xor((unsigned long long*)p,m,__ATOMIC_SEQ_CST);
+            return (old&m)?1:0;
           }
-          static inline unsigned char InterlockedBitTestAndSet64(long long volatile* Base, long long Offset) {
-            return _interlockedbittestandset64(Base, Offset);
+          static inline unsigned char InterlockedBitTestAndSet64(long long volatile* Base, long long Offset){
+            return _interlockedbittestandset64(Base,Offset);
           }
-          static inline unsigned char InterlockedBitTestAndReset64(long long volatile* Base, long long Offset) {
-            return _interlockedbittestandreset64(Base, Offset);
+          static inline unsigned char InterlockedBitTestAndReset64(long long volatile* Base, long long Offset){
+            return _interlockedbittestandreset64(Base,Offset);
           }
-          static inline unsigned char InterlockedBitTestAndComplement64(long long volatile* Base, long long Offset) {
-            return _interlockedbittestandcomplement64(Base, Offset);
+          static inline unsigned char InterlockedBitTestAndComplement64(long long volatile* Base, long long Offset){
+            return _interlockedbittestandcomplement64(Base,Offset);
           }
           #endif
           #endif
-          OVR
-
-          # Insert override at file start
-          sudo tee "${HDR}.new" >/dev/null < "$tmphdr"
-          sudo cat "$HDR" | sudo tee -a "${HDR}.new" >/dev/null
-          sudo mv "${HDR}.new" "$HDR"
-
-          # Ensure any later redefinition of __FLAGCONSTRAINT is safe
-          sudo sed -i 's/^#define[[:space:]]\+__FLAGCONSTRAINT.*/#define __FLAGCONSTRAINT "=r"/' "$HDR"
-
-          echo "---- sanity ----"
-          grep -n "__MINGW_ARM64EC_BTEST_OVERRIDE" "$HDR" | head -n 1 || { echo "::error::override not injected"; exit 1; }
-          grep -n "__buildbittesti(" "$HDR" | head -n 1 || true
-          grep -n "__FLAGCONSTRAINT" "$HDR" | head -n 1 || true
+          EOF
 
       - name: Create Meson cross files (DXVK-style; arm64ec + i686)
         run: |
           set -Eeuo pipefail
           pick() { command -v "$1" >/dev/null 2>&1 && echo "$1" || echo "$2"; }
 
-          # --- arm64ec (prefer GCC wrappers; robust fallbacks) ---
+          # --- arm64ec ---
           A_AR=$(pick arm64ec-w64-mingw32-ar arm64ec-w64-mingw32-ar)
           A_CC=$(pick arm64ec-w64-mingw32-gcc arm64ec-w64-mingw32-clang)
           A_CXX=$(pick arm64ec-w64-mingw32-g++ arm64ec-w64-mingw32-clang++)
@@ -306,8 +270,20 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args  = ['-Wno-nontrivial-memcall','-include','${GITHUB_WORKSPACE}/arm64ec_shim.h','-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1','-U__GCC_ASM_FLAG_OUTPUTS__']
-          cpp_args= ['-Wno-nontrivial-memcall','-include','${GITHUB_WORKSPACE}/arm64ec_shim.h','-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1','-U__GCC_ASM_FLAG_OUTPUTS__']
+          c_args  = ['-Wno-nontrivial-memcall',
+                     '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
+                     '-include','${GITHUB_WORKSPACE}/arm64ec_intrin_override.h',
+                     '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
+                     '-U__GCC_ASM_FLAG_OUTPUTS__','-U__FLAGCONSTRAINT','-D__FLAGCONSTRAINT="=r"',
+                     '-D__buildbittesti(NAME,TYP,OP,EXTRA)=',
+                     '-D__buildbittesti64(NAME,TYP,OP,EXTRA)=']
+          cpp_args= ['-Wno-nontrivial-memcall',
+                     '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
+                     '-include','${GITHUB_WORKSPACE}/arm64ec_intrin_override.h',
+                     '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
+                     '-U__GCC_ASM_FLAG_OUTPUTS__','-U__FLAGCONSTRAINT','-D__FLAGCONSTRAINT="=r"',
+                     '-D__buildbittesti(NAME,TYP,OP,EXTRA)=',
+                     '-D__buildbittesti64(NAME,TYP,OP,EXTRA)=']
           EOF
 
           # --- i686 (32-bit) ---
