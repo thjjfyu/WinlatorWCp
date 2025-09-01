@@ -187,7 +187,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           pick() { command -v "$1" >/dev/null 2>&1 && echo "$1" || echo "$2"; }
-
+      
           # --- arm64ec (prefer GCC wrappers; robust fallbacks) ---
           A_AR=$(pick arm64ec-w64-mingw32-ar arm64ec-w64-mingw32-ar)
           A_CC=$(pick arm64ec-w64-mingw32-gcc arm64ec-w64-mingw32-clang)
@@ -196,7 +196,7 @@ jobs:
           A_STRIP=$(pick llvm-strip arm64ec-w64-mingw32-strip)
           A_WIDL=$(pick arm64ec-w64-mingw32-widl widl)
           A_PKG=$(pick aarch64-linux-gnu-pkg-config pkg-config)
-
+      
           cat > "${{ github.workspace }}/arm64ec.cross" <<EOF
           [binaries]
           ar = '${A_AR}'
@@ -214,22 +214,26 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args = ['-Wno-nontrivial-memcall',
-                    '-DWIN32_LEAN_AND_MEAN -DVC_EXTRALEAN',
-                    '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
-                    '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE',
-                    '-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
-                    '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86',
-                    '-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__']
-          cpp_args = ['-Wno-nontrivial-memcall',
-                      '-DWIN32_LEAN_AND_MEAN -DVC_EXTRALEAN',
-                      '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
-                      '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE',
-                      '-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
-                      '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86',
-                      '-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__']
+          c_args = [
+            '-Wno-nontrivial-memcall',
+            '-DWIN32_LEAN_AND_MEAN', '-DVC_EXTRALEAN',
+            '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
+            '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE',
+            '-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
+            '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86',
+            '-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__'
+          ]
+          cpp_args = [
+            '-Wno-nontrivial-memcall',
+            '-DWIN32_LEAN_AND_MEAN', '-DVC_EXTRALEAN',
+            '-include','${GITHUB_WORKSPACE}/arm64ec_shim.h',
+            '-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE',
+            '-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1',
+            '-U__x86_64__','-U__i386__','-U_M_X64','-U_M_AMD64','-U_AMD64_','-U_M_IX86',
+            '-U__MMX__','-U__SSE__','-U__SSE2__','-U__AVX__','-U__AVX2__'
+          ]
           EOF
-
+      
           # --- i686 (strip/rc 정리; DXVK와 동일) ---
           I_AR=$(pick i686-w64-mingw32-ar i686-w64-mingw32-ar)
           I_CC=$(pick i686-w64-mingw32-gcc i686-w64-mingw32-clang)
@@ -237,7 +241,7 @@ jobs:
           I_RC=$(pick i686-w64-mingw32-windres llvm-rc)
           I_STRIP=$(pick llvm-strip i686-w64-mingw32-strip)
           I_PKG=$(pick i686-w64-mingw32-pkg-config pkg-config)
-
+      
           cat > "${{ github.workspace }}/i686.cross" <<EOF
           [binaries]
           ar = '${I_AR}'
@@ -254,8 +258,8 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args = ['-Wno-nontrivial-memcall']
-          cpp_args = ['-Wno-nontrivial-memcall']
+          c_args = ['-Wno-nontrivial-memcall','-DWIN32_LEAN_AND_MEAN','-DVC_EXTRALEAN']
+          cpp_args = ['-Wno-nontrivial-memcall','-DWIN32_LEAN_AND_MEAN','-DVC_EXTRALEAN']
           EOF
 
       - name: Patch mingw-w64 intrinsics for ARM64EC (avoid x86 asm paths)
