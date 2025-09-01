@@ -155,36 +155,98 @@ jobs:
           git config user.email ci@local
           git tag -a v0-ci -m ci 2>$null
 
-      - name: Prepare LIB paths + stub d3d9.lib if missing (ARM64EC)
+      - name: Ensure VS ARM64EC tools (best effort)
+        shell: pwsh
         run: |
-          function Add-LibPathsFor([string]$Arch){
-            $vc  = $env:VCToolsInstallDir
-            $sdk = $env:WindowsSdkDir
-            $ver = $env:WindowsSDKLibVersion
-            $paths = @()
-            if ($vc)  { $paths += "$vc\lib\$Arch" }
-            if ($sdk -and $ver) {
-              $paths += "$sdk\Lib\$ver\ucrt\$Arch"
-              $paths += "$sdk\Lib\$ver\um\$Arch"
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${Env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere not found" }
+          $inst = & $vswhere -latest -products * -property installationPath
+          if (-not $inst) { throw "Visual Studio not found" }
+          $installer = Join-Path $inst 'vs_installer.exe'
+          & $installer modify `
+            --installPath "$inst" `
+            --add Microsoft.VisualStudio.Component.VC.Tools.ARM64EC `
+            --norestart --quiet --nocache
+          if ($LASTEXITCODE -ne 0) { Write-Warning "VS ARM64EC tool add attempt failed or not needed" }
+
+      - name: Prepare LIB paths + stub d3d9.lib if missing (ARM64EC)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Find-Arm64ecSdk {
+            $candidates = @()
+            if ($env:WindowsSdkDir) { $candidates += $env:WindowsSdkDir }
+            try {
+              $reg = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -ErrorAction Stop
+              if ($reg.KitsRoot10) { $candidates += $reg.KitsRoot10 }
+            } catch {}
+            $candidates += 'C:\Program Files (x86)\Windows Kits\10\'
+            $candidates = $candidates | Select-Object -Unique | Where-Object { $_ -and (Test-Path $_) }
+
+            foreach ($root in $candidates) {
+              $libRoot = Join-Path $root 'Lib'
+              if (-not (Test-Path $libRoot)) { continue }
+              $vers = Get-ChildItem $libRoot -Directory -ErrorAction SilentlyContinue |
+                       Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+                       Sort-Object Name -Descending
+              foreach ($v in $vers) {
+                $ucrt = Join-Path $v.FullName 'ucrt\arm64ec'
+                $um   = Join-Path $v.FullName 'um\arm64ec'
+                if ((Test-Path $ucrt) -and (Test-Path $um)) {
+                  return [pscustomobject]@{ UCRT=$ucrt; UM=$um; Version=$v.Name; Root=$root }
+                }
+              }
             }
-            $paths = $paths | Where-Object { $_ -and (Test-Path $_) }
-            if ($paths.Count -eq 0) { throw "No LIB path found for $Arch" }
-            $env:LIB = ($paths -join ';') + ';' + $env:LIB
+            return $null
           }
-          function Ensure-StubD3D9([string]$Arch){
-            $need = $true
-            foreach ($p in ($env:LIB -split ';')) { if ($p -and (Test-Path (Join-Path $p 'd3d9.lib'))) { $need = $false; break } }
-            if ($need) {
-              $stubDir = Join-Path $env:GITHUB_WORKSPACE "stublibs\$Arch"
-              New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
-              & lib.exe /nologo /machine:$Arch /OUT:(Join-Path $stubDir 'd3d9.lib')
-              if ($LASTEXITCODE -ne 0) { throw "Failed to create stub d3d9.lib ($Arch)" }
-              $env:LIB = "$stubDir;" + $env:LIB
-              Write-Host "Injected stub d3d9.lib -> $stubDir"
+
+          function Ensure-SdkArm64ec {
+            $sdk = Find-Arm64ecSdk
+            if ($sdk) { return $sdk }
+
+            Write-Warning 'ARM64EC SDK libs not found; attempting to install Windows 11 SDK (26100) via vs_installer...'
+            $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            $inst = & $vswhere -latest -products * -property installationPath
+            if ($inst) {
+              $installer = Join-Path $inst 'vs_installer.exe'
+              & $installer modify `
+                --installPath "$inst" `
+                --add Microsoft.VisualStudio.Component.Windows11SDK.26100 `
+                --norestart --quiet --nocache
             }
+            return (Find-Arm64ecSdk)
           }
-          Add-LibPathsFor 'arm64ec'
-          Ensure-StubD3D9 'ARM64EC'
+
+          # VC toolset ARM64EC lib (필수)
+          $vcArm64ec = Join-Path $env:VCToolsInstallDir 'lib\arm64ec'
+          if (-not (Test-Path $vcArm64ec)) { throw "VC arm64ec libs not found at $vcArm64ec" }
+
+          # Windows SDK (UCRT/UM) ARM64EC 경로 확보
+          $sdk = Ensure-SdkArm64ec
+          if (-not $sdk) { throw "Windows 11 SDK ARM64EC libs not found; cannot proceed." }
+
+          # 최종 LIB 경로 구성
+          $env:LIB = "$vcArm64ec;$($sdk.UCRT);$($sdk.UM);" + $env:LIB
+          Write-Host "LIB configured:"
+          Write-Host "  VC:   $vcArm64ec"
+          Write-Host "  UCRT: $($sdk.UCRT)"
+          Write-Host "  UM:   $($sdk.UM) (SDK $($sdk.Version))"
+
+          # d3d9.lib 없으면 스텁 생성(링커 체크 통과용)
+          $hasD3D9 = $false
+          foreach ($p in ($env:LIB -split ';')) {
+            if ($p -and (Test-Path (Join-Path $p 'd3d9.lib'))) { $hasD3D9 = $true; break }
+          }
+          if (-not $hasD3D9) {
+            $stubDir = Join-Path $env:GITHUB_WORKSPACE 'stublibs\ARM64EC'
+            New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
+            & lib.exe /nologo /machine:ARM64EC /OUT:(Join-Path $stubDir 'd3d9.lib')
+            if ($LASTEXITCODE -ne 0) { throw "Failed to create stub d3d9.lib (ARM64EC)" }
+            $env:LIB = "$stubDir;" + $env:LIB
+            Write-Host "Injected stub d3d9.lib -> $stubDir"
+          }
 
       - name: Configure (Meson) — ARM64EC
         run: |
