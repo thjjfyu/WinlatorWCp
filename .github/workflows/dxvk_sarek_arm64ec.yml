@@ -286,24 +286,6 @@ jobs:
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
 
-            # Minimal compat fixes (same as your base workflow)
-            hdr="src/d3d9/d3d9_include.h"
-            if [[ -f "$hdr" ]]; then
-              for sym in _D3DDEVINFO_RESOURCEMANAGER _D3DDEVINFO_D3D9PIPELINETIMINGS _D3DDEVINFO_VCACHE _D3DDEVINFO_PRIVATEDATA _D3DDEVINFO_VERTEXSTATS; do
-                if grep -q "typedef struct ${sym}" "$hdr"; then
-                  awk -v pat="typedef struct ${sym}" 'BEGIN{drop=0}
-                    index($0, pat){drop=1; next}
-                    drop==1 && /\}[[:space:]]*[^;]*;[[:space:]]*$/ {drop=0; next}
-                    drop==0 {print}' "$hdr" > "$hdr.new" && mv "$hdr.new" "$hdr"
-                fi
-              done
-            fi
-
-            hdr2="src/d3d11/d3d11_texture.h"
-            if [[ -f "$hdr2" ]] && grep -qE 'constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource' "$hdr2"; then
-              sed -i -E 's/static[[:space:]]+constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource[[:space:]]*=[[:space:]]*D3D11_MAP\(-1u\);/inline static const D3D11_MAP UnmappedSubresource = (D3D11_MAP)0xFFFFFFFFu;/' "$hdr2" || true
-            fi
-
             # HUD retag (keep upstream tag name, clean tree)
             git config user.name  "ci"
             git config user.email "ci@local"
@@ -329,8 +311,8 @@ jobs:
               --buildtype release \
               --prefix "${PREFIX_X64}" \
               -Dbuild_id=false -Dstrip=true \
-              -Dc_args='-Wno-nontrivial-memcall' \
-              -Dcpp_args='-Wno-nontrivial-memcall'
+              -Dc_args='-Wno-nontrivial-memcall -U__i386__ -U__x86_64__ -D_M_ARM64EC=1 -D__ARM64EC__=1 -D__SSE__=0 -D__SSE2__=0' \
+              -Dcpp_args='-Wno-nontrivial-memcall -U__i386__ -U__x86_64__ -D_M_ARM64EC=1 -D__ARM64EC__=1 -D__SSE__=0 -D__SSE2__=0'
             ninja -C "${GITHUB_WORKSPACE}/build.ec" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.ec"
 
