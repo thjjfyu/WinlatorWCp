@@ -1,20 +1,20 @@
-name: Build DXVK-Sarek arm64ec (MSVC/Windows SDK)
+name: Build DXVK-Sarek arm64ec (MSVC/WinSDK)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"   # Daily (UTC)
+    - cron: "0 18 * * *"  # Daily (UTC)
 
 permissions:
   contents: write
 
-defaults:
-  run:
-    shell: bash
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
 
 jobs:
   guard:
@@ -95,222 +95,239 @@ jobs:
           fi
 
   build-and-release:
-    name: Build & release DXVK-Sarek (ARM64EC + 32-bit) – MSVC
+    name: Build & release DXVK-Sarek (MSVC + ARM64EC + 32-bit)
     runs-on: windows-latest
     needs: guard
     if: needs.guard.outputs.build == 'true'
     env:
       SAREK_REPO: pythonlover02/DXVK-Sarek
-      PREFIX_X64: ${{ github.workspace }}\dist-arm64ec   # system32 (ARM64EC)
-      PREFIX_X86: ${{ github.workspace }}\dist-x86       # syswow64 (Win32)
+      PREFIX_X64: ${{ github.workspace }}\dist-arm64ec    # system32 (ARM64EC)
+      PREFIX_X86: ${{ github.workspace }}\dist-x86        # syswow64 (Win32)
       RELEASE_TAG: DXVK-SAREK-ARM64EC
       GH_TOKEN: ${{ github.token }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install tools (Python, Meson/Ninja, jq, 7zip, zstd, Vulkan SDK)
-        shell: powershell
+      - name: Ensure Git, Python and tools
         run: |
+          python -V
+          git --version
+          # Meson/Ninja via pip (faster/more current than choco)
           python -m pip install --upgrade pip
-          python -m pip install meson ninja
-          choco install -y jq 7zip zstd vulkan-sdk
-          $vk = (Get-ChildItem "C:\\VulkanSDK" | Sort-Object Name -Descending | Select-Object -First 1).FullName
-          if (-not $vk) { Write-Error "Vulkan SDK not found" }
-          $env:Path += ";$vk\Bin"  # glslangValidator
+          pip install meson ninja
 
-      - name: Ensure glslang (--vn) available
-        shell: powershell
+      - name: Install Vulkan SDK (prebuilt)
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+
+      - name: Verify glslangValidator --vn
         run: |
-          @"
-          #version 450
-          void main() {}
-          "@ | Out-File -Encoding ascii $env:RUNNER_TEMP\min.comp
-          glslangValidator --quiet --target-env vulkan1.1 --vn testvar -o $env:RUNNER_TEMP\min.h $env:RUNNER_TEMP\min.comp
+          $tmp = Join-Path $env:RUNNER_TEMP "glsl-min"
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          @"#version 450
+          void main(){}
+          "@ | Set-Content -Path (Join-Path $tmp "min.comp") -Encoding ascii
+          glslangValidator --quiet --target-env vulkan1.1 --vn testvar -o (Join-Path $tmp "min.h") (Join-Path $tmp "min.comp")
+          Get-Item (Join-Path $tmp "min.h") | Format-List -Property Length,FullName
+
+      - name: Fetch zstd (Windows x64)
+        run: |
+          $ver = "1.5.7"
+          $zip = "zstd-v$ver-win64.zip"
+          $url = "https://github.com/facebook/zstd/releases/download/v$ver/$zip"
+          $dst = Join-Path $env:RUNNER_TEMP $zip
+          Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
+          Expand-Archive -Path $dst -DestinationPath (Join-Path $env:RUNNER_TEMP "zstd") -Force
+          # Add zstd folder (contains zstd.exe) to PATH
+          "$env:RUNNER_TEMP\zstd\zstd-v$ver-win64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          zstd.exe -V
 
       - name: Clone DXVK-Sarek (tags + submodules)
-        shell: bash
         run: |
-          git clone --recurse-submodules https://github.com/${SAREK_REPO}.git src
+          git clone --recurse-submodules https://github.com/${env:SAREK_REPO}.git src
           cd src
           git fetch --tags --force
           git fetch origin main --force
 
-      - name: Resolve Sarek tags (>= v1.10.8) & compute NEW
-        shell: bash
+      - name: Resolve Sarek tags (>= v1.10.8) & compute NEW (PowerShell)
         env:
           REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
         run: |
-          set -Eeuo pipefail
-          cd src
-          git tag --merged origin/main -l 'v*' \
-            | { grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' || true; } \
-            | sort -V \
-            | awk '
-                function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
-                  for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1}return 0}
-                {ver=substr($0,2); if (cmp(ver,"1.10.8")>=0) print $0}
-              ' > "${GITHUB_WORKSPACE}/versions.txt"
+          $ErrorActionPreference = 'Stop'
+          Set-Location src
+          # Get tags merged to main and >= v1.10.8
+          $tags = (git tag --merged origin/main -l 'v*') | Where-Object { $_ -match '^v\d+\.\d+(\.\d+)?$' } | Sort-Object {[version]($_.TrimStart('v'))}
+          $min = [version]'1.10.8'
+          $cands = $tags | Where-Object { [version]($_.TrimStart('v')) -ge $min }
 
-          : > "${GITHUB_WORKSPACE}/to_build.txt"
+          # Already uploaded versions
+          $exist = @()
+          try {
+            $rel = gh api repos/$env:REPO/releases/tags/$env:RELEASE_TAG --jq '.assets[].name' 2>$null
+            if ($rel) {
+              $exist = $rel | ForEach-Object { if ($_ -match '^dxvk-sarek-arm64ec-(\d+\.\d+(\.\d+)?)\.wcp$') { $matches[1] } }
+            }
+          } catch {}
 
-          EXIST="/tmp/exist.txt"; : > "$EXIST"
-          if curl -sf -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
-               "https://api.github.com/repos/${REPO}/releases/tags/${RELEASE_TAG}" -o /tmp/rel.json; then
-            jq -r '.assets[].name' /tmp/rel.json \
-              | sed -n -E 's/^dxvk-sarek-arm64ec-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
-              | sort -V > "$EXIST" || true
-          fi
+          $toBuild = @()
+          foreach ($t in $cands) {
+            $base = $t.TrimStart('v')
+            if (-not ($exist -contains $base)) { $toBuild += "${t} ${base}" }
+          }
 
-          while IFS= read -r tag; do
-            [ -n "$tag" ] || continue
-            base="${tag#v}"
-            if ! grep -Fxq "$base" "$EXIST"; then
-              echo "$tag $base" >> "${GITHUB_WORKSPACE}/to_build.txt"
-            fi
-          done < "${GITHUB_WORKSPACE}/versions.txt"
+          if ($toBuild.Count -eq 0) { Write-Host "No new versions to build."; "" | Out-File "$env:GITHUB_WORKSPACE\to_build.txt"; return }
+          $toBuild | Out-File -Encoding ascii "$env:GITHUB_WORKSPACE\to_build.txt"
+          Get-Content "$env:GITHUB_WORKSPACE\to_build.txt"
 
-          echo "Candidates:";       cat "${GITHUB_WORKSPACE}/versions.txt" || true
-          echo "Already uploaded:"; cat "$EXIST" || true
-          echo "To build:";         cat "${GITHUB_WORKSPACE}/to_build.txt" || true
+      - name: MSVC DevCmd (x64 host) for ARM64EC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
-      - name: Prepare native files for MSVC (ARM64EC & Win32)
-        shell: powershell
+      - name: Create Meson cross files (MSVC; ARM64EC + Win32)
         run: |
-          @"
+          $arm = @"
           [binaries]
           c = 'cl'
           cpp = 'cl'
           ar = 'lib'
-          strip = '':
-
+          windres = 'rc'
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
           [built-in options]
-          c_args = ['/Zc:preprocessor','/permissive-','/W3','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/DVC_EXTRALEAN','/D_WIN32_WINNT=0x0A00','/arm64EC']
-          cpp_args = ['/Zc:preprocessor','/permissive-','/W3','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/DVC_EXTRALEAN','/D_WIN32_WINNT=0x0A00','/arm64EC']
-          "@ | Out-File -Encoding ASCII $env:GITHUB_WORKSPACE\arm64ec.native
-
-          @"
+          cpp_std = 'c++17'
+          c_args = ['/arm64EC','/O2','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/D_M_ARM64EC','/D__ARM64EC__','/permissive-','/EHsc']
+          cpp_args = ['/arm64EC','/O2','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/D_M_ARM64EC','/D__ARM64EC__','/permissive-','/EHsc']
+          "@
+          $x86 = @"
           [binaries]
           c = 'cl'
           cpp = 'cl'
           ar = 'lib'
-
+          windres = 'rc'
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'x86'
+          cpu = 'i686'
+          endian = 'little'
           [built-in options]
-          c_args = ['/Zc:preprocessor','/permissive-','/W3','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/DVC_EXTRALEAN','/D_WIN32_WINNT=0x0A00']
-          cpp_args = ['/Zc:preprocessor','/permissive-','/W3','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/DVC_EXTRALEAN','/D_WIN32_WINNT=0x0A00']
-          "@ | Out-File -Encoding ASCII $env:GITHUB_WORKSPACE\win32.native
+          cpp_std = 'c++17'
+          c_args = ['/O2','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/EHsc']
+          cpp_args = ['/O2','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/EHsc']
+          "@
+          Set-Content -Path "$env:GITHUB_WORKSPACE/arm64ec.msvc" -Value $arm -Encoding ascii
+          Set-Content -Path "$env:GITHUB_WORKSPACE/i686.msvc"   -Value $x86 -Encoding ascii
 
-      # ===== ARM64EC BUILD =====
-      - name: MSVC DevCmd (ARM64EC)
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: arm64ec
-
-      - name: Build (ARM64EC → system32)
-        shell: cmd
+      - name: Build NEW versions only (MSVC → WCP)
         env:
-          PREFIX_X64: ${{ env.PREFIX_X64 }}
+          GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
-          setlocal EnableExtensions EnableDelayedExpansion
-          if not exist "%PREFIX_X64%" mkdir "%PREFIX_X64%"
-          cd src
-          meson setup "..\build.ec" --native-file "..\arm64ec.native" --buildtype release --prefix "%PREFIX_X64%"
-          meson compile -C "..\build.ec" -j %NUMBER_OF_PROCESSORS%
-          meson install -C "..\build.ec" --no-rebuild
+          $out = "$env:GITHUB_WORKSPACE\out"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Set-Location "$env:GITHUB_WORKSPACE\src"
 
-      # ===== 32-bit BUILD =====
-      - name: MSVC DevCmd (Win32)
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x86
+          $listFile = "$env:GITHUB_WORKSPACE\to_build.txt"
+          if (-not (Test-Path $listFile) -or -not (Get-Content $listFile | Where-Object { $_.Trim() })) { Write-Host "No new versions to build."; exit 0 }
 
-      - name: Build (Win32 → syswow64)
-        shell: cmd
-        env:
-          PREFIX_X86: ${{ env.PREFIX_X86 }}
-        run: |
-          setlocal EnableExtensions EnableDelayedExpansion
-          if not exist "%PREFIX_X86%" mkdir "%PREFIX_X86%"
-          cd src
-          meson setup "..\build.w32" --native-file "..\win32.native" --buildtype release --prefix "%PREFIX_X86%"
-          meson compile -C "..\build.w32" -j %NUMBER_OF_PROCESSORS%
-          meson install -C "..\build.w32" --no-rebuild
+          foreach ($line in Get-Content $listFile) {
+            if (-not $line.Trim()) { continue }
+            $parts = $line.Split(' ',2)
+            $tag = $parts[0]; $base = $parts[1]
+            Write-Host "::group::Build $tag (DXVK-Sarek ARM64EC + 32-bit)"
+            git checkout -f $tag
+            git submodule update --init --recursive --checkout
 
-      - name: Package to WCP (tar+zstd)
-        shell: powershell
-        run: |
-          $out = "$env:GITHUB_WORKSPACE\out"; New-Item -ItemType Directory -Force -Path $out | Out-Null
-          $wcpRoot = "$env:GITHUB_WORKSPACE\DXVK_WCP"; New-Item -ItemType Directory -Force -Path $wcpRoot | Out-Null
-          New-Item -ItemType Directory -Force -Path "$wcpRoot\system32" | Out-Null
-          New-Item -ItemType Directory -Force -Path "$wcpRoot\syswow64" | Out-Null
+            git config user.name  "ci"
+            git config user.email "ci@local"
+            git config --global --add safe.directory (Get-Location).Path
+            git add -A; git commit -m "local compat patches for $base" | Out-Null
+            git tag -d $tag 2>$null | Out-Null
+            git tag -a $tag -m "clean retag for HUD version"
+            git reset --hard HEAD
+            git clean -xdf
 
-          Copy-Item -Force "$env:PREFIX_X64\bin\*.dll" "$wcpRoot\system32" -ErrorAction SilentlyContinue
-          Copy-Item -Force "$env:PREFIX_X86\bin\*.dll" "$wcpRoot\syswow64" -ErrorAction SilentlyContinue
+            # Clean previous artifacts
+            Remove-Item -Recurse -Force "$env:GITHUB_WORKSPACE\build.ec","$env:GITHUB_WORKSPACE\build.w32","$env:PREFIX_X64","$env:PREFIX_X86","$env:GITHUB_WORKSPACE\DXVK_WCP" -ErrorAction SilentlyContinue
 
-          $x64 = Get-ChildItem "$wcpRoot\system32" -Filter *.dll | Select-Object -ExpandProperty Name | Sort-Object
-          $x86 = Get-ChildItem "$wcpRoot\syswow64" -Filter *.dll | Select-Object -ExpandProperty Name | Sort-Object
-          if (-not $x64 -and -not $x86) { Write-Error "No DLLs discovered" }
+            # ---------- ARM64EC (system32) ----------
+            meson setup "$env:GITHUB_WORKSPACE\build.ec" `
+              --cross-file "$env:GITHUB_WORKSPACE\arm64ec.msvc" `
+              --buildtype release `
+              --prefix "$env:PREFIX_X64" `
+              -Dbuild_id=false
+            ninja -C "$env:GITHUB_WORKSPACE\build.ec" -j 2
+            meson install --no-rebuild -C "$env:GITHUB_WORKSPACE\build.ec"
 
-          $profile = [ordered]@{
-            type = "DXVK"
-            versionName = "sarek-UNKNOWN"
-            versionCode = 0
-            description = "DXVK-Sarek arm64ec build by MSVC CI"
-            files = @()
+            # ---------- Win32 (syswow64) ----------
+            echo "Switching MSVC env to x86 for 32-bit build"
+            & "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64 > $null
+            meson setup "$env:GITHUB_WORKSPACE\build.w32" `
+              --cross-file "$env:GITHUB_WORKSPACE\i686.msvc" `
+              --buildtype release `
+              --prefix "$env:PREFIX_X86" `
+              -Dbuild_id=false
+            ninja -C "$env:GITHUB_WORKSPACE\build.w32" -j 2
+            meson install --no-rebuild -C "$env:GITHUB_WORKSPACE\build.w32"
+
+            # ---------- Layout → WCP ----------
+            New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\DXVK_WCP\system32" | Out-Null
+            New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\DXVK_WCP\syswow64" | Out-Null
+            Copy-Item "$env:PREFIX_X64\bin\*.dll"  "$env:GITHUB_WORKSPACE\DXVK_WCP\system32" -Force -ErrorAction SilentlyContinue
+            Copy-Item "$env:PREFIX_X86\bin\*.dll"  "$env:GITHUB_WORKSPACE\DXVK_WCP\syswow64" -Force -ErrorAction SilentlyContinue
+
+            $x64 = Get-ChildItem "$env:GITHUB_WORKSPACE\DXVK_WCP\system32" -Filter *.dll -File | Select-Object -ExpandProperty Name | Sort-Object
+            $x86 = Get-ChildItem "$env:GITHUB_WORKSPACE\DXVK_WCP\syswow64" -Filter *.dll -File | Select-Object -ExpandProperty Name | Sort-Object
+            if (($x64.Count -eq 0) -and ($x86.Count -eq 0)) { Write-Error "No DLLs discovered for $base" }
+
+            $profile = [ordered]@{
+              type = 'DXVK'
+              versionName = "sarek-$base"
+              versionCode = 0
+              description = 'DXVK-Sarek arm64ec build by Ari'
+              files = @()
+            }
+            foreach ($n in $x64) { $profile.files += @{ source = "system32/$n"; target = "${system32}/$n" } }
+            foreach ($n in $x86) { $profile.files += @{ source = "syswow64/$n"; target = "${syswow64}/$n" } }
+            ($profile | ConvertTo-Json -Depth 5) | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\DXVK_WCP\profile.json"
+
+            # Create tar (bsdtar) then compress with zstd → .wcp (tar.zst)
+            $wcp = "dxvk-sarek-arm64ec-$base.wcp"
+            $tar = "$env:GITHUB_WORKSPACE\out\DXVK_WCP.tar"
+            & tar -cf $tar -C "$env:GITHUB_WORKSPACE\DXVK_WCP" profile.json system32 syswow64
+            & zstd.exe -19 --force --output-dir-flat "$env:GITHUB_WORKSPACE\out" $tar
+            Move-Item "$env:GITHUB_WORKSPACE\out\DXVK_WCP.tar.zst" "$env:GITHUB_WORKSPACE\out\$wcp" -Force
+            Write-Host "::endgroup::"
           }
-          foreach ($f in $x64) { $profile.files += @{ source = "system32/$f"; target = '${system32}/' + $f } }
-          foreach ($f in $x86) { $profile.files += @{ source = "syswow64/$f"; target = '${syswow64}/' + $f } }
-          $profile | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 "$wcpRoot\profile.json"
-
-          # Determine current version from built tag list (if any)
-          $list = Get-Content "$env:GITHUB_WORKSPACE\to_build.txt" -ErrorAction SilentlyContinue
-          if ($list -and $list.Length -gt 0) {
-            $last = ($list | Select-Object -Last 1).Trim().Split(' ')[1]
-            (Get-Content "$wcpRoot\profile.json") -replace 'sarek-UNKNOWN', "sarek-$last" | Set-Content "$wcpRoot\profile.json"
-            $env:CURRENT_VER = $last
-          } else {
-            $env:CURRENT_VER = "manual"
-          }
-
-          Push-Location $wcpRoot
-          # Create tar then zstd with 7zip
-          7z a -ttar "$out\DXVK_WCP.tar" .\profile.json .\system32 .\syswow64 | Out-Null
-          7z a -m0=ZSTD "$out\dxvk-sarek-arm64ec-$env:CURRENT_VER.wcp" "$out\DXVK_WCP.tar" | Out-Null
-          Pop-Location
 
       - name: Build release notes (with Current)
-        shell: powershell
         run: |
           $notes = "$env:GITHUB_WORKSPACE\RELEASE_NOTES.md"
-          "`U+1F916 Automated DXVK-Sarek arm64ec builds (1.10.8+).`n" | Out-File -Encoding UTF8 $notes
-          $latest = Get-ChildItem "$env:GITHUB_WORKSPACE\out" -Filter "dxvk-sarek-arm64ec-*.wcp" | Sort-Object Name | Select-Object -Last 1
+          "🤖 Automated DXVK-Sarek arm64ec builds (1.10.8+).`n" | Out-File -Encoding utf8 $notes
+          $latest = Get-ChildItem "$env:GITHUB_WORKSPACE\out" -Filter 'dxvk-sarek-arm64ec-*.wcp' | Sort-Object Name | Select-Object -Last 1
           if ($latest) {
-            $cur = [System.IO.Path]::GetFileNameWithoutExtension($latest.Name).Substring("dxvk-sarek-arm64ec-".Length)
-            Add-Content -Encoding UTF8 $notes "Current: $cur"
+            $cur = ($latest.Name -replace '^dxvk-sarek-arm64ec-','') -replace '\\.wcp$',''
+            "Current: $cur" | Add-Content -Encoding utf8 $notes
           }
           Get-Content $notes
 
       - name: Create/Update GitHub Release (DXVK-SAREK-ARM64EC) + upload WCPs
-        shell: powershell
         env:
           REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           $notes = "$env:GITHUB_WORKSPACE\RELEASE_NOTES.md"
-          $tag = "$env:RELEASE_TAG"
-          gh release view $tag --repo "$env:REPO" *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --repo "$env:REPO" -t $tag -F $notes
+          if (-not (gh release view "$env:RELEASE_TAG" --repo "$env:REPO" > $null 2>&1)) {
+            gh release create "$env:RELEASE_TAG" --repo "$env:REPO" -t "$env:RELEASE_TAG" -F $notes
           } else {
-            gh release edit   $tag --repo "$env:REPO" -t $tag -F $notes
+            gh release edit   "$env:RELEASE_TAG" --repo "$env:REPO" -t "$env:RELEASE_TAG" -F $notes
           }
-          $files = Get-ChildItem "$env:GITHUB_WORKSPACE\out" -Filter *.wcp | Select-Object -ExpandProperty FullName
-          if ($files) {
-            gh release upload $tag $files --repo "$env:REPO" --clobber
+          if (Get-ChildItem "$env:GITHUB_WORKSPACE\out" -Filter *.wcp) {
+            gh release upload "$env:RELEASE_TAG" "$env:GITHUB_WORKSPACE\out\*.wcp" --repo "$env:REPO" --clobber
           } else {
-            echo "No new WCP files to upload."
+            Write-Host 'No new WCP files to upload.'
           }
 
       - name: Upload build logs on failure
