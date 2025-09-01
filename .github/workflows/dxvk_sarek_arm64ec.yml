@@ -321,8 +321,8 @@ jobs:
               --buildtype release \
               --prefix "${PREFIX_X64}" \
               -Dbuild_id=false -Dstrip=true \
-              -Dc_args='-Wno-nontrivial-memcall -U__x86_64__ -U__i386__' \
-              -Dcpp_args='-Wno-nontrivial-memcall -U__x86_64__ -U__i386__'
+              -Dc_args='-Wno-nontrivial-memcall -U__x86_64__ -U__i386__ -DNOWINBASEINTERLOCK -D__CRT__NO_INLINE' \
+              -Dcpp_args='-Wno-nontrivial-memcall -U__x86_64__ -U__i386__ -DNOWINBASEINTERLOCK -D__CRT__NO_INLINE'
             ninja -C "${GITHUB_WORKSPACE}/build.ec" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.ec"
 
