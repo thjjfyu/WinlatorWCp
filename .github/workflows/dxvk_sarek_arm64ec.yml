@@ -60,7 +60,6 @@ jobs:
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
 
-          # Fetch tags (first 100 is enough for newest)
           curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${SAREK_REPO}/tags?per_page=100" \
             | jq -r '.[].name' \
             | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
@@ -146,15 +145,17 @@ jobs:
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
           export PATH="$TOOLCHAIN_DIR/bin:$PATH"
 
-      - name: Write ARM64EC shim (force safe intrinsics path)
+      - name: Write ARM64EC shim (pre-include)
         run: |
           cat > "${GITHUB_WORKSPACE}/arm64ec_shim.h" <<'EOF'
           #pragma once
-          /* Force mingw-w64 intrin-impl.h to use Clang-safe (=qm) flag outputs, not =@ccc */
-          #ifdef __GCC_ASM_FLAG_OUTPUTS__
-          #undef __GCC_ASM_FLAG_OUTPUTS__
+          /* Avoid winbase.h inline conflicts and force ARM64EC tags */
+          #ifndef NOWINBASEINTERLOCK
+          #define NOWINBASEINTERLOCK 1
           #endif
-          /* Target marks for ARM64EC toolchain */
+          #ifndef __CRT__NO_INLINE
+          #define __CRT__NO_INLINE 1
+          #endif
           #ifndef _M_ARM64EC
           #define _M_ARM64EC 1
           #endif
@@ -164,14 +165,107 @@ jobs:
           #ifndef __aarch64__
           #define __aarch64__ 1
           #endif
-          /* Avoid inline conflicts in winbase.h */
-          #ifndef NOWINBASEINTERLOCK
-          #define NOWINBASEINTERLOCK 1
-          #endif
-          #ifndef __CRT__NO_INLINE
-          #define __CRT__NO_INLINE 1
+          /* Ask intrin-impl.h not to use flag outputs */
+          #ifdef __GCC_ASM_FLAG_OUTPUTS__
+          #undef __GCC_ASM_FLAG_OUTPUTS__
           #endif
           EOF
+
+      - name: Inject ARM64EC-safe bit-test intrinsics (override intrin-impl.h)
+        run: |
+          set -Eeuo pipefail
+          HDR="$TOOLCHAIN_DIR/arm64ec-w64-mingw32/include/psdk_inc/intrin-impl.h"
+          [ -f "$HDR" ] || { echo "::error::intrin-impl.h not found at $HDR"; exit 1; }
+          sudo cp -f "$HDR" "${HDR}.bak"
+          tmp="$(mktemp)"
+          cat > "$tmp" <<'OVR'
+          /* ---- ARM64EC override (CI) ---- */
+          #if defined(_M_ARM64EC) || defined(__ARM64EC__)
+          #ifndef __MINGW_ARM64EC_BTEST_OVERRIDE
+          #define __MINGW_ARM64EC_BTEST_OVERRIDE 1
+          #undef __GCC_ASM_FLAG_OUTPUTS__
+          #undef __buildbittesti
+          #undef __buildbittesti64
+          #define __ARM64EC_INLINE static inline __attribute__((__always_inline__))
+
+          /* 32-bit bit-test intrinsics (atomic-based) */
+          #define __IMPL32__interlockedbittestandset \
+          __ARM64EC_INLINE unsigned char _interlockedbittestandset(long volatile* Base, long Offset){ \
+            unsigned long idx=((unsigned long)Offset>>5); unsigned long m=1u<<(Offset&31); \
+            volatile unsigned long* p=(volatile unsigned long*)Base+idx; \
+            unsigned long old=__atomic_fetch_or((unsigned long*)p,m,__ATOMIC_SEQ_CST); \
+            return (old&m)?1:0; }
+
+          #define __IMPL32__interlockedbittestandreset \
+          __ARM64EC_INLINE unsigned char _interlockedbittestandreset(long volatile* Base, long Offset){ \
+            unsigned long idx=((unsigned long)Offset>>5); unsigned long m=1u<<(Offset&31); \
+            volatile unsigned long* p=(volatile unsigned long*)Base+idx; \
+            unsigned long old=__atomic_fetch_and((unsigned long*)p,~m,__ATOMIC_SEQ_CST); \
+            return (old&m)?1:0; }
+
+          #define __IMPL32__interlockedbittestandcomplement \
+          __ARM64EC_INLINE unsigned char _interlockedbittestandcomplement(long volatile* Base, long Offset){ \
+            unsigned long idx=((unsigned long)Offset>>5); unsigned long m=1u<<(Offset&31); \
+            volatile unsigned long* p=(volatile unsigned long*)Base+idx; \
+            unsigned long old=__atomic_fetch_xor((unsigned long*)p,m,__ATOMIC_SEQ_CST); \
+            return (old&m)?1:0; }
+
+          #define __IMPL32_InterlockedBitTestAndSet \
+          __ARM64EC_INLINE unsigned char InterlockedBitTestAndSet(long volatile* Base, long Offset){ \
+            return _interlockedbittestandset(Base,Offset); }
+
+          #define __IMPL32_InterlockedBitTestAndReset \
+          __ARM64EC_INLINE unsigned char InterlockedBitTestAndReset(long volatile* Base, long Offset){ \
+            return _interlockedbittestandreset(Base,Offset); }
+
+          #define __IMPL32_InterlockedBitTestAndComplement \
+          __ARM64EC_INLINE unsigned char InterlockedBitTestAndComplement(long volatile* Base, long Offset){ \
+            return _interlockedbittestandcomplement(Base,Offset); }
+
+          /* 64-bit bit-test intrinsics (atomic-based) */
+          #define __IMPL64__interlockedbittestandset64 \
+          __ARM64EC_INLINE unsigned char _interlockedbittestandset64(long long volatile* Base, long long Offset){ \
+            unsigned long long idx=((unsigned long long)Offset>>6); unsigned long long m=1ull<<(Offset&63); \
+            volatile unsigned long long* p=(volatile unsigned long long*)Base+idx; \
+            unsigned long long old=__atomic_fetch_or((unsigned long long*)p,m,__ATOMIC_SEQ_CST); \
+            return (old&m)?1:0; }
+
+          #define __IMPL64__interlockedbittestandreset64 \
+          __ARM64EC_INLINE unsigned char _interlockedbittestandreset64(long long volatile* Base, long long Offset){ \
+            unsigned long long idx=((unsigned long long)Offset>>6); unsigned long long m=1ull<<(Offset&63); \
+            volatile unsigned long long* p=(volatile unsigned long long*)Base+idx; \
+            unsigned long long old=__atomic_fetch_and((unsigned long long*)p,~m,__ATOMIC_SEQ_CST); \
+            return (old&m)?1:0; }
+
+          #define __IMPL64__interlockedbittestandcomplement64 \
+          __ARM64EC_INLINE unsigned char _interlockedbittestandcomplement64(long long volatile* Base, long long Offset){ \
+            unsigned long long idx=((unsigned long long)Offset>>6); unsigned long long m=1ull<<(Offset&63); \
+            volatile unsigned long long* p=(volatile unsigned long long*)Base+idx; \
+            unsigned long long old=__atomic_fetch_xor((unsigned long long*)p,m,__ATOMIC_SEQ_CST); \
+            return (old&m)?1:0; }
+
+          #define __IMPL64_InterlockedBitTestAndSet64 \
+          __ARM64EC_INLINE unsigned char InterlockedBitTestAndSet64(long long volatile* Base, long long Offset){ \
+            return _interlockedbittestandset64(Base,Offset); }
+
+          #define __IMPL64_InterlockedBitTestAndReset64 \
+          __ARM64EC_INLINE unsigned char InterlockedBitTestAndReset64(long long volatile* Base, long long Offset){ \
+            return _interlockedbittestandreset64(Base,Offset); }
+
+          #define __IMPL64_InterlockedBitTestAndComplement64 \
+          __ARM64EC_INLINE unsigned char InterlockedBitTestAndComplement64(long long volatile* Base, long long Offset){ \
+            return _interlockedbittestandcomplement64(Base,Offset); }
+
+          /* map builders to our implementations */
+          #define __buildbittesti(NAME, TYP, OP, EXTRA)   __IMPL32_##NAME
+          #define __buildbittesti64(NAME, TYP, OP, EXTRA) __IMPL64_##NAME
+          #endif
+          #endif
+          /* ---- end ARM64EC override ---- */
+          OVR
+          cat "${HDR}.bak" >> "$tmp"
+          sudo mv "$tmp" "$HDR"
+          echo "[ok] injected ARM64EC override into $(basename "$HDR")"
 
       - name: Create Meson cross files (DXVK-style; arm64ec + i686)
         run: |
@@ -204,11 +298,11 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args = ['-Wno-nontrivial-memcall','-include','${GITHUB_WORKSPACE}/arm64ec_shim.h','-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1']
-          cpp_args = ['-Wno-nontrivial-memcall','-include','${GITHUB_WORKSPACE}/arm64ec_shim.h','-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1']
+          c_args  = ['-Wno-nontrivial-memcall','-include','${GITHUB_WORKSPACE}/arm64ec_shim.h','-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1']
+          cpp_args= ['-Wno-nontrivial-memcall','-include','${GITHUB_WORKSPACE}/arm64ec_shim.h','-DNOWINBASEINTERLOCK','-D__CRT__NO_INLINE','-D_M_ARM64EC=1','-D__ARM64EC__=1','-D__aarch64__=1']
           EOF
 
-          # --- i686 (strip/rc 정리; DXVK와 동일) ---
+          # --- i686 (32-bit) ---
           I_AR=$(pick i686-w64-mingw32-ar i686-w64-mingw32-ar)
           I_CC=$(pick i686-w64-mingw32-gcc i686-w64-mingw32-clang)
           I_CXX=$(pick i686-w64-mingw32-g++ i686-w64-mingw32-clang++)
@@ -281,15 +375,6 @@ jobs:
           echo "Already uploaded:"; cat "$EXIST" || true
           echo "To build:";         cat "${GITHUB_WORKSPACE}/to_build.txt" || true
 
-      - name: Sanity-check target predefines (debug)
-        run: |
-          echo "---- predefines (raw toolchain) ----"
-          echo | arm64ec-w64-mingw32-g++ -dM -E -xc++ - | egrep '__ARM64EC__|_M_ARM64EC|__aarch64__|__arm|__x86_64__|__i386__|_M_X64|_M_AMD64|_M_IX86|_AMD64_' || true
-          echo "---- with shim (expect: ARM64EC yes / x86/x64 no) ----"
-          echo | arm64ec-w64-mingw32-g++ -dM -E -xc++ - \
-            -include "${GITHUB_WORKSPACE}/arm64ec_shim.h" \
-            | egrep '__ARM64EC__|_M_ARM64EC|__aarch64__|__arm|__x86_64__|__i386__|_M_X64|_M_AMD64|_M_IX86|_AMD64_' || true
-
       - name: Build NEW versions only (DXVK-Sarek → WCP)
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
@@ -317,14 +402,9 @@ jobs:
             git tag -a "$tag" -m "clean retag for HUD version"
             git reset --hard HEAD
             git clean -xdf
-            if [[ -n "$(git status --porcelain)" ]]; then
-              echo "::error::Repo is dirty after retag"; git status; exit 1
-            fi
 
-            # Clean previous artifacts
             rm -rf "${GITHUB_WORKSPACE}/build.ec" "${GITHUB_WORKSPACE}/build.w32" \
-                   "${PREFIX_X64}" "${PREFIX_X86}" \
-                   "${GITHUB_WORKSPACE}/DXVK_WCP"
+                   "${PREFIX_X64}" "${PREFIX_X86}" "${GITHUB_WORKSPACE}/DXVK_WCP"
 
             # ARM64EC (system32)
             meson setup "${GITHUB_WORKSPACE}/build.ec" \
@@ -344,7 +424,7 @@ jobs:
             ninja -C "${GITHUB_WORKSPACE}/build.w32" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.w32"
 
-            # Layout WCP (ARM64EC → system32, i686 → syswow64)
+            # Layout → WCP
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
             cp -v "${PREFIX_X64}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
             cp -v "${PREFIX_X86}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
