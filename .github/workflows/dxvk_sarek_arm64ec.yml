@@ -133,7 +133,7 @@ jobs:
           ar = 'arm64ec-w64-mingw32-ar'
           windres = 'arm64ec-w64-mingw32-windres'
           strip = 'llvm-strip'
-          # widl가 없으면 생략 가능 (메소드에서 rc만 쓰는 경우가 많음)
+          # widl가 없으면 생략 가능
       
           [host_machine]
           system = 'windows'
@@ -142,7 +142,7 @@ jobs:
           endian = 'little'
           EOF
       
-          # 폴백: clang 접두어만 있을 때 gcc 이름도 알아서 동작하도록 심볼릭 링크
+          # 폴백: clang만 있고 gcc 이름이 없을 때 호환 링크
           if ! command -v arm64ec-w64-mingw32-gcc >/dev/null && command -v arm64ec-w64-mingw32-clang >/dev/null; then
             ln -sf "$(command -v arm64ec-w64-mingw32-clang)"  "$TOOLCHAIN_ARM64EC/bin/arm64ec-w64-mingw32-gcc"
             ln -sf "$(command -v arm64ec-w64-mingw32-clang++)" "$TOOLCHAIN_ARM64EC/bin/arm64ec-w64-mingw32-g++" || true
