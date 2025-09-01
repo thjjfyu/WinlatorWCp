@@ -246,34 +246,46 @@ jobs:
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
 
-          # --- Fix: avoid duplicate _D3DDEVINFO_RESOURCEMANAGER with latest mingw headers (safe/precise) ---
-          set -Eeuo pipefail
-          TOOL_INC_A="/opt/llvm-mingw/arm64ec-w64-mingw32/include/d3d9types.h"
-          TOOL_INC_I="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
-          DXVK_INC="src/d3d9/d3d9_include.h"
-          
-          if [[ -f "$DXVK_INC" ]] && (grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_INC_A" || grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_INC_I"); then
-            echo "Checking for duplicate typedef in ${DXVK_INC}"
-          
-            [[ -f "${DXVK_INC}.bak" ]] && cp -f "${DXVK_INC}.bak" "$DXVK_INC"
-          
-            cp "$DXVK_INC" "${DXVK_INC}.bak"
-            awk '
-              BEGIN{skip=0}
-              # typedef struct _D3DDEVINFO_RESOURCEMANAGER { ... } D3DDEVINFO_RESOURCEMANAGER;
-              /typedef[[:space:]]+struct[[:space:]]+_D3DDEVINFO_RESOURCEMANAGER\b/ { skip=1; next }
-              skip==1 && /}[[:space:]]*D3DDEVINFO_RESOURCEMANAGER;[[:space:]]*$/ { skip=0; next }
-              skip==1 { next }
-              { print }
-            ' "${DXVK_INC}.bak" > "${DXVK_INC}.tmp" && mv "${DXVK_INC}.tmp" "$DXVK_INC"
-          
-            if ! grep -q "_D3DDEVINFO_RESOURCEMANAGER" "$DXVK_INC"; then
-              echo "Patched duplicate typedef successfully"
-            else
-              echo "::warning::typedef block still present; proceeding anyway"
+            # --- Fix: avoid duplicate _D3DDEVINFO_RESOURCEMANAGER with latest mingw headers (robust) ---
+            set -Eeuo pipefail
+
+            # locate d3d9_include.h reliably
+            DXVK_INC="src/d3d9/d3d9_include.h"
+            if [[ ! -f "$DXVK_INC" ]]; then
+              alt="$(git ls-files | grep -E '/d3d9/d3d9_include\.h$' | head -n1 || true)"
+              [[ -n "$alt" ]] && DXVK_INC="$alt"
             fi
-          fi
-          # --- End fix ---
+
+            TOOL_INC_A="/opt/llvm-mingw/arm64ec-w64-mingw32/include/d3d9types.h"
+            TOOL_INC_I="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
+
+            if [[ -f "$DXVK_INC" ]] && \
+               (grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_INC_A" || grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_INC_I"); then
+              echo "Checking for duplicate typedef in ${DXVK_INC}"
+              cp "$DXVK_INC" "${DXVK_INC}.bak"
+
+              if command -v perl >/dev/null 2>&1; then
+                perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;/ /s' -i "$DXVK_INC"
+              else
+                awk '
+                  BEGIN{skip=0}
+                  /typedef[[:space:]]+struct[[:space:]]+_D3DDEVINFO_RESOURCEMANAGER\b/ { skip=1; next }
+                  skip==1 && /}[[:space:]]*D3DDEVINFO_RESOURCEMANAGER\b/ { skip=2 }
+                  skip==1 { next }
+                  skip==2 { skip=0; next }
+                  { print }
+                ' "${DXVK_INC}.bak" > "${DXVK_INC}.tmp" && mv "${DXVK_INC}.tmp" "$DXVK_INC"
+              fi
+
+              if grep -q "_D3DDEVINFO_RESOURCEMANAGER" "$DXVK_INC"; then
+                echo "::warning::typedef block still present in ${DXVK_INC}; build may fail"
+              else
+                echo "Patched duplicate typedef successfully"
+              fi
+            else
+              echo "Skip DXVK typedef patch (no duplicate in toolchain header or source path not found)."
+            fi
+            # --- End fix ---
 
             # Clean previous artifacts
             rm -rf "${GITHUB_WORKSPACE}/build.ec" "${GITHUB_WORKSPACE}/build.x86" \
