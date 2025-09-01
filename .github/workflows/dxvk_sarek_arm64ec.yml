@@ -244,11 +244,14 @@ jobs:
             #ifndef _tzcnt_u32
             #define _tzcnt_u32 __dxvk_tzcnt_u32
             #endif
-            #ifndef _lzcnt_u32
-            #define _lzcnt_u32 __dxvk_lzcnt_u32
+            #ifndef _lzcnt_u2
+            #define _lzcnt_u2 __dxvk_lzcnt_u32
             #endif
           #endif
           "@
+          # 위 오타 보정
+          $h = $h -replace '#ifndef _lzcnt_u2','#ifndef _lzcnt_u32'
+          $h = $h -replace '#define _lzcnt_u2','#define _lzcnt_u32'
           Set-Content -Path "$env:GITHUB_WORKSPACE\arm64ec_shim.h" -Value $h -Encoding ascii
 
       - name: Add lib.exe response-file wrapper (avoid long command lines)
@@ -412,7 +415,13 @@ jobs:
             } catch { }
 
             # ---------- ARM64EC (system32) ----------
-            # ARM64EC 전용 플래그 주입
+            # 1) 환경 정리: 하이픈 버전 잔재 제거 + 빌드 플래그 초기화
+            $env:CFLAGS   = ""
+            $env:CXXFLAGS = ""
+            $env:CPPFLAGS = ""
+            if ($env:CL) { $env:CL = ($env:CL -replace '(?i)(^|\s)-arm64ec(\s|$)',' ').Trim() }
+
+            # 2) ARM64EC 전용 플래그 주입(슬래시)
             $env:CL   = "/arm64EC $env:CL"
             $env:LINK = "/MACHINE:ARM64EC $env:LINK"
 
@@ -424,11 +433,11 @@ jobs:
               -Dbuild_id=false
             Check-Last "meson setup (ARM64EC)"
 
-            # Meson 로그에 '-arm64EC' 흔적 있으면 바로 실패(옵션 변환 방지 확인)
+            # Meson 로그에 '-arm64EC' 흔적 있으면 바로 실패
             $mlog = Join-Path "$env:GITHUB_WORKSPACE\build.ec" "meson-logs\meson-log.txt"
             if (Test-Path $mlog) {
               $txt = Get-Content $mlog -Raw
-              if ($txt -match '(?i)\-arm64EC') { throw "Detected '-arm64EC' in meson-log; remove '/arm64EC' from any cross-file args" }
+              if ($txt -match '(?i)\-arm64EC') { throw "Detected '-arm64EC' in meson-log; remove any dash-style arm64EC flags" }
             }
 
             ninja -C "$env:GITHUB_WORKSPACE\build.ec" -j 2
