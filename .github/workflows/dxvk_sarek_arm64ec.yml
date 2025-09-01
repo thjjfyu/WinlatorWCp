@@ -84,7 +84,7 @@ jobs:
             fi
           done < /tmp/candidates.txt
 
-          [ "$(cat /tmp.missing.flag 2>/dev/null || echo no)" = "yes" ] && echo "missing=true"  >> "$GITHUB_OUTPUT" || echo "missing=false" >> "$GITHUB_OUTPUT"
+          [ "$(cat /tmp/missing.flag 2>/dev/null || echo no)" = "yes" ] && echo "missing=true"  >> "$GITHUB_OUTPUT" || echo "missing=false" >> "$GITHUB_OUTPUT"
 
       - name: Decide build
         id: decide
