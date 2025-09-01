@@ -1,12 +1,10 @@
-name: Build DXVK-Sarek arm64ec (MSVC/WinSDK)
+name: Fast DXVK-Sarek ARM64EC build (MSVC)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 18 * * *"  # Daily (UTC)
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,210 +15,77 @@ defaults:
     shell: pwsh
 
 jobs:
-  guard:
-    name: Fast guard (new Sarek tag?)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      build: ${{ steps.decide.outputs.build }}
-    env:
-      GH_TOKEN: ${{ github.token }}
-      REPO: ${{ github.repository }}
-      SAREK_REPO: pythonlover02/DXVK-Sarek
-      RELEASE_TAG: DXVK-SAREK-ARM64EC
-    steps:
-      - name: Install jq, curl
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends jq curl
-
-      - name: Collect already-published versions (DXVK-SAREK-ARM64EC)
-        id: have
-        shell: bash
-        run: |
-          set -euo pipefail
-          API="https://api.github.com"
-          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-          ver=(-H "Accept: application/vnd.github+json")
-          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
-                  "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
-          if [ "$HTTP" = "200" ]; then
-            jq -r '.assets[].name' /tmp/rel.json \
-              | sed -n -E 's/^dxvk-sarek-arm64ec-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
-              | sort -V > /tmp/exist.txt
-          else
-            : > /tmp/exist.txt
-          fi
-          echo "Existing:"; cat /tmp/exist.txt || true
-
-      - name: Detect any missing tag (API-only; min v1.10.8)
-        id: detect
-        env:
-          MIN_VER: "1.10.8"
-        shell: bash
-        run: |
-          set -euo pipefail
-          API="https://api.github.com"
-          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-          ver=(-H "Accept: application/vnd.github+json")
-
-          curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${SAREK_REPO}/tags?per_page=100" \
-            | jq -r '.[].name' \
-            | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
-            | sort -V > /tmp/tags.txt
-
-          awk -v MIN="${MIN_VER}" '
-            function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
-              for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1}return 0}
-            { base=substr($0,2); if (cmp(base,MIN)>=0) print base }
-          ' /tmp/tags.txt > /tmp/candidates.txt
-
-          echo "Candidates (>= ${MIN_VER}):"; cat /tmp/candidates.txt || true
-
-          echo -n "no" > /tmp/missing.flag
-          while read -r base; do
-            [ -n "$base" ] || continue
-            if ! grep -Fxq "$base" /tmp/exist.txt; then
-              echo "MISSING: $base"
-              echo -n "yes" > /tmp/missing.flag
-              break
-            fi
-          done < /tmp/candidates.txt
-
-          if [ "$(cat /tmp/missing.flag 2>/dev/null || echo no)" = "yes" ]; then
-            echo "missing=true"  >> "$GITHUB_OUTPUT"
-          else
-            echo "missing=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Decide build
-        id: decide
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${{ steps.detect.outputs.missing }}" = "true" ]; then
-            echo "build=true"  >> "$GITHUB_OUTPUT"
-          else
-            echo "build=false" >> "$GITHUB_OUTPUT"
-          fi
-
-  build-and-release:
-    name: Build & release DXVK-Sarek (MSVC + ARM64EC + 32-bit)
-    runs-on: windows-latest
-    needs: guard
-    if: needs.guard.outputs.build == 'true'
+  build:
+    name: Build ARM64EC from Sarek main (no extras)
+    runs-on: windows-2022
+    timeout-minutes: 60
     env:
       SAREK_REPO: pythonlover02/DXVK-Sarek
-      PREFIX_X64: ${{ github.workspace }}\dist-arm64ec    # system32 (ARM64EC)
-      PREFIX_X86: ${{ github.workspace }}\dist-x86        # syswow64 (Win32)
-      RELEASE_TAG: DXVK-SAREK-ARM64EC
-      GH_TOKEN: ${{ github.token }}
+      PREFIX_ARM64EC: ${{ github.workspace }}\dist-arm64ec
 
     steps:
-      - name: Ensure Git, Python and tools
+      - name: Ensure Git & Python tooling
         run: |
           $ErrorActionPreference = 'Stop'
-          $PSNativeCommandErrorActionPreference = 'Stop'
           python -V
           git --version
           python -m pip install --upgrade pip
           pip install meson ninja
-          if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
-      - name: Install Vulkan SDK (prebuilt)
+      - name: Install Vulkan SDK (headers/tools only)
         uses: humbletim/install-vulkan-sdk@v1.2
         with:
           version: 1.4.309.0
           cache: true
 
-      - name: Verify glslangValidator --vn
+      - name: Activate VS DevCmd (x64 host)
         run: |
           $ErrorActionPreference = 'Stop'
-          $PSNativeCommandErrorActionPreference = 'Stop'
-          $tmp = Join-Path $env:RUNNER_TEMP "glsl-min"
-          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-          $comp = Join-Path $tmp "min.comp"
-          Set-Content -Path $comp -Encoding ascii -Value @(
-            '#version 450'
-            'layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;'
-            'void main(){}'
-          )
-          glslangValidator -S comp --target-env vulkan1.1 --vn testvar `
-            -o (Join-Path $tmp "min.h") $comp
-          if (-not (Test-Path (Join-Path $tmp "min.h"))) { throw "glslangValidator --vn check failed" }
-
-      - name: Fetch zstd (Windows x64)
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandErrorActionPreference = 'Stop'
-          $ver = "1.5.7"
-          $zip = "zstd-v$ver-win64.zip"
-          $url = "https://github.com/facebook/zstd/releases/download/v$ver/$zip"
-          $dst = Join-Path $env:RUNNER_TEMP $zip
-          Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
-          Expand-Archive -Path $dst -DestinationPath (Join-Path $env:RUNNER_TEMP "zstd") -Force
-          "$env:RUNNER_TEMP\zstd\zstd-v$ver-win64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          zstd.exe -V | Out-Null
-
-      - name: Clone DXVK-Sarek (tags + submodules)
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandErrorActionPreference = 'Stop'
-          git clone --recurse-submodules "https://github.com/$env:SAREK_REPO.git" src
-          if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
-          cd src
-          git fetch --tags --force
-          if ($LASTEXITCODE -ne 0) { throw "git fetch tags failed" }
-          git fetch origin main --force
-          if ($LASTEXITCODE -ne 0) { throw "git fetch main failed" }
-
-      - name: Resolve Sarek tags (>= v1.10.8) & compute NEW (PowerShell)
-        env:
-          REPO: ${{ github.repository }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandErrorActionPreference = 'Stop'
-          Set-Location src
-          $tags = (git tag --merged origin/main -l 'v*') |
-            Where-Object { $_ -match '^v\d+\.\d+(\.\d+)?$' } |
-            Sort-Object {[version]($_.TrimStart('v'))}
-          $min   = [version]'1.10.8'
-          $cands = $tags | Where-Object { [version]($_.TrimStart('v')) -ge $min }
-          $exist = @()
-          $rel = & gh api repos/$env:REPO/releases/tags/$env:RELEASE_TAG --jq '.assets[].name' 2>$null
-          if ($LASTEXITCODE -ne 0) { $rel = $null; $global:LASTEXITCODE = 0 }
-          if ($rel) {
-            $exist = $rel | ForEach-Object {
-              if ($_ -match '^dxvk-sarek-arm64ec-(\d+\.\d+(\.\d+)?)\.wcp$') { $matches[1] }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere not found" }
+          $instPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $instPath) { throw "VS installation not found" }
+          $bat = Join-Path $instPath "Common7\Tools\VsDevCmd.bat"
+          & cmd /c "`"$bat`" -arch=x64 -host_arch=x64 >nul && set" |
+            ForEach-Object {
+              if ($_ -match '^(.*?)=(.*)$') {
+                [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2])
+              }
             }
-          }
-          $toBuild = @()
-          foreach ($t in $cands) {
-            $base = $t.TrimStart('v')
-            if (-not ($exist -contains $base)) { $toBuild += "${t} ${base}" }
-          }
-          if ($toBuild.Count -eq 0) {
-            Write-Host "No new versions to build."
-            "" | Out-File "$env:GITHUB_WORKSPACE\to_build.txt"
-            return
-          }
-          $toBuild | Out-File -Encoding ascii "$env:GITHUB_WORKSPACE\to_build.txt"
-          Get-Content "$env:GITHUB_WORKSPACE\to_build.txt"
 
-      # ──────────────────────────────────────────────────────────
-      # ARM64EC 준비: x64 DevCmd + shim + lib 래퍼 + 크로스파일
-      # ──────────────────────────────────────────────────────────
-      - name: Configure MSVC for ARM64EC (x64 host)
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: amd64
-
-      - name: Drop-in shim for ARM64EC (SSE/BMI guard + tz/lz fallback)
+      - name: Create cl/lib wrappers + ARM64EC shim
         run: |
           $ErrorActionPreference = 'Stop'
-          $h = @"
+          # 1) clwrap: normalize bad flags (-arm64EC), drop /Od, enforce /O2
+          $clwrap = @'
+          param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
+          $out = New-Object System.Collections.Generic.List[string]
+          foreach ($a in $Args) {
+            if ($a -match '^-+arm64ec$') { $out.Add('/arm64EC'); continue }
+            if ($a -ieq '/Od') { continue } # drop debug opt
+            $out.Add($a)
+          }
+          if (-not ($out -contains '/arm64EC')) { $out.Add('/arm64EC') }
+          if (-not ($out -contains '/O2'))      { $out.Add('/O2') }
+          & cl.exe @out
+          exit $LASTEXITCODE
+          '@
+          Set-Content -Path "$env:GITHUB_WORKSPACE\clwrap.ps1" -Value $clwrap -Encoding ascii
+
+          # 2) libwrap: response-file to avoid arg length issues
+          $libwrap = @'
+          param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
+          $rsp = [System.IO.Path]::GetTempFileName()
+          Set-Content -Path $rsp -Encoding ascii -Value ($Args -join [Environment]::NewLine)
+          & lib.exe "@$rsp"
+          $code = $LASTEXITCODE
+          Remove-Item $rsp -Force -ErrorAction SilentlyContinue
+          exit $code
+          '@
+          Set-Content -Path "$env:GITHUB_WORKSPACE\libwrap.ps1" -Value $libwrap -Encoding ascii
+
+          # 3) ARM64EC shim header: SSE guards + tzcnt/lzcnt fallback
+          $shim = @'
           #pragma once
           #include <intrin.h>
           #if defined(_M_ARM64EC)
@@ -230,17 +95,8 @@ jobs:
             #undef __AVX2__
           #endif
           #if defined(_M_ARM64) || defined(_M_ARM64EC)
-            static __forceinline unsigned int __dxvk_tzcnt_u32(unsigned int x) {
-              unsigned long idx;
-              if (_BitScanForward(&idx, x)) return (unsigned int)idx;
-              return 32u;
-            }
-            static __forceinline unsigned int __dxvk_lzcnt_u32(unsigned int x) {
-              if (!x) return 32u;
-              unsigned long msb;
-              _BitScanReverse(&msb, x);
-              return 31u - (unsigned int)msb;
-            }
+            static __forceinline unsigned int __dxvk_tzcnt_u32(unsigned int x){ unsigned long i; if (_BitScanForward(&i,x)) return (unsigned)i; return 32u; }
+            static __forceinline unsigned int __dxvk_lzcnt_u32(unsigned int x){ if(!x) return 32u; unsigned long m; _BitScanReverse(&m,x); return 31u-(unsigned)m; }
             #ifndef _tzcnt_u32
             #define _tzcnt_u32 __dxvk_tzcnt_u32
             #endif
@@ -248,111 +104,59 @@ jobs:
             #define _lzcnt_u32 __dxvk_lzcnt_u32
             #endif
           #endif
-          "@
-          Set-Content -Path "$env:GITHUB_WORKSPACE\arm64ec_shim.h" -Value $h -Encoding ascii
-
-      - name: Add lib.exe response-file wrapper (avoid long command lines)
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $p = @'
-          param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
-          if ($Args -contains '--version') {
-            & lib.exe /? | Out-Null
-            exit 0
-          }
-          $rsp = [System.IO.Path]::GetTempFileName()
-          Set-Content -Path $rsp -Encoding ascii -Value ($Args -join [Environment]::NewLine)
-          & lib.exe "@$rsp"
-          $code = $LASTEXITCODE
-          Remove-Item $rsp -Force -ErrorAction SilentlyContinue
-          exit $code
           '@
-          Set-Content -Path "$env:GITHUB_WORKSPACE\libwrap.ps1" -Value $p -Encoding ascii
+          Set-Content -Path "$env:GITHUB_WORKSPACE\arm64ec_shim.h" -Value $shim -Encoding ascii
 
-      - name: Create Meson cross files (MSVC; ARM64EC + Win32)
+      - name: Create Meson cross file (MSVC ARM64EC)
         run: |
-          $ErrorActionPreference = 'Stop'
           $work = ($env:GITHUB_WORKSPACE -replace '\\','\\')
           $shim = ("$env:GITHUB_WORKSPACE\arm64ec_shim.h" -replace '\\','\\')
-          $arm = @"
+          $cross = @"
           [binaries]
-          c = 'cl'
-          cpp = 'cl'
+          c = ['pwsh','-File','@WORK@\\clwrap.ps1']
+          cpp = ['pwsh','-File','@WORK@\\clwrap.ps1']
           ar = ['pwsh','-File','@WORK@\\libwrap.ps1','/MACHINE:ARM64EC']
           windres = 'rc'
+
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
+
           [built-in options]
           cpp_std = 'c++17'
-          # ⚠️ 여기엔 하이픈(-) 옵션 금지
-          c_args = ['/arm64EC','/O2','/DNOMINMAX','/permissive-','/EHsc',
-                    '/FI','@SHIM@',
-                    '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0','/wd4146']
-          cpp_args = ['/arm64EC','/O2','/DNOMINMAX','/permissive-','/EHsc',
-                      '/FI','@SHIM@',
-                      '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0','/wd4146']
+          c_args = ['/DNOMINMAX','/permissive-','/EHsc','/FI','@SHIM@','/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0','/wd4146']
+          cpp_args = ['/DNOMINMAX','/permissive-','/EHsc','/FI','@SHIM@','/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0','/wd4146']
           c_link_args   = ['/MACHINE:ARM64EC']
           cpp_link_args = ['/MACHINE:ARM64EC']
           "@
-          $arm = $arm -replace '@WORK@', $work
-          $arm = $arm -replace '@SHIM@', $shim
+          $cross = $cross -replace '@WORK@', $work
+          $cross = $cross -replace '@SHIM@', $shim
+          Set-Content -Path "$env:GITHUB_WORKSPACE/arm64ec.msvc" -Value $cross -Encoding ascii
 
-          $x86 = @"
-          [binaries]
-          c = 'cl'
-          cpp = 'cl'
-          ar = 'lib'
-          windres = 'rc'
-          [host_machine]
-          system = 'windows'
-          cpu_family = 'x86'
-          cpu = 'i686'
-          endian = 'little'
-          [built-in options]
-          cpp_std = 'c++17'
-          c_args = ['/O2','/DNOMINMAX','/permissive-','/EHsc']
-          cpp_args = ['/O2','/DNOMINMAX','/permissive-','/EHsc']
-          "@
-          Set-Content -Path "$env:GITHUB_WORKSPACE/arm64ec.msvc" -Value $arm -Encoding ascii
-          Set-Content -Path "$env:GITHUB_WORKSPACE/i686.msvc"   -Value $x86 -Encoding ascii
-
-      - name: Build NEW versions only (MSVC → WCP; fail fast)
-        env:
-          GITHUB_WORKSPACE: ${{ github.workspace }}
+      - name: Clone DXVK-Sarek (main branch, shallow)
         run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandErrorActionPreference = 'Stop'
+          git clone --depth 1 --branch main --recurse-submodules "https://github.com/$env:SAREK_REPO.git" src
 
-          function Invoke-VsDev {
-            param([string]$Arch,[string]$HostArch='x64')
-            $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-            if (-not (Test-Path $vswhere)) { throw "vswhere not found at $vswhere" }
-            $instPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-            if (-not $instPath) { throw "VS installation not found by vswhere" }
-            $bat = Join-Path $instPath "Common7\Tools\VsDevCmd.bat"
-            if (-not (Test-Path $bat)) { throw "VsDevCmd not found at $bat" }
-            & cmd /c "`"$bat`" -arch=$Arch -host_arch=$HostArch >nul && set" |
-              ForEach-Object {
-                if ($_ -match '^(.*?)=(.*)$') {
-                  [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2])
-                }
-              }
-          }
-
-          function Check-Last([string]$step) { if ($LASTEXITCODE -ne 0) { throw "$step failed (exit $LASTEXITCODE)" } }
-
-          function Assert-AnyDll([string]$Dir,[string]$ArchMatch){
-            $dll = Get-ChildItem $Dir -Recurse -Filter *.dll -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $dll) { throw "No DLLs found in $Dir" }
-            $dump = & "$env:VCToolsInstallDir\bin\Hostx64\x64\dumpbin.exe" /headers $dll.FullName | Out-String
-            if ($dump -notmatch $ArchMatch) {
-              throw "Unexpected machine for $($dll.Name). Expected '$ArchMatch' in dumpbin headers."
+      - name: Quick patching for MSVC build (disable d3d8, retag HUD)
+        run: |
+          Set-Location src
+          # Disable d3d8 subdir (WinSDK lacks d3d8.h)
+          foreach ($f in @('meson.build','src\meson.build')) {
+            if (Test-Path $f) {
+              $txt = Get-Content $f -Raw
+              $new = $txt -replace "(?m)^\s*subdir\('d3d8'\)\s*$",""
+              if ($new -ne $txt) { Set-Content -Encoding ascii $f $new }
             }
           }
+          # Minimal local tag to make any version queries robust
+          git config user.name  ci
+          git config user.email ci@local
+          git tag -a v0-ci -m ci 2>$null
 
+      - name: Prepare LIB paths + stub d3d9.lib if missing (ARM64EC)
+        run: |
           function Add-LibPathsFor([string]$Arch){
             $vc  = $env:VCToolsInstallDir
             $sdk = $env:WindowsSdkDir
@@ -363,191 +167,56 @@ jobs:
               $paths += "$sdk\Lib\$ver\ucrt\$Arch"
               $paths += "$sdk\Lib\$ver\um\$Arch"
             }
-            $paths = $paths | Where-Object { Test-Path $_ }
-            if ($paths.Count -gt 0) { $env:LIB = ($paths -join ';') + ';' + $env:LIB }
+            $paths = $paths | Where-Object { $_ -and (Test-Path $_) }
+            if ($paths.Count -eq 0) { throw "No LIB path found for $Arch" }
+            $env:LIB = ($paths -join ';') + ';' + $env:LIB
           }
-
-          function Ensure-StubD3D9 {
-            param([string]$Arch)
-            # LIB 경로에 d3d9.lib가 없으면 ARM64EC 빈 스텁 생성
-            $needsStub = $true
-            foreach ($p in ($env:LIB -split ';')) {
-              if ($p -and (Test-Path (Join-Path $p 'd3d9.lib'))) { $needsStub = $false; break }
-            }
-            if ($needsStub) {
+          function Ensure-StubD3D9([string]$Arch){
+            $need = $true
+            foreach ($p in ($env:LIB -split ';')) { if ($p -and (Test-Path (Join-Path $p 'd3d9.lib'))) { $need = $false; break } }
+            if ($need) {
               $stubDir = Join-Path $env:GITHUB_WORKSPACE "stublibs\$Arch"
               New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
               & lib.exe /nologo /machine:$Arch /OUT:(Join-Path $stubDir 'd3d9.lib')
-              if ($LASTEXITCODE -ne 0) { throw "Failed to create stub d3d9.lib for $Arch" }
-              $env:LIB = "$stubDir;$env:LIB"
-              Write-Host "Injected stub d3d9.lib at $stubDir"
+              if ($LASTEXITCODE -ne 0) { throw "Failed to create stub d3d9.lib ($Arch)" }
+              $env:LIB = "$stubDir;" + $env:LIB
+              Write-Host "Injected stub d3d9.lib -> $stubDir"
             }
           }
+          Add-LibPathsFor 'arm64ec'
+          Ensure-StubD3D9 'ARM64EC'
 
-          $out = "$env:GITHUB_WORKSPACE\out"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
+      - name: Configure (Meson) — ARM64EC
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\build.ec" | Out-Null
           Set-Location "$env:GITHUB_WORKSPACE\src"
+          meson setup "$env:GITHUB_WORKSPACE\build.ec" `
+            --cross-file "$env:GITHUB_WORKSPACE\arm64ec.msvc" `
+            --buildtype release `
+            --prefix "$env:PREFIX_ARM64EC" `
+            -Ddefault_library=shared `
+            -Dbuild_id=false
 
-          $listFile = "$env:GITHUB_WORKSPACE\to_build.txt"
-          if (-not (Test-Path $listFile) -or -not (Get-Content $listFile | Where-Object { $_.Trim() })) {
-            Write-Host "No new versions to build."; exit 0
-          }
-
-          foreach ($line in Get-Content $listFile) {
-            if (-not $line.Trim()) { continue }
-            $parts = $line.Split(' ',2)
-            $tag = $parts[0]; $base = $parts[1]
-            Write-Host "::group::Build $tag (DXVK-Sarek ARM64EC + 32-bit)"
-
-            git checkout -f $tag
-            Check-Last "git checkout $tag"
-            git submodule update --init --recursive --checkout
-            Check-Last "git submodule update"
-
-            git config user.name  "ci"
-            git config user.email "ci@local"
-            git config --global --add safe.directory (Get-Location).Path
-
-            git add -A
-            & git commit -m "local compat patches for $base" 2>$null
-            git tag -d $tag 2>$null | Out-Null
-            git tag -a $tag -m "clean retag for HUD version"
-            git reset --hard HEAD
-            git clean -xdf
-
-            # --- d3d8 비활성화 (WinSDK엔 d3d8.h 없음) ---
-            $mesonFiles = @("meson.build","src\meson.build")
-            foreach ($f in $mesonFiles) {
-              if (Test-Path $f) {
-                $txt = Get-Content $f -Raw
-                $new = $txt -replace "(?m)^\s*subdir\('d3d8'\)\s*$",""
-                if ($new -ne $txt) {
-                  Set-Content -Encoding ascii $f $new
-                  Write-Host "Patched $($f): disabled subdir('d3d8') for MSVC build"
-                }
-              }
-            }
-
-            # Clean previous artifacts
-            Remove-Item -Recurse -Force "$env:GITHUB_WORKSPACE\build.ec","$env:GITHUB_WORKSPACE\build.w32","$env:PREFIX_X64","$env:PREFIX_X86","$env:GITHUB_WORKSPACE\DXVK_WCP" -ErrorAction SilentlyContinue
-
-            # --- 링커 라이브러리 경로 보강: ARM64EC ---
-            Add-LibPathsFor 'arm64ec'
-            # d3d9가 없으면 ARM64EC 스텁 생성(설정 단계 통과용)
-            Ensure-StubD3D9 -Arch 'ARM64EC'
-
-            # ---------- ARM64EC (system32) ----------
-            meson setup "$env:GITHUB_WORKSPACE\build.ec" `
-              --cross-file "$env:GITHUB_WORKSPACE\arm64ec.msvc" `
-              --buildtype release `
-              --prefix "$env:PREFIX_X64" `
-              -Ddefault_library=shared `
-              -Dbuild_id=false
-            Check-Last "meson setup (ARM64EC)"
-
-            # Meson 로그에 '-arm64EC' 흔적 있으면 즉시 실패(하이픈 금지)
-            $mlog = Join-Path "$env:GITHUB_WORKSPACE\build.ec" "meson-logs\meson-log.txt"
-            if (Test-Path $mlog) {
-              $txt = Get-Content $mlog -Raw
-              if ($txt -match '(?i)\-arm64EC') { throw "Detected '-arm64EC' in meson-log; purge dash-style arm64ec flags" }
-            }
-
-            ninja -C "$env:GITHUB_WORKSPACE\build.ec" -j 2
-            Check-Last "ninja (ARM64EC)"
-
-            meson install --no-rebuild -C "$env:GITHUB_WORKSPACE\build.ec"
-            Check-Last "meson install (ARM64EC)"
-
-            # Fail fast: ARM64EC 산출물 즉시 검증
-            if (-not (Test-Path "$env:PREFIX_X64\bin")) { throw "ARM64EC install prefix missing" }
-            Assert-AnyDll "$env:PREFIX_X64\bin" 'machine.*ARM64EC'
-
-            # ---------- Win32 (syswow64) ----------
-            Invoke-VsDev -Arch x86 -HostArch x64
-
-            meson setup "$env:GITHUB_WORKSPACE\build.w32" `
-              --cross-file "$env:GITHUB_WORKSPACE\i686.msvc" `
-              --buildtype release `
-              --prefix "$env:PREFIX_X86" `
-              -Ddefault_library=shared `
-              -Dbuild_id=false
-            Check-Last "meson setup (x86)"
-
-            ninja -C "$env:GITHUB_WORKSPACE\build.w32" -j 2
-            Check-Last "ninja (x86)"
-
-            meson install --no-rebuild -C "$env:GITHUB_WORKSPACE\build.w32"
-            Check-Last "meson install (x86)"
-
-            # Fail fast: x86 산출물 즉시 검증
-            if (-not (Test-Path "$env:PREFIX_X86\bin")) { throw "x86 install prefix missing" }
-            Assert-AnyDll "$env:PREFIX_X86\bin" 'machine.*x86|machine.*I386'
-
-            # ---------- Layout → WCP ----------
-            New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\DXVK_WCP\system32" | Out-Null
-            New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\DXVK_WCP\syswow64" | Out-Null
-            Copy-Item "$env:PREFIX_X64\bin\*.dll"  "$env:GITHUB_WORKSPACE\DXVK_WCP\system32" -Force -ErrorAction Stop
-            Copy-Item "$env:PREFIX_X86\bin\*.dll"  "$env:GITHUB_WORKSPACE\DXVK_WCP\syswow64" -Force -ErrorAction Stop
-
-            $x64 = Get-ChildItem "$env:GITHUB_WORKSPACE\DXVK_WCP\system32" -Filter *.dll -File | Select-Object -ExpandProperty Name | Sort-Object
-            $x86 = Get-ChildItem "$env:GITHUB_WORKSPACE\DXVK_WCP\syswow64" -Filter *.dll -File | Select-Object -ExpandProperty Name | Sort-Object
-            if (($x64.Count -eq 0) -and ($x86.Count -eq 0)) { throw "No DLLs discovered for $base" }
-
-            $profile = [ordered]@{
-              type = 'DXVK'
-              versionName = "sarek-$base"
-              versionCode = 0
-              description = 'DXVK-Sarek arm64ec build by Ari'
-              files = @()
-            }
-            foreach ($n in $x64) { $profile.files += @{ source = "system32/$n"; target = "${system32}/$n" } }
-            foreach ($n in $x86) { $profile.files += @{ source = "syswow64/$n"; target = "${syswow64}/$n" } }
-            ($profile | ConvertTo-Json -Depth 5) | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\DXVK_WCP\profile.json"
-
-            $wcp = "dxvk-sarek-arm64ec-$base.wcp"
-            $tar = "$env:GITHUB_WORKSPACE\out\DXVK_WCP.tar"
-            & tar -cf $tar -C "$env:GITHUB_WORKSPACE\DXVK_WCP" profile.json system32 syswow64
-            Check-Last "tar WCP"
-            & zstd.exe -19 --force --output-dir-flat "$env:GITHUB_WORKSPACE\out" $tar
-            Check-Last "zstd WCP"
-            Move-Item "$env:GITHUB_WORKSPACE\out\DXVK_WCP.tar.zst" "$env:GITHUB_WORKSPACE\out\$wcp" -Force
-            Write-Host "::endgroup::"
-          }
-
-      - name: Build release notes (with Current)
+      - name: Build (ninja) — ARM64EC
         run: |
-          $ErrorActionPreference = 'Stop'
-          $notes = "$env:GITHUB_WORKSPACE\RELEASE_NOTES.md"
-          "🤖 Automated DXVK-Sarek arm64ec builds (1.10.8+).`n" | Out-File -Encoding utf8 $notes
-          $latest = Get-ChildItem "$env:GITHUB_WORKSPACE\out" -Filter 'dxvk-sarek-arm64ec-*.wcp' | Sort-Object Name | Select-Object -Last 1
-          if ($latest) {
-            $cur = ($latest.Name -replace '^dxvk-sarek-arm64ec-','') -replace '\.wcp$',''
-            "Current: $cur" | Add-Content -Encoding utf8 $notes
-          }
-          Get-Content $notes
+          ninja -C "$env:GITHUB_WORKSPACE\build.ec" -j 2
 
-      - name: Create/Update GitHub Release (DXVK-SAREK-ARM64EC) + upload WCPs
-        env:
-          REPO: ${{ github.repository }}
+      - name: Install — ARM64EC
         run: |
-          $ErrorActionPreference = 'Stop'
-          $notes = "$env:GITHUB_WORKSPACE\RELEASE_NOTES.md"
-          if (-not (gh release view "$env:RELEASE_TAG" --repo "$env:REPO" > $null 2>&1)) {
-            gh release create "$env:RELEASE_TAG" --repo "$env:REPO" -t "$env:RELEASE_TAG" -F $notes
-          } else {
-            gh release edit   "$env:RELEASE_TAG" --repo "$env:REPO" -t "$env:RELEASE_TAG" -F $notes
-          }
-          if (Get-ChildItem "$env:GITHUB_WORKSPACE\out" -Filter *.wcp) {
-            gh release upload "$env:RELEASE_TAG" "$env:GITHUB_WORKSPACE\out\*.wcp" --repo "$env:REPO" --clobber
-          } else {
-            Write-Host 'No new WCP files to upload.'
-          }
+          meson install --no-rebuild -C "$env:GITHUB_WORKSPACE\build.ec"
+          if (-not (Test-Path "$env:PREFIX_ARM64EC\bin")) { throw "No ARM64EC binaries produced" }
 
-      - name: Upload build logs on failure
+      - name: Upload binaries (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxvk-sarek-arm64ec-bin
+          path: |
+            ${{ env.PREFIX_ARM64EC }}\bin\*.dll
+            ${{ github.workspace }}\build.ec\meson-logs\**
+
+      - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: meson-logs
-          path: |
-            ${{ github.workspace }}\build.ec\meson-logs\**
-            ${{ github.workspace }}\build.w32\meson-logs\**
+          path: ${{ github.workspace }}\build.ec\meson-logs\**
