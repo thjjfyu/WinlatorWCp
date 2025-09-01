@@ -45,32 +45,54 @@ jobs:
             echo "::error::No glslang/glslangValidator with working --vn"; exit 1
           fi
 
-      - name: Download bylaws/llvm-mingw (ARM64EC toolchain; Linux tar.gz)
+      - name: Download bylaws/llvm-mingw (ARM64EC toolchain; Linux archive)
         run: |
           set -Eeuo pipefail
-          json="$(curl -fsSL -H "Accept: application/vnd.github+json" https://api.github.com/repos/bylaws/llvm-mingw/releases/latest)"
-          # try to pick a linux tarball that contains 'arm64ec'
-          url="$(echo "$json" | jq -r '.assets[] | select(.name|test("linux.*arm64ec.*\\.tar\\.gz$")) .browser_download_url' | head -n1)"
+          API="https://api.github.com/repos/bylaws/llvm-mingw/releases/latest"
+          json="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$API")"
+      
+          # 1) 가장 안전한: 'arm64ec' AND ('linux' OR 'ubuntu') AND tar 계열 확장자
+          url="$(
+            echo "$json" | jq -r '
+              .assets[]
+              | select((.name|test("arm64ec";"i"))
+                       and (.name|test("(linux|ubuntu)";"i"))
+                       and (.name|test("\\.(tar\\.(zst|xz|gz)|t(z|x|g)z)$";"i")))
+              .browser_download_url' | head -n1
+          )"
+      
+          # 2) 느슨한 폴백: arm64ec만 들어간 tar 계열
           if [ -z "$url" ]; then
-            # fallback: any tar.gz mentioning arm64ec
-            url="$(echo "$json" | jq -r '.assets[] | select(.name|test("arm64ec.*\\.tar\\.gz$")) .browser_download_url' | head -n1)"
+            url="$(
+              echo "$json" | jq -r '
+                .assets[]
+                | select((.name|test("arm64ec";"i"))
+                         and (.name|test("\\.(tar\\.(zst|xz|gz)|t(z|x|g)z)$";"i")))
+                .browser_download_url' | head -n1
+            )"
           fi
-          [ -n "$url" ] || { echo "::error::ARM64EC toolchain asset not found"; exit 1; }
+      
+          if [ -z "$url" ]; then
+            echo "::group::Available assets (for debugging)"
+            echo "$json" | jq -r '.assets[].name'
+            echo "::endgroup::"
+            echo "::error::ARM64EC toolchain asset not found (try relaxing filters)"
+            exit 1
+          fi
+      
           mkdir -p "$TOOLCHAIN_ARM64EC"
-          curl -fL "$url" -o /tmp/llvm-mingw-arm64ec.tar.gz
-          tar -C "$TOOLCHAIN_ARM64EC" --strip-components=1 -xzf /tmp/llvm-mingw-arm64ec.tar.gz
+          file=/tmp/arm64ec-toolchain.tar.any
+          curl -fL "$url" -o "$file"
+      
+          case "$url" in
+            *.tar.zst|*.tzst) tar -C "$TOOLCHAIN_ARM64EC" --strip-components=1 --zstd -xvf "$file" ;;
+            *.tar.xz|*.txz)  tar -C "$TOOLCHAIN_ARM64EC" --strip-components=1 -xJf  "$file" ;;
+            *.tar.gz|*.tgz)  tar -C "$TOOLCHAIN_ARM64EC" --strip-components=1 -xzf  "$file" ;;
+            *)
+              echo "::error::Unknown ARM64EC archive format: $url"; exit 1;;
+          esac
+      
           echo "$TOOLCHAIN_ARM64EC/bin" >> "$GITHUB_PATH"
-
-      - name: Download & extract llvm-mingw (i686; Ubuntu x86_64 asset)
-        run: |
-          set -Eeuo pipefail
-          json="$(curl -fsSL -H "Accept: application/vnd.github+json" https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)"
-          url="$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)"
-          [ -n "$url" ] || { echo "::error::llvm-mingw (i686) asset not found"; exit 1; }
-          mkdir -p "$TOOLCHAIN_LLVM_MINGW"
-          curl -fL "$url" -o /tmp/llvm-mingw.tar.xz
-          tar -C "$TOOLCHAIN_LLVM_MINGW" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
-          echo "$TOOLCHAIN_LLVM_MINGW/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchains in PATH
         run: |
@@ -90,20 +112,30 @@ jobs:
         run: |
           cat > cross-arm64ec.txt <<'EOF'
           [binaries]
+          c = 'arm64ec-w64-mingw32-clang'
+          cpp = 'arm64ec-w64-mingw32-clang++'
           ar = 'arm64ec-w64-mingw32-ar'
-          c = 'arm64ec-w64-mingw32-gcc'
-          cpp = 'arm64ec-w64-mingw32-g++'
-          ld = 'arm64ec-w64-mingw32-ld'
           windres = 'arm64ec-w64-mingw32-windres'
           strip = 'llvm-strip'
-          widl = 'arm64ec-w64-mingw32-widl'
-          # pkgconfig intentionally omitted for a lightweight build
+          # widl가 없으면 생략 가능 (메소드에서 rc만 쓰는 경우가 많음)
+      
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
           EOF
+      
+          # 폴백: clang 접두어만 있을 때 gcc 이름도 알아서 동작하도록 심볼릭 링크
+          if ! command -v arm64ec-w64-mingw32-gcc >/dev/null && command -v arm64ec-w64-mingw32-clang >/dev/null; then
+            ln -sf "$(command -v arm64ec-w64-mingw32-clang)"  "$TOOLCHAIN_ARM64EC/bin/arm64ec-w64-mingw32-gcc"
+            ln -sf "$(command -v arm64ec-w64-mingw32-clang++)" "$TOOLCHAIN_ARM64EC/bin/arm64ec-w64-mingw32-g++" || true
+          fi
+      
+          # windres 없으면 llvm-rc로 대체
+          if ! command -v arm64ec-w64-mingw32-windres >/dev/null && command -v llvm-rc >/dev/null; then
+            sed -i "s|^windres = .*|windres = 'llvm-rc'|" cross-arm64ec.txt
+          fi
 
       - name: Build ARM64EC DLLs
         working-directory: src
