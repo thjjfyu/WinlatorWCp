@@ -214,10 +214,11 @@ jobs:
           $toBuild | Out-File -Encoding ascii "$env:GITHUB_WORKSPACE\to_build.txt"
           Get-Content "$env:GITHUB_WORKSPACE\to_build.txt"
 
-      - name: MSVC DevCmd (x64 host) for ARM64EC
+      - name: Configure MSVC for ARM64EC
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: x64
+          # x64 호스트 → ARM64EC 타깃
+          arch: amd64_arm64ec
 
       - name: Create Meson cross files (MSVC; ARM64EC + Win32)
         run: |
@@ -234,8 +235,8 @@ jobs:
           endian = 'little'
           [built-in options]
           cpp_std = 'c++17'
-          c_args = ['/arm64EC','/O2','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/D_M_ARM64EC','/D__ARM64EC__','/permissive-','/EHsc']
-          cpp_args = ['/arm64EC','/O2','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/D_M_ARM64EC','/D__ARM64EC__','/permissive-','/EHsc']
+          c_args = ['/O2','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/permissive-','/EHsc']
+          cpp_args = ['/O2','/DNOMINMAX','/DWIN32_LEAN_AND_MEAN','/permissive-','/EHsc']
           "@
           $x86 = @"
           [binaries]
