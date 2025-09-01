@@ -45,41 +45,58 @@ jobs:
             echo "::error::No glslang/glslangValidator with working --vn"; exit 1
           fi
 
-      - name: Download bylaws/llvm-mingw (ARM64EC toolchain; Linux archive)
+      - name: Download bylaws/llvm-mingw (ARM64EC toolchain; scan releases)
         run: |
           set -Eeuo pipefail
-          API="https://api.github.com/repos/bylaws/llvm-mingw/releases/latest"
-          json="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$API")"
       
-          # 1) 가장 안전한: 'arm64ec' AND ('linux' OR 'ubuntu') AND tar 계열 확장자
-          url="$(
-            echo "$json" | jq -r '
-              .assets[]
-              | select((.name|test("arm64ec";"i"))
-                       and (.name|test("(linux|ubuntu)";"i"))
-                       and (.name|test("\\.(tar\\.(zst|xz|gz)|t(z|x|g)z)$";"i")))
-              .browser_download_url' | head -n1
-          )"
+          pick_asset_url() {
+            local page=1 url=""
+            while [ $page -le 5 ]; do
+              json="$(curl -fsSL -H 'Accept: application/vnd.github+json' \
+                     'https://api.github.com/repos/bylaws/llvm-mingw/releases?per_page=100&page='"$page")"
+              url="$(echo "$json" | jq -r '
+                .[]?.assets[]? 
+                | select(
+                    (.name|test("arm64ec";"i")) and
+                    (.name|test("\\.(tar\\.(zst|xz|gz)|t(z|x|g)z)$";"i")) and
+                    # 리눅스/우분투 빌드 선호
+                    ((.name|test("(linux|ubuntu)";"i")) or true)
+                  )
+                | .browser_download_url
+              ' | head -n1)"
+              [ -n "$url" ] && { echo "$url"; return 0; }
+              page=$((page+1))
+            done
+            return 1
+          }
       
-          # 2) 느슨한 폴백: arm64ec만 들어간 tar 계열
-          if [ -z "$url" ]; then
-            url="$(
-              echo "$json" | jq -r '
-                .assets[]
-                | select((.name|test("arm64ec";"i"))
-                         and (.name|test("\\.(tar\\.(zst|xz|gz)|t(z|x|g)z)$";"i")))
-                .browser_download_url' | head -n1
-            )"
+          url="$(pick_asset_url || true)"
+      
+          # 폴백: ARM64EC 스크립트 지원이 들어간 태그 20240929에서 찾기
+          if [ -z "${url:-}" ]; then
+            json="$(curl -fsSL -H 'Accept: application/vnd.github+json' \
+                   'https://api.github.com/repos/bylaws/llvm-mingw/releases/tags/20240929')"
+            url="$(echo "$json" | jq -r '
+              .assets[]?
+              | select(
+                  (.name|test("arm64ec";"i")) and
+                  (.name|test("\\.(tar\\.(zst|xz|gz)|t(z|x|g)z)$";"i"))
+                )
+              | .browser_download_url
+            ' | head -n1)"
           fi
       
-          if [ -z "$url" ]; then
-            echo "::group::Available assets (for debugging)"
-            echo "$json" | jq -r '.assets[].name'
+          if [ -z "${url:-}" ]; then
+            echo "::group::No ARM64EC asset detected. Recent releases list (names):"
+            curl -fsSL -H 'Accept: application/vnd.github+json' \
+              'https://api.github.com/repos/bylaws/llvm-mingw/releases?per_page=100&page=1' \
+              | jq -r '.[]?.assets[]?.name'
             echo "::endgroup::"
-            echo "::error::ARM64EC toolchain asset not found (try relaxing filters)"
+            echo "::error::ARM64EC toolchain asset not found across releases"
             exit 1
           fi
       
+          echo "Selected ARM64EC toolchain: $url"
           mkdir -p "$TOOLCHAIN_ARM64EC"
           file=/tmp/arm64ec-toolchain.tar.any
           curl -fL "$url" -o "$file"
@@ -88,8 +105,7 @@ jobs:
             *.tar.zst|*.tzst) tar -C "$TOOLCHAIN_ARM64EC" --strip-components=1 --zstd -xvf "$file" ;;
             *.tar.xz|*.txz)  tar -C "$TOOLCHAIN_ARM64EC" --strip-components=1 -xJf  "$file" ;;
             *.tar.gz|*.tgz)  tar -C "$TOOLCHAIN_ARM64EC" --strip-components=1 -xzf  "$file" ;;
-            *)
-              echo "::error::Unknown ARM64EC archive format: $url"; exit 1;;
+            *) echo "::error::Unknown archive format: $url"; exit 1 ;;
           esac
       
           echo "$TOOLCHAIN_ARM64EC/bin" >> "$GITHUB_PATH"
