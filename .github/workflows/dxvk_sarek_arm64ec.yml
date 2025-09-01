@@ -35,7 +35,7 @@ jobs:
             echo "$BIN" >> "$GITHUB_PATH"
           fi
 
-      - name: Download bylaws llvm-mingw (by release title = date)
+      - name: Download bylaws llvm-mingw (by release title = date; 20.04 only)
         run: |
           set -Eeuo pipefail
           mkdir -p "$LLVM_MINGW_DIR"
@@ -47,16 +47,11 @@ jobs:
           DATE="$(echo "$json" | jq -r '.name' | sed 's/[^0-9]//g')"
           [ -n "$DATE" ] || { echo "::error::Failed to parse release date (title)"; exit 1; }
 
-          # 우리가 기대하는 정확한 파일명 후보(20.04 우선, 22.04 폴백)
-          cand1="llvm-mingw-${DATE}-ucrt-ubuntu-20.04-x86_64.tar.xz"
-          cand2="llvm-mingw-${DATE}-ucrt-ubuntu-22.04-x86_64.tar.xz"
+          # 정확히 20.04 자산만 선택
+          cand="llvm-mingw-${DATE}-ucrt-ubuntu-20.04-x86_64.tar.xz"
+          url="$(echo "$json" | jq -r --arg N "$cand" '.assets[] | select(.name==$N) .browser_download_url')"
 
-          url="$(echo "$json" | jq -r --arg N "$cand1" '.assets[] | select(.name==$N) .browser_download_url')"
-          if [ -z "$url" ] || [ "$url" = "null" ]; then
-            url="$(echo "$json" | jq -r --arg N "$cand2" '.assets[] | select(.name==$N) .browser_download_url')"
-          fi
-
-          # 그래도 못 찾으면: 같은 날짜 + ubuntu x86_64 tar.* 아무거나
+          # 같은 날짜에서 ubuntu x86_64 tar.* 임의 선택(해당 리포는 20.04만 배포한다고 하셨으니 여전히 안전)
           if [ -z "$url" ] || [ "$url" = "null" ]; then
             url="$(echo "$json" | jq -r --arg D "$DATE" '
               .assets[] |
@@ -68,7 +63,7 @@ jobs:
             echo "::group::Available assets in latest"
             echo "$json" | jq -r '.assets[].name'
             echo "::endgroup::"
-            echo "::error::No matching llvm-mingw asset for date $DATE"
+            echo "::error::No matching llvm-mingw 20.04 asset for date $DATE"
             exit 1
           fi
 
@@ -108,12 +103,35 @@ jobs:
           git checkout -f main
           git submodule update --init --recursive --checkout
 
+      - name: Patch for ARM64EC: guard x86 intrinsics includes
+        working-directory: src
+        run: |
+          set -Eeuo pipefail
+          # x86 전용 헤더(include <x86intrin.h>, <immintrin.h>)를 x86/AMD64에서만 포함하도록 가드
+          mapfile -t files < <(grep -RIl --include='*.h' -e '^#include <x86intrin.h>' -e '^#include <immintrin.h>' ./src || true)
+          wrap() {
+            local f="$1" inc="$2"
+            [ -f "$f" ] || return 0
+            awk -v inc="$inc" '
+              {
+                if ($0 == "#include <"inc">") {
+                  print "#if defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)";
+                  print "#include <"inc">";
+                  print "#endif";
+                } else { print $0 }
+              }' "$f" > "$f.new" && mv "$f.new" "$f"
+          }
+          for f in "${files[@]}"; do
+            wrap "$f" "x86intrin.h"
+            wrap "$f" "immintrin.h"
+          done
+
       - name: Create Meson cross files (ARM64EC & i686)
         working-directory: src
         run: |
           set -Eeuo pipefail
 
-          # ARM64EC
+          # ARM64EC (pkg-config 키 하이픈 표기로 교정)
           cat > cross-arm64ec.txt <<'EOF'
           [binaries]
           c = 'arm64ec-w64-mingw32-clang'
@@ -121,7 +139,7 @@ jobs:
           ar = 'arm64ec-w64-mingw32-ar'
           windres = 'arm64ec-w64-mingw32-windres'
           strip = 'llvm-strip'
-          pkgconfig = 'pkg-config'
+          pkg-config = 'pkg-config'
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
@@ -139,7 +157,7 @@ jobs:
           ar = 'i686-w64-mingw32-ar'
           windres = 'i686-w64-mingw32-windres'
           strip = 'llvm-strip'
-          pkgconfig = 'pkg-config'
+          pkg-config = 'pkg-config'
           [host_machine]
           system = 'windows'
           cpu_family = 'x86'
@@ -160,8 +178,8 @@ jobs:
             --buildtype release \
             --prefix "$PREFIX_ARM64EC" \
             -Dbuild_id=false -Dstrip=true \
-            -Dc_args='-Wno-nontrivial-memcall' \
-            -Dcpp_args='-Wno-nontrivial-memcall'
+            -Dc_args='-Wno-nontrivial-memcall -D__ARM64EC__=1 -D_M_ARM64EC=1' \
+            -Dcpp_args='-Wno-nontrivial-memcall -D__ARM64EC__=1 -D_M_ARM64EC=1'
           ninja -C "$GITHUB_WORKSPACE/build.arm64ec" -j"$(nproc)"
           meson install --no-rebuild -C "$GITHUB_WORKSPACE/build.arm64ec"
 
