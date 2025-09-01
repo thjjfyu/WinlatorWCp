@@ -134,7 +134,7 @@ jobs:
           windres  = 'arm64ec-w64-mingw32-windres'
           strip    = 'llvm-strip'
           widl     = 'arm64ec-w64-mingw32-widl'
-          pkgconfig= 'aarch64-linux-gnu-pkg-config'
+          pkg-config = 'aarch64-linux-gnu-pkg-config'
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
@@ -153,7 +153,7 @@ jobs:
           windres  = 'i686-w64-mingw32-windres'
           strip    = 'llvm-strip'
           widl     = 'i686-w64-mingw32-widl'
-          pkgconfig= 'pkg-config'
+          pkg-config = 'pkg-config'
           [host_machine]
           system = 'windows'
           cpu_family = 'x86'
@@ -176,7 +176,7 @@ jobs:
             sed -i "s/^widl[[:space:]]*=.*/widl = 'widl'/" "${{ github.workspace }}/i686.cross"
           # pkgconfig: fallback to generic pkg-config if aarch64 one is missing
           command -v aarch64-linux-gnu-pkg-config >/dev/null || \
-            sed -i "s/^pkgconfig[[:space:]]*=.*/pkgconfig = 'pkg-config'/" "${{ github.workspace }}/arm64ec.cross"
+            sed -i "s/^pkg-config[[:space:]]*=.*/pkg-config = 'pkg-config'/" "${{ github.workspace }}/arm64ec.cross"
           # strip: if llvm-strip is missing, fallback to host strip (best-effort)
           command -v llvm-strip >/dev/null || \
             sed -i "s/^strip[[:space:]]*=.*/strip = 'strip'/" "${{ github.workspace }}/arm64ec.cross" "${{ github.workspace }}/i686.cross"
