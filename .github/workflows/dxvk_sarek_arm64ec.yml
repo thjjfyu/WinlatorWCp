@@ -137,11 +137,12 @@ jobs:
         run: |
           $tmp = Join-Path $env:RUNNER_TEMP "glsl-min"
           New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-
-          $src = @'
-#version 450
-void main(){}
-'@
+      
+          $comp = Join-Path $tmp "min.comp"
+          Set-Content -Path $comp -Encoding ascii -Value @(
+            '#version 450'
+            'void main(){}'
+          )
 
           $comp = Join-Path $tmp "min.comp"
           Set-Content -Path $comp -Encoding ascii -Value $src
