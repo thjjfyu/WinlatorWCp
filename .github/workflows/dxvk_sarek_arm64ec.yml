@@ -95,7 +95,6 @@ jobs:
             echo "ARM64EC_WINDRES=x86_64-w64-mingw32-windres" >> "$GITHUB_ENV"
             echo "ARM64EC_WINDRES_NEEDS_FLAG=true" >> "$GITHUB_ENV"
           else
-            # llvm-rc는 Meson windres 스타일(-i/-o)에 약하므로 최후수단 경고만
             if command -v llvm-rc >/dev/null 2>&1; then
               echo "ARM64EC_WINDRES=llvm-rc" >> "$GITHUB_ENV"
               echo "ARM64EC_WINDRES_NEEDS_FLAG=false" >> "$GITHUB_ENV"
@@ -104,6 +103,32 @@ jobs:
               echo "::error::No windres found (need arm64ec-w64-mingw32-windres or x86_64-w64-mingw32-windres or llvm-rc)"; exit 1
             fi
           fi
+
+      - name: Pin ARM64EC helper lib from compiler-rt (lib/clang/*/lib/windows)
+        run: |
+          set -Eeuo pipefail
+          # 최신 clang windows lib 디렉터리
+          ARM_WIN_DIR="$(ls -d "$LLVM_MINGW_DIR"/lib/clang/*/lib/windows | LC_ALL=C sort -V | tail -n1)"
+          [ -d "$ARM_WIN_DIR" ] || { echo "::error::No clang windows lib dir found"; exit 1; }
+
+          # __icall_helper_arm64ec 심볼을 가진 arm64ec 관련 아카이브 탐색
+          HELPER=""
+          while IFS= read -r lib; do
+            if llvm-nm -g --defined-only "$lib" 2>/dev/null | grep -qi '__icall_helper_arm64ec'; then
+              HELPER="$lib"; break
+            fi
+          done < <(find "$ARM_WIN_DIR" -maxdepth 1 -type f -name '*arm64ec*.a' -print | LC_ALL=C sort)
+
+          # 흔한 기본값
+          if [ -z "$HELPER" ] && [ -f "$ARM_WIN_DIR/libclang_rt.builtins-arm64ec.a" ]; then
+            HELPER="$ARM_WIN_DIR/libclang_rt.builtins-arm64ec.a"
+          fi
+
+          [ -n "$HELPER" ] || { echo "::error::__icall_helper_arm64ec not found in $ARM_WIN_DIR"; exit 1; }
+
+          echo "ARM_WIN_DIR=$ARM_WIN_DIR" >> "$GITHUB_ENV"
+          echo "ARM64EC_HELPER_LIB=$HELPER" >> "$GITHUB_ENV"
+          echo "Pinned helper: $HELPER"
 
       - name: Clone DXVK-Sarek (main + submodules)
         run: |
@@ -114,22 +139,24 @@ jobs:
           git checkout -f main
           git submodule update --init --recursive --checkout
 
-      - name: Create Meson cross files (ARM64EC & i686) — no wrapper, no $@
+      - name: Create Meson cross files (ARM64EC & i686) — link helper
         working-directory: src
         run: |
           set -Eeuo pipefail
 
           ARM_INC="$LLVM_MINGW_DIR/arm64ec-w64-mingw32/include"
           ARM_LIB="$LLVM_MINGW_DIR/arm64ec-w64-mingw32/lib"
+          ARM_WIN_DIR="${ARM_WIN_DIR:?}"
+          ARM64EC_HELPER_LIB="${ARM64EC_HELPER_LIB:?}"
 
-          # windres 라인 구성 (배열 형태로 -F pe-arm64ec 부착 가능)
+          # windres 라인 구성
           if [ "${ARM64EC_WINDRES_NEEDS_FLAG:-false}" = "true" ]; then
             WINDRES_LINE="['${ARM64EC_WINDRES}', '-F', 'pe-arm64ec']"
           else
             WINDRES_LINE="'${ARM64EC_WINDRES}'"
           fi
 
-          # ARM64EC (x86_64 프론트엔드로 컴파일, 링크는 ARM64EC)
+          # ARM64EC (x86_64 프론트엔드 컴파일, ARM64EC 링크)
           cat > cross-arm64ec.txt <<EOF
           [binaries]
           c = 'x86_64-w64-mingw32-clang'
@@ -146,10 +173,10 @@ jobs:
           endian = 'little'
 
           [built-in options]
-          c_args = ['-Wno-nontrivial-memcall','-Wno-macro-redefined','-D__ARM64EC__=1','-D_M_ARM64EC=1','-isystem','${ARM_INC}']
-          cpp_args = ['-Wno-nontrivial-memcall','-Wno-macro-redefined','-D__ARM64EC__=1','-D_M_ARM64EC=1','-isystem','${ARM_INC}']
-          c_link_args = ['-Wl,/machine:arm64ec','-L','${ARM_LIB}']
-          cpp_link_args = ['-Wl,/machine:arm64ec','-L','${ARM_LIB}']
+          c_args = ['-Wno-nontrivial-memcall','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-D__ARM64EC__=1','-D_M_ARM64EC=1','-isystem','${ARM_INC}']
+          cpp_args = ['-Wno-nontrivial-memcall','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-D__ARM64EC__=1','-D_M_ARM64EC=1','-isystem','${ARM_INC}']
+          c_link_args = ['-Wl,/machine:arm64ec','-L','${ARM_LIB}','-L','${ARM_WIN_DIR}','${ARM64EC_HELPER_LIB}']
+          cpp_link_args = ['-Wl,/machine:arm64ec','-L','${ARM_LIB}','-L','${ARM_WIN_DIR}','${ARM64EC_HELPER_LIB}']
           EOF
 
           # i686
@@ -169,8 +196,8 @@ jobs:
           endian = 'little'
 
           [built-in options]
-          c_args = ['-Wno-nontrivial-memcall','-Wno-macro-redefined']
-          cpp_args = ['-Wno-nontrivial-memcall','-Wno-macro-redefined']
+          c_args = ['-Wno-nontrivial-memcall','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration']
+          cpp_args = ['-Wno-nontrivial-memcall','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration']
           EOF
 
           # i686 windres 없으면 llvm-rc로 대체
