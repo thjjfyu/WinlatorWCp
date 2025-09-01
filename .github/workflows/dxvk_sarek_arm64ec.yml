@@ -266,6 +266,35 @@ jobs:
             -e 's/#ifdef[[:space:]]+__x86_64__/#if defined(__x86_64__) \&\& !defined(_M_ARM64EC) \&\& !defined(__ARM64EC__)/g' \
             "$HDR" || true
 
+      - name: Hard-disable x86 inline asm in intrin-impl.h for ARM64EC
+        run: |
+          set -Eeuo pipefail
+          HDR="$TOOLCHAIN_DIR/arm64ec-w64-mingw32/include/psdk_inc/intrin-impl.h"
+          [ -f "$HDR" ] || { echo "::warning::intrin-impl.h not found"; exit 0; }
+      
+          echo "[info] Patching $HDR"
+      
+          # 1) 파일 맨 앞에 'ARM64EC면 x86 ASM 비활성' 매크로 선언 삽입
+          sudo cp -f "$HDR" "${HDR}.bak"
+          sudo awk 'NR==1{print "#if defined(_M_ARM64EC) || defined(__ARM64EC__)"; \
+                           print "#define __MINGW_DISABLE_X86_ASM_FOR_ARM64EC 1"; \
+                           print "#endif"}1' "${HDR}.bak" | sudo tee "$HDR" >/dev/null
+      
+          # 2) 다양한 분기 형태에 대해, x86 조건에 ARM64EC 예외를 추가
+          sudo sed -i -E \
+            -e 's/#if([^\n]*defined\(__x86_64__\)[^\n]*)/#if\1 \&\& \!defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
+            -e 's/#if([^\n]*defined\(__i386__\)[^\n]*)/#if\1 \&\& \!defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
+            -e 's/#if([^\n]*defined\(_M_AMD64\)[^\n]*)/#if\1 \&\& \!defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
+            -e 's/#if([^\n]*defined\(_M_X64\)[^\n]*)/#if\1 \&\& \!defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
+            -e 's/#if([^\n]*defined\(_M_IX86\)[^\n]*)/#if\1 \&\& \!defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
+            -e 's/#if([^\n]*defined\(_AMD64_\)[^\n]*)/#if\1 \&\& \!defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
+            -e 's/#ifdef[[:space:]]+(__x86_64__|__i386__|_M_AMD64|_M_X64|_M_IX86|_AMD64_)/#if defined(\1) \&\& !defined(__MINGW_DISABLE_X86_ASM_FOR_ARM64EC)/g' \
+            "$HDR"
+      
+          # (선택) 패치가 적용됐는지 빠르게 확인
+          echo "---- grep sanity ----"
+          grep -n "__MINGW_DISABLE_X86_ASM_FOR_ARM64EC" "$HDR" || true
+
       - name: Clone DXVK-Sarek (tags + submodules)
         run: |
           git clone --recurse-submodules https://github.com/${SAREK_REPO}.git src
