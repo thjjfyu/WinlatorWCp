@@ -284,10 +284,10 @@ jobs:
           [built-in options]
           cpp_std = 'c++17'
           c_args = ['/O2','/DNOMINMAX','/permissive-','/EHsc',
-                    '/FI','@SHIM@','/U_M_X64','/U_M_AMD64',
+                    '/FI','@SHIM@',
                     '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0','/wd4146']
           cpp_args = ['/O2','/DNOMINMAX','/permissive-','/EHsc',
-                      '/FI','@SHIM@','/U_M_X64','/U_M_AMD64',
+                      '/FI','@SHIM@',
                       '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0','/wd4146']
           c_link_args = ['/MACHINE:ARM64EC']
           cpp_link_args = ['/MACHINE:ARM64EC']
