@@ -86,7 +86,7 @@ jobs:
             # Try exact base first
             for n in 9 8 7 6 5 4 3 2 1; do
               url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${base}-${n}.patch"
-              if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; break; fi
+              if curl -fsI "$url" >/devnull 2>&1; then found_rev="$n"; break; fi
             done
             # Fallback to major.minor if exact not found
             if [ -z "$found_rev" ] && [ "$mm" != "$base" ]; then
@@ -311,23 +311,45 @@ jobs:
             if git am -3 /tmp/gpl.patch; then :; else git am --abort || true; git apply -p1 --reject /tmp/gpl.patch; fi
             grep -q "enableAsync" src/dxvk/dxvk_options.h || { echo "::error::Patch not applied cleanly for ${base} (using ${patch_base}-${rev})"; git status -sb; exit 1; }
 
-            # --- Apply minimal compat patches (D3D9/11 headers) ---
-            hdr="src/d3d9/d3d9_include.h"
-            if [[ -f "$hdr" ]]; then
-              for sym in _D3DDEVINFO_RESOURCEMANAGER _D3DDEVINFO_D3D9PIPELINETIMINGS _D3DDEVINFO_VCACHE _D3DDEVINFO_PRIVATEDATA _D3DDEVINFO_VERTEXSTATS; do
-                if grep -q "typedef struct ${sym}" "$hdr"; then
-                  awk -v pat="typedef struct ${sym}" 'BEGIN{drop=0}
-                    index($0, pat){drop=1; next}
-                    drop==1 && /\}[[:space:]]*[^;]*;[[:space:]]*$/ {drop=0; next}
-                    drop==0 {print}' "$hdr" > "$hdr.new" && mv "$hdr.new" "$hdr"
-                fi
-              done
+            # --- Fix: avoid duplicate _D3DDEVINFO_RESOURCEMANAGER with latest mingw headers (robust) ---
+            set -Eeuo pipefail
+            # locate d3d9_include.h reliably
+            DXVK_INC="src/d3d9/d3d9_include.h"
+            if [[ ! -f "$DXVK_INC" ]]; then
+              alt="$(git ls-files | grep -E '/d3d9/d3d9_include\.h$' | head -n1 || true)"
+              [[ -n "$alt" ]] && DXVK_INC="$alt"
             fi
-            hdr2="src/d3d11/d3d11_texture.h"
-            if [[ -f "$hdr2" ]] && grep -qE 'constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource' "$hdr2"; then
-              sed -i -E 's/static[[:space:]]+constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource[[:space:]]*=[[:space:]]*D3D11_MAP\(-1u\);/inline static const D3D11_MAP UnmappedSubresource = (D3D11_MAP)0xFFFFFFFFu;/' "$hdr2" || true
+
+            TOOL_INC_X64="/opt/llvm-mingw/x86_64-w64-mingw32/include/d3d9types.h"
+            TOOL_INC_I86="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
+
+            if [[ -f "$DXVK_INC" ]] && \
+               (grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_INC_X64" || grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_INC_I86"); then
+              echo "Checking for duplicate typedef in ${DXVK_INC}"
+              cp "$DXVK_INC" "${DXVK_INC}.bak"
+
+              if command -v perl >/dev/null 2>&1; then
+                perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;/ /s' -i "$DXVK_INC"
+              else
+                awk '
+                  BEGIN{skip=0}
+                  /typedef[[:space:]]+struct[[:space:]]+_D3DDEVINFO_RESOURCEMANAGER\b/ { skip=1; next }
+                  skip==1 && /}[[:space:]]*D3DDEVINFO_RESOURCEMANAGER\b/ { skip=2 }
+                  skip==1 { next }
+                  skip==2 { skip=0; next }
+                  { print }
+                ' "${DXVK_INC}.bak" > "${DXVK_INC}.tmp" && mv "${DXVK_INC}.tmp" "$DXVK_INC"
+              fi
+
+              if grep -q "_D3DDEVINFO_RESOURCEMANAGER" "$DXVK_INC"; then
+                echo "::warning::typedef block still present in ${DXVK_INC}; build may fail"
+              else
+                echo "Patched duplicate typedef successfully"
+              fi
+            else
+              echo "Skip DXVK typedef patch (no duplicate in toolchain header or source path not found)."
             fi
-            # ------------------------------------------------------
+            # --- End fix ---
 
             # Optional feature flags if supported by this tag
             MESON_D3D8=""
