@@ -349,7 +349,7 @@ jobs:
                 $new = $txt -replace "(?m)^\s*subdir\('d3d8'\)\s*$",""
                 if ($new -ne $txt) {
                   Set-Content -Encoding ascii $f $new
-                  Write-Host "Patched $f: disabled subdir('d3d8') for MSVC build"
+                  Write-Host "Patched $($f): disabled subdir('d3d8') for MSVC build"
                 }
               }
             }
