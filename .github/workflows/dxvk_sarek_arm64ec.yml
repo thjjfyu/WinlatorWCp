@@ -103,6 +103,23 @@ jobs:
           git checkout -f main
           git submodule update --init --recursive --checkout
 
+      - name: Create ARM64EC preinclude (force ARM path in mingw headers)
+        run: |
+          cat > "$GITHUB_WORKSPACE/arm64ec-preinclude.h" <<'EOF'
+          #ifndef __aarch64__
+          #define __aarch64__ 1
+          #endif
+          #ifndef _M_ARM64
+          #define _M_ARM64 1
+          #endif
+          #ifndef __ARM64EC__
+          #define __ARM64EC__ 1
+          #endif
+          #ifndef _M_ARM64EC
+          #define _M_ARM64EC 1
+          #endif
+          EOF
+
       - name: "Patch for ARM64EC: guard x86 intrinsics includes"
         working-directory: src
         run: |
@@ -178,8 +195,8 @@ jobs:
             --buildtype release \
             --prefix "$PREFIX_ARM64EC" \
             -Dbuild_id=false -Dstrip=true \
-            -Dc_args='-Wno-nontrivial-memcall -D__ARM64EC__=1 -D_M_ARM64EC=1' \
-            -Dcpp_args='-Wno-nontrivial-memcall -D__ARM64EC__=1 -D_M_ARM64EC=1'
+            -Dc_args="-Wno-nontrivial-memcall -include $GITHUB_WORKSPACE/arm64ec-preinclude.h" \
+            -Dcpp_args="-Wno-nontrivial-memcall -include $GITHUB_WORKSPACE/arm64ec-preinclude.h"
           ninja -C "$GITHUB_WORKSPACE/build.arm64ec" -j"$(nproc)"
           meson install --no-rebuild -C "$GITHUB_WORKSPACE/build.arm64ec"
 
