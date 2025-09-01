@@ -295,6 +295,20 @@ jobs:
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
 
+            # HUD retag (keep upstream tag name, clean tree)
+            git config user.name  "ci"
+            git config user.email "ci@local"
+            git config --global --add safe.directory "$(pwd)"
+            git add -A
+            git commit -m "local compat patches for ${base}" || true
+            git tag -d "$tag" || true
+            git tag -a "$tag" -m "clean retag for HUD version"
+            git reset --hard HEAD
+            git clean -xdf
+            if [[ -n "$(git status --porcelain)" ]]; then
+              echo "::error::Repo is dirty after retag"; git status; exit 1
+            fi
+
             # Clean previous artifacts
             rm -rf "${GITHUB_WORKSPACE}/build.ec" "${GITHUB_WORKSPACE}/build.w32" \
                    "${PREFIX_X64}" "${PREFIX_X86}" \
