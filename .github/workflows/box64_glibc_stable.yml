@@ -111,7 +111,7 @@ jobs:
         run: |
           sudo apt-get -yq update
           sudo apt-get -yq install --no-install-recommends \
-            git cmake ninja-build build-essential zstd jq
+              git cmake ninja-build build-essential zstd jq patchelf
 
       - name: Checkout upstream Box64 at tag                # Exact source snapshot for reproducibility
         uses: actions/checkout@v4
@@ -145,6 +145,8 @@ jobs:
 
           mkdir -p Box64_WCP artifacts
           install -m 0755 src/build/box64 Box64_WCP/box64
+          
+          patchelf --set-interpreter /data/data/com.winlator/files/imagefs/usr/lib/ld-linux-aarch64.so.1 Box64_WCP/box64
 
           # Build profile.json via jq to ensure valid JSON and safe escaping
           jq -n \
