@@ -86,7 +86,7 @@ jobs:
             # Try exact base first
             for n in 9 8 7 6 5 4 3 2 1; do
               url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${base}-${n}.patch"
-              if curl -fsI "$url" >/devnull 2>&1; then found_rev="$n"; break; fi
+              if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; break; fi
             done
             # Fallback to major.minor if exact not found
             if [ -z "$found_rev" ] && [ "$mm" != "$base" ]; then
