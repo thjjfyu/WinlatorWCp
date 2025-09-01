@@ -90,8 +90,6 @@ jobs:
       # Inputs
       NDK_PKG:   ${{ inputs.ndk_pkg }}
       API_LEVEL: ${{ inputs.api_level }}
-      # Mesa
-      MESA_PATH: ${{ env.MESA_PATH }}
       FREE_SHA:  ${{ needs.guard-freedreno.outputs.free_sha }}
       # Work
       WORKDIR:   ${{ github.workspace }}/turnip_workdir
