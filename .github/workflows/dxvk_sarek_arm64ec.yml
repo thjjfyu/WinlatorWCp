@@ -138,18 +138,18 @@ jobs:
           $tmp = Join-Path $env:RUNNER_TEMP "glsl-min"
           New-Item -ItemType Directory -Force -Path $tmp | Out-Null
       
+          # 컴퓨트 셰이더 최소 구성: 버전 + 워크그룹 크기 + main
           $comp = Join-Path $tmp "min.comp"
           Set-Content -Path $comp -Encoding ascii -Value @(
             '#version 450'
+            'layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;'
             'void main(){}'
           )
-
-          $comp = Join-Path $tmp "min.comp"
-          Set-Content -Path $comp -Encoding ascii -Value $src
-
-          glslangValidator --quiet --target-env vulkan1.1 --vn testvar `
+      
+          # .comp 확장자로도 추론되지만, 명시적으로 -S comp 지정
+          glslangValidator -S comp --target-env vulkan1.1 --vn testvar `
             -o (Join-Path $tmp "min.h") $comp
-
+      
           Get-Item (Join-Path $tmp "min.h") | Format-List -Property Length,FullName
 
       - name: Fetch zstd (Windows x64)
