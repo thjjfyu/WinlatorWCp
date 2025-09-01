@@ -149,12 +149,9 @@ jobs:
 
       - name: Write ARM64EC macro shim (pre-include)
         run: |
-          set -Eeuo pipefail
           cat > "${GITHUB_WORKSPACE}/arm64ec_shim.h" <<'EOF'
           #ifndef ARM64EC_SHIM_ON
           #define ARM64EC_SHIM_ON 1
-      
-          /* 명시적으로 ARM64EC + aarch64로 고정 */
           #ifndef _M_ARM64EC
           #define _M_ARM64EC 1
           #endif
@@ -164,8 +161,7 @@ jobs:
           #ifndef __aarch64__
           #define __aarch64__ 1
           #endif
-      
-          /* x86/x64 관련 매크로 및 ISA 플래그는 전부 차단 */
+          /* x86/x64 & ISA 플래그 무력화 */
           #undef __x86_64__
           #undef __i386__
           #undef _M_X64
@@ -177,7 +173,6 @@ jobs:
           #undef __SSE2__
           #undef __AVX__
           #undef __AVX2__
-      
           /* 인라인 충돌 회피 */
           #ifndef NOWINBASEINTERLOCK
           #define NOWINBASEINTERLOCK 1
@@ -185,8 +180,7 @@ jobs:
           #ifndef __CRT__NO_INLINE
           #define __CRT__NO_INLINE 1
           #endif
-      
-          #endif /* ARM64EC_SHIM_ON */
+          #endif
           EOF
 
       - name: Create Meson cross files (DXVK-style; arm64ec + i686)
