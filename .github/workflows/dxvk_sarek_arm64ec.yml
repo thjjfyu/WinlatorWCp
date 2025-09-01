@@ -185,7 +185,7 @@ jobs:
           git clone --recurse-submodules https://github.com/${SAREK_REPO}.git src
           cd src
           git fetch --tags --force
-          git fetch origin Sarek --force
+          git fetch origin main --force
 
       - name: Resolve Sarek tags (>= v1.10.8, Async 제외) & compute NEW
         env:
@@ -195,7 +195,7 @@ jobs:
           set -Eeuo pipefail
           cd src
           # Only tags merged into Sarek (exclude Async branch)
-          git tag --merged origin/Sarek -l 'v*' \
+          git tag --merged origin/main -l 'v*' \
             | { grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' || true; } \
             | sort -V \
             | awk '
