@@ -20,9 +20,6 @@ jobs:
   guard:
     name: Fast guard (new Sarek tag?)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
     timeout-minutes: 5
     outputs:
       build: ${{ steps.decide.outputs.build }}
@@ -31,15 +28,21 @@ jobs:
       REPO: ${{ github.repository }}
       SAREK_REPO: pythonlover02/DXVK-Sarek
       RELEASE_TAG: DXVK-SAREK-ARM64EC
+    # Guard 잡은 bash 스크립트이므로 이 잡에 한해 shell을 bash로 오버라이드
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Install jq, curl
         run: |
+          set -euo pipefail
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends jq curl
 
       - name: Collect already-published versions (DXVK-SAREK-ARM64EC)
         id: have
         run: |
+          set -euo pipefail
           API="https://api.github.com"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
@@ -59,6 +62,7 @@ jobs:
         env:
           MIN_VER: "1.10.8"
         run: |
+          set -euo pipefail
           API="https://api.github.com"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
@@ -86,11 +90,16 @@ jobs:
             fi
           done < /tmp/candidates.txt
 
-          [ "$(cat /tmp/missing.flag 2>/dev/null || echo no)" = "yes" ] && echo "missing=true"  >> "$GITHUB_OUTPUT" || echo "missing=false" >> "$GITHUB_OUTPUT"
+          if [ "$(cat /tmp/missing.flag 2>/dev/null || echo no)" = "yes" ]; then
+            echo "missing=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Decide build
         id: decide
         run: |
+          set -euo pipefail
           if [ "${{ steps.detect.outputs.missing }}" = "true" ]; then
             echo "build=true"  >> "$GITHUB_OUTPUT"
           else
@@ -114,7 +123,6 @@ jobs:
         run: |
           python -V
           git --version
-          # Meson/Ninja via pip (faster/more current than choco)
           python -m pip install --upgrade pip
           pip install meson ninja
 
@@ -128,10 +136,18 @@ jobs:
         run: |
           $tmp = Join-Path $env:RUNNER_TEMP "glsl-min"
           New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-          @"#version 450
-          void main(){}
-          "@ | Set-Content -Path (Join-Path $tmp "min.comp") -Encoding ascii
-          glslangValidator --quiet --target-env vulkan1.1 --vn testvar -o (Join-Path $tmp "min.h") (Join-Path $tmp "min.comp")
+
+          $src = @'
+#version 450
+void main(){}
+'@
+
+          $comp = Join-Path $tmp "min.comp"
+          Set-Content -Path $comp -Encoding ascii -Value $src
+
+          glslangValidator --quiet --target-env vulkan1.1 --vn testvar `
+            -o (Join-Path $tmp "min.h") $comp
+
           Get-Item (Join-Path $tmp "min.h") | Format-List -Property Length,FullName
 
       - name: Fetch zstd (Windows x64)
@@ -142,7 +158,6 @@ jobs:
           $dst = Join-Path $env:RUNNER_TEMP $zip
           Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
           Expand-Archive -Path $dst -DestinationPath (Join-Path $env:RUNNER_TEMP "zstd") -Force
-          # Add zstd folder (contains zstd.exe) to PATH
           "$env:RUNNER_TEMP\zstd\zstd-v$ver-win64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           zstd.exe -V
 
@@ -159,12 +174,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Set-Location src
-          # Get tags merged to main and >= v1.10.8
           $tags = (git tag --merged origin/main -l 'v*') | Where-Object { $_ -match '^v\d+\.\d+(\.\d+)?$' } | Sort-Object {[version]($_.TrimStart('v'))}
           $min = [version]'1.10.8'
           $cands = $tags | Where-Object { [version]($_.TrimStart('v')) -ge $min }
 
-          # Already uploaded versions
           $exist = @()
           try {
             $rel = gh api repos/$env:REPO/releases/tags/$env:RELEASE_TAG --jq '.assets[].name' 2>$null
@@ -229,12 +242,25 @@ jobs:
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
+          $ErrorActionPreference = 'Stop'
           $out = "$env:GITHUB_WORKSPACE\out"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           Set-Location "$env:GITHUB_WORKSPACE\src"
 
           $listFile = "$env:GITHUB_WORKSPACE\to_build.txt"
           if (-not (Test-Path $listFile) -or -not (Get-Content $listFile | Where-Object { $_.Trim() })) { Write-Host "No new versions to build."; exit 0 }
+
+          function Invoke-VsDev {
+            param([string]$Arch,[string]$HostArch='x64')
+            $bat = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"
+            if (-not (Test-Path $bat)) { throw "VsDevCmd not found at $bat" }
+            & cmd /c "`"$bat`" -arch=$Arch -host_arch=$HostArch >nul && set" |
+              ForEach-Object {
+                if ($_ -match '^(.*?)=(.*)$') {
+                  [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2])
+                }
+              }
+          }
 
           foreach ($line in Get-Content $listFile) {
             if (-not $line.Trim()) { continue }
@@ -247,7 +273,11 @@ jobs:
             git config user.name  "ci"
             git config user.email "ci@local"
             git config --global --add safe.directory (Get-Location).Path
-            git add -A; git commit -m "local compat patches for $base" | Out-Null
+
+            git add -A
+            & git commit -m "local compat patches for $base" 2>$null
+            if ($LASTEXITCODE -ne 0) { Write-Host "No local changes to commit." }
+
             git tag -d $tag 2>$null | Out-Null
             git tag -a $tag -m "clean retag for HUD version"
             git reset --hard HEAD
@@ -257,6 +287,7 @@ jobs:
             Remove-Item -Recurse -Force "$env:GITHUB_WORKSPACE\build.ec","$env:GITHUB_WORKSPACE\build.w32","$env:PREFIX_X64","$env:PREFIX_X86","$env:GITHUB_WORKSPACE\DXVK_WCP" -ErrorAction SilentlyContinue
 
             # ---------- ARM64EC (system32) ----------
+            # (Env is from ilammy/msvc-dev-cmd@v1 with arch: x64)
             meson setup "$env:GITHUB_WORKSPACE\build.ec" `
               --cross-file "$env:GITHUB_WORKSPACE\arm64ec.msvc" `
               --buildtype release `
@@ -266,8 +297,8 @@ jobs:
             meson install --no-rebuild -C "$env:GITHUB_WORKSPACE\build.ec"
 
             # ---------- Win32 (syswow64) ----------
-            echo "Switching MSVC env to x86 for 32-bit build"
-            & "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64 > $null
+            Write-Host "Switching MSVC env to x86 for 32-bit build"
+            Invoke-VsDev -Arch x86 -HostArch x64
             meson setup "$env:GITHUB_WORKSPACE\build.w32" `
               --cross-file "$env:GITHUB_WORKSPACE\i686.msvc" `
               --buildtype release `
@@ -297,7 +328,6 @@ jobs:
             foreach ($n in $x86) { $profile.files += @{ source = "syswow64/$n"; target = "${syswow64}/$n" } }
             ($profile | ConvertTo-Json -Depth 5) | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\DXVK_WCP\profile.json"
 
-            # Create tar (bsdtar) then compress with zstd → .wcp (tar.zst)
             $wcp = "dxvk-sarek-arm64ec-$base.wcp"
             $tar = "$env:GITHUB_WORKSPACE\out\DXVK_WCP.tar"
             & tar -cf $tar -C "$env:GITHUB_WORKSPACE\DXVK_WCP" profile.json system32 syswow64
@@ -312,7 +342,7 @@ jobs:
           "🤖 Automated DXVK-Sarek arm64ec builds (1.10.8+).`n" | Out-File -Encoding utf8 $notes
           $latest = Get-ChildItem "$env:GITHUB_WORKSPACE\out" -Filter 'dxvk-sarek-arm64ec-*.wcp' | Sort-Object Name | Select-Object -Last 1
           if ($latest) {
-            $cur = ($latest.Name -replace '^dxvk-sarek-arm64ec-','') -replace '\\.wcp$',''
+            $cur = ($latest.Name -replace '^dxvk-sarek-arm64ec-','') -replace '\.wcp$',''
             "Current: $cur" | Add-Content -Encoding utf8 $notes
           }
           Get-Content $notes
