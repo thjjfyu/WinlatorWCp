@@ -20,6 +20,9 @@ jobs:
   guard:
     name: Fast guard (new Sarek tag?)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 5
     outputs:
       build: ${{ steps.decide.outputs.build }}
