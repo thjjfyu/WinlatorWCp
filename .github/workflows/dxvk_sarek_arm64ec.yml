@@ -209,15 +209,15 @@ jobs:
           $toBuild | Out-File -Encoding ascii "$env:GITHUB_WORKSPACE\to_build.txt"
           Get-Content "$env:GITHUB_WORKSPACE\to_build.txt"
 
-      # ──────────────────────────────────────────────────────────────────────
-      # ARM64EC 준비: MSVC 환경(ARM64EC) + shim + lib 래퍼 + Meson 크로스파일
-      # ──────────────────────────────────────────────────────────────────────
+      # ──────────────────────────────────────────────────────────
+      # ARM64EC 준비: x64 DevCmd + shim + lib 래퍼 + 크로스파일
+      # ──────────────────────────────────────────────────────────
       - name: Configure MSVC for ARM64EC (x64 host)
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: amd64     # ← x64 호스트로 열기
+          arch: amd64
 
-      - name: Drop-in shim for ARM64EC (SSE/BMI guard + tz/lz count fallback)
+      - name: Drop-in shim for ARM64EC (SSE/BMI guard + tz/lz fallback)
         run: |
           $ErrorActionPreference = 'Stop'
           $h = @"
@@ -254,15 +254,19 @@ jobs:
       - name: Add lib.exe response-file wrapper (avoid long command lines)
         run: |
           $ErrorActionPreference = 'Stop'
-          $p = @"
-          param([Parameter(ValueFromRemainingArguments=\$true)][string[]]\$Args)
-          \$rsp = [System.IO.Path]::GetTempFileName()
-          Set-Content -Path \$rsp -Encoding ascii -Value (\$Args -join [Environment]::NewLine)
-          & lib.exe "@\$rsp"
-          \$code = \$LASTEXITCODE
-          Remove-Item \$rsp -Force -ErrorAction SilentlyContinue
-          exit \$code
-          "@
+          $p = @'
+          param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
+          if ($Args -contains '--version') {
+            & lib.exe /? | Out-Null
+            exit 0
+          }
+          $rsp = [System.IO.Path]::GetTempFileName()
+          Set-Content -Path $rsp -Encoding ascii -Value ($Args -join [Environment]::NewLine)
+          & lib.exe "@$rsp"
+          $code = $LASTEXITCODE
+          Remove-Item $rsp -Force -ErrorAction SilentlyContinue
+          exit $code
+          '@
           Set-Content -Path "$env:GITHUB_WORKSPACE\libwrap.ps1" -Value $p -Encoding ascii
 
       - name: Create Meson cross files (MSVC; ARM64EC + Win32)
@@ -283,13 +287,14 @@ jobs:
           endian = 'little'
           [built-in options]
           cpp_std = 'c++17'
+          # ⚠️ 여기엔 /arm64EC 절대 넣지 않음
           c_args = ['/O2','/DNOMINMAX','/permissive-','/EHsc',
                     '/FI','@SHIM@',
                     '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0','/wd4146']
           cpp_args = ['/O2','/DNOMINMAX','/permissive-','/EHsc',
                       '/FI','@SHIM@',
                       '/D__SSE__=0','/D__SSE2__=0','/D__AVX__=0','/D__AVX2__=0','/wd4146']
-          c_link_args = ['/MACHINE:ARM64EC']
+          c_link_args   = ['/MACHINE:ARM64EC']
           cpp_link_args = ['/MACHINE:ARM64EC']
           "@
           $arm = $arm -replace '@WORK@', $work
@@ -410,7 +415,7 @@ jobs:
             # ARM64EC 전용 플래그 주입
             $env:CL   = "/arm64EC $env:CL"
             $env:LINK = "/MACHINE:ARM64EC $env:LINK"
-            
+
             meson setup "$env:GITHUB_WORKSPACE\build.ec" `
               --cross-file "$env:GITHUB_WORKSPACE\arm64ec.msvc" `
               --buildtype release `
@@ -418,6 +423,13 @@ jobs:
               -Ddefault_library=shared `
               -Dbuild_id=false
             Check-Last "meson setup (ARM64EC)"
+
+            # Meson 로그에 '-arm64EC' 흔적 있으면 바로 실패(옵션 변환 방지 확인)
+            $mlog = Join-Path "$env:GITHUB_WORKSPACE\build.ec" "meson-logs\meson-log.txt"
+            if (Test-Path $mlog) {
+              $txt = Get-Content $mlog -Raw
+              if ($txt -match '(?i)\-arm64EC') { throw "Detected '-arm64EC' in meson-log; remove '/arm64EC' from any cross-file args" }
+            }
 
             ninja -C "$env:GITHUB_WORKSPACE\build.ec" -j 2
             Check-Last "ninja (ARM64EC)"
@@ -430,10 +442,11 @@ jobs:
             Assert-AnyDll "$env:PREFIX_X64\bin" 'machine.*ARM64EC'
 
             # ---------- Win32 (syswow64) ----------
-            # ARM64EC 오염 플래그 제거 후 x86 환경 전환
+            # ARM64EC 플래그 제거 후 x86 전환
             $env:CL = ""
             $env:LINK = ""
             Invoke-VsDev -Arch x86 -HostArch x64
+
             meson setup "$env:GITHUB_WORKSPACE\build.w32" `
               --cross-file "$env:GITHUB_WORKSPACE\i686.msvc" `
               --buildtype release `
