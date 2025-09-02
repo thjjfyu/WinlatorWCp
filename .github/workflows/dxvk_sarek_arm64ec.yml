@@ -62,12 +62,15 @@ jobs:
           tar -xJf /tmp/llvm-mingw.tar.xz -C "$HOME/toolchain" --strip-components=1
           echo "$HOME/toolchain/bin" >> "$GITHUB_PATH"
 
-      - name: Show toolchain info (diagnostics)
+      - name: Show toolchain info + dump macros (baseline)
         run: |
           set -euo pipefail
           which arm64ec-w64-mingw32-g++
           arm64ec-w64-mingw32-g++ --version
-          # Include search paths (useful for header issues)
+          echo '== Predefined macros (baseline) =='
+          arm64ec-w64-mingw32-g++ -dM -E - < /dev/null | \
+            egrep -E '__arm64ec__|_M_ARM64EC|__aarch64__|__x86_64__|_M_X64|_M_AMD64' || true
+          echo '== Include search paths =='
           arm64ec-w64-mingw32-g++ -v -E -x c++ /dev/null || true
 
       - name: Generate Meson cross file for ARM64EC
@@ -91,16 +94,10 @@ jobs:
           endian = 'little'
 
           [built-in options]
-          c_args = ['-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__=0','-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0']
-          cpp_args = ['-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__=0','-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0']
+          c_args  = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__=0','-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0']
+          cpp_args= ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__=0','-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0']
           EOF
           echo "== arm64ec.meson ==" && nl -ba arm64ec.meson
-
-      - name: Preflight macros (diagnostics)
-        run: |
-          set -euo pipefail
-          arm64ec-w64-mingw32-g++ -dM -E - < /dev/null | \
-            egrep -E '__arm64ec__|_M_ARM64EC|__x86_64__|_M_X64|_M_AMD64' || true
 
       # --- SAREK-SPECIFIC PATCH START ---
       # SAREK 전용: ARM64EC에서 x86 인트린식/SSE 경로가 활성화되는 문제를 빌드 직전에 차단
@@ -109,8 +106,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # -------- A) ARM64EC 프롤로그 주입 (문제 파일만) --------
-          ARM64EC_PROLOG='#if defined(__arm64ec__) || defined(_M_ARM64EC)
+          ARM64EC_PROLOG='#if defined(SAREK_ARM64EC) || defined(__arm64ec__) || defined(_M_ARM64EC)
             /* SAREK on ARM64EC: disable x86/SSE/AVX paths */
             #undef __x86_64__
             #undef _M_X64
@@ -138,48 +134,44 @@ jobs:
             fi
           done
 
-          # -------- B) 치환 패치: x86 인트린식 include/아키텍처 가드 --------
-          #   - 범위를 DXVK 소스/헤더로만 한정
-          #   - 외부 서드파티는 제외(특히 include/vulkan, include/spirv)
+          # DXVK 소스/헤더만 대상으로 하고, 서드파티(include/vulkan, include/spirv)는 제외
           find src include -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.c' -o -name '*.cpp' -o -name '*.inl' \) \
             -not -path 'include/vulkan/*' -not -path 'include/spirv/*' > __filelist.txt
 
+          # 1) x86 인트린식 include 가드 치환
           mapfile -t HDR_FILES < <(grep -RIl -E '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' --file=__filelist.txt 2>/dev/null || true)
           for f in "${HDR_FILES[@]}"; do
             echo "Patching includes in: $f"
             sed -i -E \
-              's@(#\s*include\s*<)(x86intrin|x86gprintrin|immintrin|intrin)\.h>@#if !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)\n\1\2.h>\n#endif@g' \
+              's@(#\s*include\s*<)(x86intrin|x86gprintrin|immintrin|intrin)\.h>@#if !defined(SAREK_ARM64EC) \&\& !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)\n\1\2.h>\n#endif@g' \
               "$f"
           done
 
+          # 2) x86 감지 조건 치환
           mapfile -t COND_FILES < <(grep -RIl -E 'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' --file=__filelist.txt 2>/dev/null || true)
           for f in "${COND_FILES[@]}"; do
             echo "Patching arch guards in: $f"
             sed -i -E \
-              's@defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)@defined(\1) \&\& !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)@g' \
+              's@defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)@defined(\1) \&\& !defined(SAREK_ARM64EC) \&\& !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)@g' \
               "$f"
           done
 
-          # -------- C) 검증: 전처리/컴파일러 기반으로 확인 (텍스트 grep 금지) --------
-          # inc_test.cpp는 최소한의 유틸 헤더만 포함
+          # 검증(컴파일러 관점): ARM64EC 조건에서 실제로 x86 인트린식이 포함되는지 확인
           cat > __inc_test.cpp <<'INC'
           #include "src/util/util_bit.h"
           #include "src/util/util_vector.h"
           INC
 
-          # 공통 빌드 플래그를 최대한 반영
           CXX=arm64ec-w64-mingw32-g++
-          CXXFLAGS="-E -x c++ -std=c++17 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude"
+          CXXFLAGS="-E -x c++ -std=c++17 -DSAREK_ARM64EC=1 -D__CRT__NO_INLINE=1 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude"
 
-          # 1) 1차: -H 지원 시 include 트리 검사
           if $CXX $CXXFLAGS -H __inc_test.cpp -o /dev/null 2> __inc_tree.log; then
-            tail -n 120 __inc_tree.log || true
+            echo "== Include tree (tail) ==" && tail -n 120 __inc_tree.log || true
             if egrep -q '/(x86intrin|immintrin|intrin)\.h' __inc_tree.log; then
               echo "::error::Compiler still includes x86 intrinsics headers under ARM64EC"; exit 1
             fi
           else
             echo "note: -H failed or preprocessing failed, trying dependency scan fallback..."
-            # 2) 폴백: 의존성 목록(-MMD -MF)으로 포함 헤더를 확인
             $CXX -MMD -MF __inc_deps.d -MP -MT dummy $CXXFLAGS __inc_test.cpp -o /dev/null 2> __inc_dep_err.log || true
             cat __inc_dep_err.log || true
             if [ -f __inc_deps.d ] && egrep -q '(x86intrin|immintrin|intrin)\.h' __inc_deps.d; then
@@ -187,22 +179,20 @@ jobs:
             fi
           fi
 
-          # 참고 diff
-          git --no-pager diff -- src/ include/ | sed -n '1,200p' || true
+          echo "== Head of src/util/util_bit.h (after patch) =="
+          head -n 40 src/util/util_bit.h || true
       # --- SAREK-SPECIFIC PATCH END ---
 
       - name: Wipe build dir (idempotent & -e safe)
         working-directory: dxvk
         shell: bash
         run: |
-          # '-e' 환경에서도 안전한 if 블록으로 처리
           if [ -d build.w64 ]; then
             rm -rf build.w64
             echo "Removed build.w64"
           else
             echo "No build.w64 (ok)"
           fi
-      
           if [ -d install ]; then
             rm -rf install
             echo "Removed install"
@@ -221,8 +211,17 @@ jobs:
         run: |
           set -euo pipefail
           meson setup build.w64 . --cross-file arm64ec.meson --buildtype release --prefix "$PWD/install"
-          # Optional: inspect options
           meson configure build.w64
+          echo '== Meson build options (excerpt) =='
+          meson introspect build.w64 --buildoptions | head -n 120 || true
+
+      - name: Macro snapshot after configure (with injected defines)
+        working-directory: dxvk
+        run: |
+          set -euo pipefail
+          echo '== Predefined macros (+ our -D) =='
+          arm64ec-w64-mingw32-g++ -dM -E -DSAREK_ARM64EC=1 -D__CRT__NO_INLINE=1 - < /dev/null | \
+            egrep -E 'SAREK_ARM64EC|__CRT__NO_INLINE|__arm64ec__|_M_ARM64EC|__aarch64__|__x86_64__|_M_X64|_M_AMD64' || true
 
       - name: Build
         working-directory: dxvk
@@ -255,4 +254,7 @@ jobs:
             dxvk/build.w64/meson-info/**
             dxvk/meson-logs/**
             dxvk/arm64ec.meson
+            dxvk/__inc_tree.log
+            dxvk/__inc_dep_err.log
+            dxvk/__inc_deps.d
           if-no-files-found: warn
