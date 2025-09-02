@@ -95,7 +95,7 @@ jobs:
         working-directory: src
         run: |
           set -Eeuo pipefail
-
+          
           # 1) pre-include: x86 매크로 제거 + ARM/EC 매크로 고정
           cat > arm64ec-preinclude.h <<'H'
           #ifndef ARM64EC_PREINCLUDE_GUARD
@@ -120,23 +120,26 @@ jobs:
           #ifndef __CHPE__     #define __CHPE__ 1     #endif
           #endif
           H
-
+          
           # 2) util_bit.h: bitScanForward/Reverse를 ARM/EC 땐 builtins로
           python3 - <<'PY'
-          import re,os
+          import re, os
           p='src/util/util_bit.h'
           if os.path.exists(p):
-            t=open(p,'r',encoding='utf-8',errors='ignore').read()
-            def wrap(fn,body):
-              pat=r'(inline\s+[^;{]*\b%s\s*\([^)]*\)\s*\{)(.*?)(\n\})' % re.escape(fn)
-              if re.search(pat,t,flags=re.S):
-                return re.sub(pat, r'\1\n#if defined(__aarch64__) || defined(__ARM64EC__) || defined(_M_ARM64) || defined(_M_ARM64EC)\n%s\n#else\n\\2\n#endif\3' % body, t, flags=re.S)
-              return t
-            t=wrap('bitScanForward','  return n ? __builtin_ctz(n) : 32u;')
-            t=wrap('bitScanReverse','  return n ? (31u - __builtin_clz(n)) : 32u;')
-            open(p,'w',encoding='utf-8').write(t)
+              t=open(p,'r',encoding='utf-8',errors='ignore').read()
+              def wrap(fn, body):
+                  pat = r'(inline\s+[^;{]*\b%s\s*\([^)]*\)\s*\{)(.*?)(\n\})' % re.escape(fn)
+                  if re.search(pat, t, flags=re.S):
+                      return re.sub(
+                          pat,
+                          r'\1\n#if defined(__aarch64__) || defined(__ARM64EC__) || defined(_M_ARM64) || defined(_M_ARM64EC)\n%s\n#else\n\2\n#endif\3' % body,
+                          t, flags=re.S)
+                  return t
+              t = wrap('bitScanForward', '  return n ? __builtin_ctz(n) : 32u;')
+              t = wrap('bitScanReverse', '  return n ? (31u - __builtin_clz(n)) : 32u;')
+              open(p,'w',encoding='utf-8').write(t)
           PY
-
+          
           # 3) util_vector.h: 필요한 최소 SSE 연산만 에뮬
           V=src/util/util_vector.h
           if [ -f "$V" ] && ! grep -q 'DXVK_NO_X86_INTRIN' "$V"; then
@@ -155,30 +158,30 @@ jobs:
             } > "$tmp"
             mv "$tmp" "$V"
           fi
-
+          
           # 4) 모든 헤더/소스에서 x86 인트린식 include를 ARM/EC에선 막기
           python3 - <<'PY'
-          import os,re,glob
-          guards='(defined(__aarch64__)||defined(__ARM64EC__)||defined(_M_ARM64)||defined(_M_ARM64EC))'
-          incs=['x86intrin.h','immintrin.h','emmintrin.h','xmmintrin.h','tmmintrin.h','smmintrin.h']
-          paths = []
-          for root,_,files in os.walk('src'):
-            for f in files:
-              if f.endswith(('.h','.hpp','.hh','.hxx','.c','.cc','.cpp','.cxx')):
-                paths.append(os.path.join(root,f))
-          for p in paths:
-            t=open(p,'r',encoding='utf-8',errors='ignore').read()
-            changed=False
-            def sub_inc(m):
-              nonlocal changed
-              h=m.group(1)
-              changed=True
-              return f'#if !({guards})\n#include <{h}>\n#endif'
-            for h in incs:
-              t2=re.sub(r'^[ \t]*#\s*include\s*<'+re.escape(h)+r'>[ \t]*$', lambda m: sub_inc(m), t, flags=re.M)
-              t=t2
-            if changed:
-              open(p,'w',encoding='utf-8').write(t)
+          import os, re
+          guards = 'defined(__aarch64__) || defined(__ARM64EC__) || defined(_M_ARM64) || defined(_M_ARM64EC)'
+          # <...> 또는 "..." 형태 모두 매치, 라인 끝 주석 허용
+          inc_re = re.compile(
+              r'^[ \t]*#\s*include\s*([<"])\s*'
+              r'(x86intrin\.h|immintrin\.h|emmintrin\.h|xmmintrin\.h|tmmintrin\.h|smmintrin\.h)'
+              r'\s*([>"])\s*(?:\/\/.*)?$',
+              re.M
+          )
+          
+          for root, _, files in os.walk('src'):
+              for f in files:
+                  if not f.endswith(('.h','.hpp','.hh','.hxx','.c','.cc','.cpp','.cxx')):
+                      continue
+                  p = os.path.join(root, f)
+                  with open(p,'r',encoding='utf-8',errors='ignore') as fh:
+                      t = fh.read()
+                  new, n = inc_re.subn(r'#if !(' + guards + r')\n#include <\2>\n#endif', t)
+                  if n > 0 and new != t:
+                      with open(p,'w',encoding='utf-8') as fh:
+                          fh.write(new)
           PY
 
       - name: Write Meson cross file (ARM64EC)
