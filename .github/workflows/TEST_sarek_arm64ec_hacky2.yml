@@ -1,4 +1,4 @@
-name: _sarek hacky arm64ec 2
+name: TEST build-dxvk-sarek-arm64ec
 
 on:
   workflow_dispatch:
@@ -60,6 +60,8 @@ jobs:
           mkdir -p "$HOME/toolchain"
           curl -L "${{ env.TOOLCHAIN_URL }}" -o /tmp/llvm-mingw.tar.xz
           tar -xJf /tmp/llvm-mingw.tar.xz -C "$HOME/toolchain" --strip-components=1
+          # Prepend toolchain to PATH for precedence
+          echo "PATH=$HOME/toolchain/bin:$PATH" >> "$GITHUB_ENV"
           echo "$HOME/toolchain/bin" >> "$GITHUB_PATH"
 
       - name: Show toolchain info + dump macros (baseline)
@@ -94,61 +96,86 @@ jobs:
           endian = 'little'
       
           [built-in options]
-          # SSE/AVX 매크로는 정의하지 않는다!!
-          c_args  = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1']
-          cpp_args= ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1']
+          # SSE/AVX 매크로는 정의하지 않는다!! + 의미 보존 플래그
+          c_args  = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
+          cpp_args= ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
           EOF
           echo "== arm64ec.meson ==" && nl -ba arm64ec.meson
 
-      # --- SAREK-SPECIFIC PATCH (ARM64EC SSE shim) ---
-      - name: Patch SAREK headers to avoid x86 intrinsics on ARM64EC (shim)
+      # --- SAREK-SPECIFIC PATCH (ARM64EC SSE shim v2 + strict gates) ---
+      - name: Patch SAREK headers to avoid x86 intrinsics on ARM64EC (shim v2 + strict)
         working-directory: dxvk
         shell: bash
         run: |
           set -euo pipefail
       
-          # 0) ARM64EC 전용 SSE 폴리필 헤더 생성 (최소 필요 집합)
+          # 0) ARM64EC 전용 SSE 폴리필 헤더 생성 (NEON 우선)
           mkdir -p include
           cat > include/sarek_arm64ec_sse_shim.h <<'SHIM'
           #pragma once
-          #if (defined(SAREK_ARM64EC) || defined(__arm64ec__) || defined(_M_ARM64EC))
+          #if defined(SAREK_ARM64EC) || defined(__arm64ec__) || defined(_M_ARM64EC)
+
           #include <cstdint>
           #include <cstring>
-          struct alignas(16) __m128  { float   v[4];  };
-          struct alignas(16) __m128i { uint8_t v[16]; };
-          static inline void _mm_pause(void) {
-            #if defined(__aarch64__) || defined(__arm64ec__) || defined(_M_ARM64EC)
-              #if defined(__has_builtin)
-                #if __has_builtin(__builtin_arm_yield)
-                  __builtin_arm_yield(); return;
-                #elif __has_builtin(__builtin_aarch64_yield)
-                  __builtin_aarch64_yield(); return;
-                #endif
-              #endif
-              __asm__ __volatile__("yield" ::: "memory");
-            #else
-              __asm__ __volatile__("" ::: "memory");
-            #endif
-          }
-          static inline __m128 _mm_loadu_ps(const float* p){ __m128 r; std::memcpy(r.v,p,16); return r; }
-          static inline void   _mm_storeu_ps(float* p,const __m128& a){ std::memcpy(p,a.v,16); }
-          static inline __m128 _mm_cmpeq_ps(const __m128& a,const __m128& b){
-            __m128 r; for(int i=0;i<4;i++){ uint32_t m=(a.v[i]==b.v[i])?0xFFFFFFFFu:0u; std::memcpy(&r.v[i],&m,4);} return r;
-          }
-          static inline __m128 _mm_and_ps(const __m128& a,const __m128& b){
-            __m128 r; for(int i=0;i<4;i++){ uint32_t ai,bi,ci; std::memcpy(&ai,&a.v[i],4); std::memcpy(&bi,&b.v[i],4); ci=ai&bi; std::memcpy(&r.v[i],&ci,4);} return r;
-          }
-          static inline __m128i _mm_setzero_si128(){ __m128i r; std::memset(r.v,0,16); return r; }
-          static inline __m128i _mm_set1_epi8(int x){ __m128i r; uint8_t v=(uint8_t)x; for(int i=0;i<16;i++) r.v[i]=v; return r; }
-          static inline __m128i _mm_load_si128(const __m128i* p){ __m128i r; std::memcpy(&r,p,16); return r; }
-          static inline __m128i _mm_loadu_si128(const __m128i* p){ return _mm_load_si128(p); }
-          static inline void     _mm_store_si128(__m128i* p, const __m128i& a){ std::memcpy(p,&a,16); }
-          static inline void     _mm_storeu_si128(__m128i* p, const __m128i& a){ _mm_store_si128(p,a); }
-          static inline __m128i _mm_cmpeq_epi8(const __m128i& a,const __m128i& b){ __m128i r; for(int i=0;i<16;i++) r.v[i]=(a.v[i]==b.v[i])?0xFF:0x00; return r; }
-          static inline __m128i _mm_and_si128(const __m128i& a,const __m128i& b){ __m128i r; for(int i=0;i<16;i++) r.v[i]=a.v[i]&b.v[i]; return r; }
-          static inline __m128i _mm_or_si128 (const __m128i& a,const __m128i& b){ __m128i r; for(int i=0;i<16;i++) r.v[i]=a.v[i]|b.v[i]; return r; }
-          static inline __m128i _mm_xor_si128(const __m128i& a,const __m128i& b){ __m128i r; for(int i=0;i<16;i++) r.v[i]=a.v[i]^b.v[i]; return r; }
-          static inline int _mm_movemask_epi8(const __m128i& a){ int m=0; for(int i=0;i<16;i++) m|=((a.v[i]&0x80)?1:0)<<i; return m; }
+
+          #if defined(__aarch64__) || defined(__arm64ec__) || defined(_M_ARM64EC)
+            #include <arm_neon.h>
+            typedef float32x4_t __m128;
+            typedef uint8x16_t  __m128i;
+
+            static inline void _mm_pause(void) { __asm__ __volatile__("yield" ::: "memory"); }
+            static inline __m128 _mm_loadu_ps(const float* p){ return vld1q_f32(p); }
+            static inline void   _mm_storeu_ps(float* p, __m128 a){ vst1q_f32(p, a); }
+            static inline __m128 _mm_cmpeq_ps(__m128 a, __m128 b){
+              return vreinterpretq_f32_u32(vceqq_f32(a, b));
+            }
+            static inline __m128 _mm_and_ps(__m128 a, __m128 b){
+              return vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(a), vreinterpretq_u32_f32(b)));
+            }
+            static inline __m128i _mm_setzero_si128(){ return vdupq_n_u8(0); }
+            static inline __m128i _mm_set1_epi8(int x){ return vdupq_n_u8((uint8_t)x); }
+            static inline __m128i _mm_load_si128 (const __m128i* p){ return vld1q_u8((const uint8_t*)p); }
+            static inline __m128i _mm_loadu_si128(const __m128i* p){ return vld1q_u8((const uint8_t*)p); }
+            static inline void     _mm_store_si128 (__m128i* p, __m128i a){ vst1q_u8((uint8_t*)p, a); }
+            static inline void     _mm_storeu_si128(__m128i* p, __m128i a){ vst1q_u8((uint8_t*)p, a); }
+            static inline __m128i _mm_cmpeq_epi8(__m128i a, __m128i b){ return vceqq_u8(a, b); }
+            static inline __m128i _mm_and_si128 (__m128i a, __m128i b){ return vandq_u8(a, b); }
+            static inline __m128i _mm_or_si128  (__m128i a, __m128i b){ return vorrq_u8(a, b); }
+            static inline __m128i _mm_xor_si128 (__m128i a, __m128i b){ return veorq_u8(a, b); }
+            static inline int _mm_movemask_epi8(__m128i a){
+              alignas(16) uint8_t tmp[16]; vst1q_u8(tmp, a);
+              int m = 0; for(int i=0;i<16;i++) m |= ((tmp[i] & 0x80)?1:0) << i; return m;
+            }
+          #else
+            struct alignas(16) __m128  { float   v[4];  };
+            struct alignas(16) __m128i { uint8_t v[16]; };
+            static inline void _mm_pause(void){ __asm__ __volatile__("" ::: "memory"); }
+            static inline __m128 _mm_loadu_ps(const float* p){ __m128 r; std::memcpy(r.v,p,16); return r; }
+            static inline void   _mm_storeu_ps(float* p, __m128 a){ std::memcpy(p,a.v,16); }
+            static inline __m128 _mm_cmpeq_ps(__m128 a,__m128 b){
+              __m128 r; for(int i=0;i<4;i++){ uint32_t m=(a.v[i]==b.v[i])?0xFFFFFFFFu:0u; std::memcpy(&r.v[i],&m,4);} return r;
+            }
+            static inline __m128 _mm_and_ps(__m128 a,__m128 b){
+              __m128 r; for(int i=0;i<4;i++){ uint32_t ai,bi,ci; std::memcpy(&ai,&a.v[i],4); std::memcpy(&bi,&b.v[i],4); ci=ai&bi; std::memcpy(&r.v[i],&ci,4);} return r;
+            }
+            static inline __m128i _mm_setzero_si128(){ __m128i r; std::memset(r.v,0,16); return r; }
+            static inline __m128i _mm_set1_epi8(int x){ __m128i r; uint8_t v=(uint8_t)x; for(int i=0;i<16;i++) r.v[i]=v; return r; }
+            static inline __m128i _mm_load_si128(const __m128i* p){ __m128i r; std::memcpy(&r,p,16); return r; }
+            static inline __m128i _mm_loadu_si128(const __m128i* p){ return _mm_load_si128(p); }
+            static inline void     _mm_store_si128(__m128i* p, __m128i a){ std::memcpy(p,&a,16); }
+            static inline void     _mm_storeu_si128(__m128i* p, __m128i a){ _mm_store_si128(p,a); }
+            static inline __m128i _mm_cmpeq_epi8(__m128i a,__m128i b){ __m128i r; for(int i=0;i<16;i++) r.v[i]=(a.v[i]==b.v[i])?0xFF:0x00; return r; }
+            static inline __m128i _mm_and_si128(__m128i a,__m128i b){ __m128i r; for(int i=0;i<16;i++) r.v[i]=a.v[i]&b.v[i]; return r; }
+            static inline __m128i _mm_or_si128 (__m128i a,__m128i b){ __m128i r; for(int i=0;i<16;i++) r.v[i]|=b.v[i]; return r; }
+            static inline __m128i _mm_xor_si128(__m128i a,__m128i b){ __m128i r; for(int i=0;i<16;i++) r.v[i]^=b.v[i]; return r; }
+            static inline int _mm_movemask_epi8(__m128i a){ int m=0; for(int i=0;i<16;i++) m|=((a.v[i]&0x80)?1:0)<<i; return m; }
+          #endif
+
+          #if defined(__SSE__) || defined(__SSE2__) || defined(__SSE3__) || defined(__SSSE3__) || \
+              defined(__SSE4_1__) || defined(__SSE4_2__) || defined(__AVX__) || defined(__AVX2__)
+          #error "x86 SIMD macros must not be defined on ARM64EC build"
+          #endif
+
           #endif
           SHIM
       
@@ -181,7 +208,7 @@ jobs:
             fi
           done
 
-          # 2-bis) sync_spinlock.h도 shim을 직접 include (idempotent)
+          # 2) sync_spinlock.h도 shim을 직접 include (idempotent)
           if [ -f src/util/sync/sync_spinlock.h ]; then
             if ! grep -q 'sarek_arm64ec_sse_shim.h' src/util/sync/sync_spinlock.h; then
               echo "Prepending shim include to src/util/sync/sync_spinlock.h"
@@ -200,63 +227,50 @@ jobs:
             echo "warn: src/util/sync/sync_spinlock.h not found (skipped)"
           fi
 
-          # 2-ter) util_bit.h의 x86 asm(bsf/cmovz) 블록을 ARM64EC 전용 빌트인으로 포괄 치환
+          # 3) util_bit.h의 x86 asm(bsf/cmovz) 블록을 ARM64EC 전용 빌트인으로 포괄 치환
           python3 - <<'PY'
           import re, pathlib, sys
           p = pathlib.Path("src/util/util_bit.h")
           s = p.read_text(encoding="utf-8", errors="ignore")
-
-          # asm(...) 전체 블록을 잡되, 내용에 bsf/cmovz가 들어간 것만 치환
           pat = re.compile(r'(?P<asm>(?:__asm__|asm)\s*(?:volatile\s*)?\(.*?\)\s*;)', re.IGNORECASE | re.DOTALL)
-          replaced = 0
-
           def wrap(m):
-              global replaced  # <-- nonlocal 대신 global
               block = m.group('asm')
               low = block.lower()
               if 'bsf' in low or 'cmovz' in low:
-                  replaced += 1
                   return (
                       "#if defined(SAREK_ARM64EC) || defined(__arm64ec__) || defined(_M_ARM64EC)\n"
                       "      /* SAREK ARM64EC: replace x86 asm (bsf/cmovz) with builtin */\n"
-                      "      /* Assumes local vars: res,tmp,n (matches original block) */\n"
                       "      res = (n ? __builtin_ctz((unsigned)n) : 32);\n"
                       "      tmp = 0;\n"
                       "#else\n" + block + "\n#endif\n"
                   )
               return block
-
-          ns = pat.sub(wrap, s)
-          if replaced == 0:
+          ns, n = pat.subn(wrap, s)
+          if n == 0:
               print('error: could not find x86 asm block with bsf/cmovz to replace in util_bit.h', file=sys.stderr)
-              print('\n'.join(s.splitlines()[:160]))
               sys.exit(1)
           p.write_text(ns, encoding="utf-8")
-          print(f'patched util_bit.h: replaced {replaced} asm block(s)')
+          print(f'patched util_bit.h: replaced {n} asm block(s)')
           PY
 
-          # 변경 확인(문맥 출력)
-          nl -ba src/util/util_bit.h | sed -n '60,160p' || true
-
-          # --- ARM64EC 정의를 넣고 전처리 결과에서만 x86 asm(bsf) 존재 여부를 검사 ---
+          # --- ARM64EC 정의를 넣고 전처리 결과에서 x86 asm(bsf) 존재 여부를 검사 (남아있으면 실패) ---
           CXX=arm64ec-w64-mingw32-g++
-          BASE="-std=c++17 -DSAREK_ARM64EC=1 -D__CRT__NO_INLINE=1 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude"
+          BASE="-std=c++17 -DSAREK_ARM64EC=1 -D__CRT__NO_INLINE=1 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude -fno-fast-math -ffp-contract=off"
 
           echo '#include "src/util/util_bit.h"' > __pp_probe.cpp
-          $CXX -E -x c++ -P $BASE __pp_probe.cpp > __pp_probe.i || true
+          $CXX -E -x c++ -P $BASE __pp_probe.cpp > __pp_probe.i
 
-          # 전처리 결과에 여전히 asm(...bsf...)가 남아있다면 실패
           if grep -qE '(^|[^A-Za-z_])(asm|__asm__)\s*\([^;]*bsf' __pp_probe.i; then
             echo "::error:: Preprocessed output still contains x86 asm bsf under SAREK_ARM64EC"
             tail -n 200 __pp_probe.i || true
             exit 1
           fi
       
-          # 2) DXVK 자체 소스 목록(서드파티 제외)
+          # 4) DXVK 자체 소스 목록(서드파티 제외)
           find src include -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.c' -o -name '*.cpp' -o -name '*.inl' \) \
             -not -path 'include/vulkan/*' -not -path 'include/spirv/*' > __filelist.txt
       
-          # 3) x86 전용 인트린식 include 라인 주석화 (intrin.h 는 유지)
+          # 5) x86 전용 인트린식 include 라인 주석화 (intrin.h 는 유지)
           mapfile -t KILL_HDRS < <(
             xargs -a __filelist.txt grep -RInE \
               '#\s*include\s*[<"]\s*(x86intrin|x86gprintrin|immintrin)\.h\s*[>"]' 2>/dev/null \
@@ -267,7 +281,7 @@ jobs:
             sed -i -E '/SAREK_ARM64EC neutralized/! s@(^\s*#\s*include\s*[<"](x86intrin|x86gprintrin|immintrin)\.h[>"])@/* SAREK_ARM64EC neutralized */ // \1@' "$f"
           done
       
-          # 4) x86 감지 조건에 ARM64EC 제외
+          # 6) x86 감지 조건에 ARM64EC 제외
           mapfile -t COND_FILES < <(
             xargs -a __filelist.txt grep -RIl -E \
               'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' 2>/dev/null
@@ -279,9 +293,9 @@ jobs:
             }' "$f"
           done
       
-          # 5) 컴파일러 기반 검증: 대표 TU 전처리 스캔 (-H 또는 deps)
+          # 7) 대표 TU 전처리 스캔하여 x86-only 헤더 유입 검사 (남아있으면 실패)
           CXX=arm64ec-w64-mingw32-g++
-          BASE="-std=c++17 -DSAREK_ARM64EC=1 -D__CRT__NO_INLINE=1 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude"
+          BASE="-std=c++17 -DSAREK_ARM64EC=1 -D__CRT__NO_INLINE=1 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude -fno-fast-math -ffp-contract=off"
       
           cat > __inc_test.cpp <<'INC'
           #include "src/util/util_bit.h"
@@ -289,20 +303,16 @@ jobs:
           INC
       
           : > __inc_tree_all.log
+          if $CXX -E -x c++ -H $BASE __inc_test.cpp -o /dev/null &>> __inc_tree_all.log; then
+            true
+          fi
           find src -type f -name '*.cpp' | sort | head -n 20 > __probe_files.txt || true
-          PROBES=(__inc_test.cpp)
           if [ -s __probe_files.txt ]; then
             mapfile -t more < __probe_files.txt
-            PROBES+=("${more[@]}")
+            for tu in "${more[@]}"; do
+              $CXX -E -x c++ -H $BASE "$tu" -o /dev/null &>> __inc_tree_all.log || true
+            done
           fi
-      
-          HAD_H=false
-          if $CXX -E -x c++ -H $BASE __inc_test.cpp -o /dev/null &>> __inc_tree_all.log; then
-            HAD_H=true
-          fi
-          for tu in "${PROBES[@]}"; do
-            $CXX -E -x c++ -H $BASE "$tu" -o /dev/null &>> __inc_tree_all.log || true
-          done
       
           if grep -qE '/(x86intrin|immintrin)\.h' __inc_tree_all.log; then
             echo "== Include tree tail ==" && tail -n 200 __inc_tree_all.log || true
@@ -310,25 +320,10 @@ jobs:
             exit 1
           fi
       
-          if [ "$HAD_H" = false ]; then
-            echo "note: -H unsupported or failed, using dependency scan fallback..."
-            : > __inc_deps_all.txt
-            for tu in "${PROBES[@]}"; do
-              $CXX -fsyntax-only -MMD -MF __tmp.d -MP -MT dummy $BASE "$tu" 2>> __inc_dep_err.log || true
-              [ -f __tmp.d ] && cat __tmp.d >> __inc_deps_all.txt || true
-              rm -f __tmp.d || true
-            done
-            if grep -qE '(x86intrin|immintrin)\.h' __inc_deps_all.txt; then
-              echo "::error:: Deps show x86-only intrinsics headers getting pulled"
-              exit 1
-            fi
-          fi
-      
           echo "== Head of src/util/util_bit.h (after patch) =="
           head -n 60 src/util/util_bit.h || true
 
-          # 2-quater) D3D9 devinfo 타입명 호환 레이어 (llvm-mingw 헤더와 이름차 보정)
-          # 타입은 매크로가 아니라서 #ifdef로 존재 여부 확인 불가 → 그냥 옛 이름을 새 이름으로 매핑
+          # 8) D3D9 타입 호환 레이어 삽입(중복 방지)
           cat > include/sarek_d3d9_compat.h <<'HDR'
           #pragma once
           #if defined(__has_include)
@@ -336,18 +331,14 @@ jobs:
           #  include <d3d9.h>
           # endif
           #endif
-          
-          /* Old SDK → mingw-w64 이름 매핑 (무조건 매핑, 이미 정의돼 있으면 매크로가 덮어씌워짐) */
           #ifndef D3DDEVINFO_RESOURCEMANAGER
           #define D3DDEVINFO_RESOURCEMANAGER D3DDEVINFO_D3DRESOURCEMANAGER
           #endif
-          
           #ifndef D3DDEVINFO_VERTEXSTATS
           #define D3DDEVINFO_VERTEXSTATS D3DDEVINFO_D3DVERTEXSTATS
           #endif
           HDR
           
-          # d3d9 공용 인클루드에 호환 헤더를 한 줄 삽입(중복 방지). 로컬 헤더 탐색을 확실히 하려고 따옴표 사용.
           if [ -f src/d3d9/d3d9_include.h ]; then
             if ! grep -q 'sarek_d3d9_compat.h' src/d3d9/d3d9_include.h; then
               echo "Prepending D3D9 compat include to src/d3d9/d3d9_include.h"
@@ -355,7 +346,6 @@ jobs:
               { echo '#include "sarek_d3d9_compat.h"'; cat src/d3d9/d3d9_include.h; } > "$tmp"
               mv "$tmp" src/d3d9/d3d9_include.h
             else
-              # 예전에 <...>로 들어갔을 수도 있으니 첫 부분만 "..."로 교체
               sed -i '1,16{s|#include <sarek_d3d9_compat.h>|#include "sarek_d3d9_compat.h"|}' src/d3d9/d3d9_include.h || true
             fi
           fi
@@ -412,6 +402,44 @@ jobs:
           set -euo pipefail
           meson install -C build.w64
 
+      # === Trust gates (block artifacts if not meeting criteria) ===
+      - name: Verify ARM64EC machine type
+        working-directory: dxvk
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in install/bin/*.dll; do
+            echo "== $f =="
+            llvm-readobj -coff-headers "$f" | tee /dev/stderr | grep -E 'Machine:.*ARM64EC|0xA641'
+          done
+
+      - name: Enforce no x86 SIMD or x86 asm artifacts
+        working-directory: dxvk
+        run: |
+          set -euo pipefail
+          echo '#include "src/util/util_bit.h"' > __probe.cpp
+          arm64ec-w64-mingw32-g++ -E -x c++ -P -DSAREK_ARM64EC=1 -I. -Isrc -Iinclude __probe.cpp > __probe.i
+          if egrep -q '(immintrin|x86intrin)\.h' __probe.i; then
+            echo "::error:: x86-only intrinsics headers detected in preprocessed output"
+            exit 1
+          fi
+          if egrep -qi '(^|[^A-Za-z_])(asm|__asm__)\s*\([^;]*bsf' __probe.i; then
+            echo "::error:: x86 asm(bsf) artifacts remain in preprocessed output"
+            exit 1
+          fi
+
+      - name: Ensure only supported intrinsics are referenced
+        working-directory: dxvk
+        run: |
+          set -euo pipefail
+          UNSUP=$(grep -RInE '_mm_[A-Za-z0-9_]+' src include | \
+            grep -Ev '_mm_(pause|loadu_ps|storeu_ps|cmpeq_ps|and_ps|setzero_si128|set1_epi8|loadu?_si128|storeu?_si128|cmpeq_epi8|and_si128|or_si128|xor_si128|movemask_epi8)\b' || true)
+          if [ -n "$UNSUP" ]; then
+            echo "$UNSUP"
+            echo "::error:: unsupported _mm_* intrinsic found (extend shim or avoid)"
+            exit 1
+          fi
+
       - name: Upload DLL artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -434,4 +462,6 @@ jobs:
             dxvk/__inc_tree_all.log
             dxvk/__inc_dep_err.log
             dxvk/__inc_deps_all.txt
+            dxvk/__pp_probe.i
+            dxvk/__probe.i
           if-no-files-found: warn
