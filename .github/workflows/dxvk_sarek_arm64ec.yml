@@ -83,15 +83,15 @@ jobs:
           windres = 'arm64ec-w64-mingw32-windres'
           widl = 'arm64ec-w64-mingw32-widl'
           strip = 'llvm-strip'
-          
+
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
-          
+
           [built-in options]
-          c_args  = ['-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__bib','-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0']
+          c_args = ['-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__=0','-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0']
           cpp_args = ['-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__=0','-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0']
           EOF
           echo "== arm64ec.meson ==" && nl -ba arm64ec.meson
@@ -103,14 +103,13 @@ jobs:
             egrep -E '__arm64ec__|_M_ARM64EC|__x86_64__|_M_X64|_M_AMD64' || true
 
       # --- SAREK-SPECIFIC PATCH START ---
-      # SAREK 전용: ARM64EC에서 x86 인트린식 헤더(<x86intrin.h> 등)가 포함되는 현상 차단
-      # (ARM64EC는 호환성 때문에 x64 매크로를 정의하므로, 아키텍처 분기가 x86 경로로 잘못 들어감)
+      # SAREK 전용: ARM64EC에서 x86 인트린식/SSE 경로가 활성화되는 문제를 빌드 직전에 차단
       - name: Patch SAREK headers to avoid x86 intrinsics on ARM64EC
         working-directory: dxvk
         run: |
           set -euo pipefail
-          
-          # 0) ARM64EC 프롤로그(매크로 언디파인) 주입 대상
+
+          # 0) ARM64EC 프롤로그(매크로 언디파인) 주입: 문제 파일 상단에서 x86/SSE/AVX 분기를 강제 비활성화
           ARM64EC_PROLOG='#if defined(__arm64ec__) || defined(_M_ARM64EC)
             /* SAREK on ARM64EC: disable x86/SSE/AVX paths */
             #undef __x86_64__
@@ -128,46 +127,54 @@ jobs:
             #undef __AVX2__
           #endif
           '
-          
-          # A-1) util_vector.h / util_bit.h 상단에 프롤로그 삽입(이미 주입되었으면 건너뜀)
-          for f in dxvk/src/util/util_vector.h dxvk/src/util/util_bit.h; do
+
+          for f in src/util/util_vector.h src/util/util_bit.h; do
             if [ -f "$f" ] && ! grep -q 'SAREK on ARM64EC: disable x86/SSE/AVX' "$f"; then
-              printf 'Injecting ARM64EC prolog into: %s\n' "$f"
+              echo "Injecting ARM64EC prolog into: $f"
               tmp=$(mktemp)
               printf "%s\n" "$ARM64EC_PROLOG" > "$tmp"
               cat "$f" >> "$tmp"
               mv "$tmp" "$f"
             fi
           done
-          
-          # A-2) (이전대로 유지) x86 인트린식 헤더 포함 차단
-          mapfile -t HDR_FILES < <(grep -RIl -E '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' dxvk/src dxvk/include 2>/dev/null || true)
+
+          # 1) x86 인트린식 헤더 포함부를 ARM64EC에서 비활성화
+          mapfile -t HDR_FILES < <(grep -RIl -E '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' src include 2>/dev/null || true)
           for f in "${HDR_FILES[@]}"; do
             echo "Patching includes in: $f"
             sed -i -E \
               's@(#\s*include\s*<)(x86intrin|x86gprintrin|immintrin|intrin)\.h>@#if !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)\n\1\2.h>\n#endif@g' \
               "$f"
           done
-          
-          # A-3) (이전대로 유지) x86 감지 조건에서 ARM64EC 제외
-          mapfile -t COND_FILES < <(grep -RIl -E 'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' dxvk/src dxvk/include 2>/dev/null || true)
+
+          # 2) x86 감지 조건에서 ARM64EC 제외
+          mapfile -t COND_FILES < <(grep -RIl -E 'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' src include 2>/dev/null || true)
           for f in "${COND_FILES[@]}"; do
             echo "Patching arch guards in: $f"
             sed -i -E \
               's@defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)@defined(\1) \&\& !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)@g' \
               "$f"
           done
-          
-          echo "== Post-patch scan =="
-          grep -RInE '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' dxvk/src dxvk/include || true
+
+          echo "== Head of src/util/util_bit.h (after patch) =="
+          head -n 30 src/util/util_bit.h || true
+
+          echo "== Post-patch include scan =="
+          if grep -RInE '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' src include; then
+            echo "::error::x86 intrinsics headers still referenced after patch"; exit 1
+          fi
+
+          # 참고 diff (있으면만 출력)
+          git --no-pager diff -- src/ include/ || true
       # --- SAREK-SPECIFIC PATCH END ---
 
       - name: Wipe build dir
         working-directory: dxvk
         run: |
-          rm -rf build.w64 install
+          [ -d build.w64 ] && rm -rf build.w64
+          [ -d install   ] && rm -rf install
 
-      - name: "Preflight: meson.build presence"
+      - name: Preflight: meson.build presence
         working-directory: dxvk
         run: |
           set -euo pipefail
@@ -178,6 +185,7 @@ jobs:
         run: |
           set -euo pipefail
           meson setup build.w64 . --cross-file arm64ec.meson --buildtype release --prefix "$PWD/install"
+          # Optional: inspect options
           meson configure build.w64
 
       - name: Build
@@ -201,7 +209,6 @@ jobs:
             dxvk/install/bin/*.pdb
           if-no-files-found: error
 
-      # 진단 로그는 빌드 성공/실패와 관계없이 항상 업로드
       - name: Upload build logs (always)
         if: always()
         uses: actions/upload-artifact@v4
