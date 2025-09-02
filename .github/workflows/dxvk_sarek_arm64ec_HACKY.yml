@@ -1,4 +1,4 @@
-name: build-dxvk-sarek-arm64ec
+name: build-dxvk-sarek-arm64ec hh
 
 on:
   workflow_dispatch:
