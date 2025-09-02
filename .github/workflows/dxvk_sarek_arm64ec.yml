@@ -106,12 +106,30 @@ jobs:
         working-directory: dxvk
         run: |
           set -euo pipefail
+          
           # 1) x86 인트린식 헤더 포함부를 ARM64EC에서 비활성화
-          git ls-files src include | xargs -r sed -i -E \
-            -e 's@(#\s*include\s*<)(x86intrin|x86gprintrin|immintrin|intrin)\.h>@#if !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)\n\1\2.h>\n#endif@g'
+          #    - 패턴이 있는 '정규 텍스트 파일'만 추출(-R: 재귀, -I: 바이너리 제외, -l: 파일명만)
+          mapfile -t HDR_FILES < <(grep -RIl -E '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' src include 2>/dev/null || true)
+          for f in "${HDR_FILES[@]}"; do
+            echo "Patching includes in: $f"
+            sed -i -E \
+              's@(#\s*include\s*<)(x86intrin|x86gprintrin|immintrin|intrin)\.h>@#if !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)\n\1\2.h>\n#endif@g' \
+              "$f"
+          done
+          
           # 2) x86 감지 조건에서 ARM64EC 제외
-          git ls-files src include | xargs -r sed -i -E \
-            -e 's@defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)@defined(\1) \&\& !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)@g'
+          mapfile -t COND_FILES < <(grep -RIl -E 'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' src include 2>/dev/null || true)
+          for f in "${COND_FILES[@]}"; do
+            echo "Patching arch guards in: $f"
+            sed -i -E \
+              's@defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)@defined(\1) \&\& !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)@g' \
+              "$f"
+          done
+          
+          # 3) (선택) 실제로 x86 인트린식이 남아있는 파일이 없는지 최종 점검
+          echo "== Post-patch include scan =="
+          grep -RInE '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' src include || true
+          
           # 참고용 diff (있으면만 출력)
           git --no-pager diff -- src/ include/ || true
       # --- SAREK-SPECIFIC PATCH END ---
