@@ -85,6 +85,30 @@ jobs:
           meson --version
           test -f meson.build || { echo "::error::meson.build not found in $PWD"; ls -la; exit 1; }
 
+      - name: "Preflight: show key macros (for diagnosis) SAREK ONLY"
+        run: |
+          set -e
+          arm64ec-w64-mingw32-g++ -dM -E - < /dev/null | \
+            egrep -E '__arm64ec__|_M_ARM64EC|__x86_64__|_M_X64|_M_AMD64' || true
+
+      - name: Patch DXVK headers for ARM64EC (avoid x86 intrinsics) SAREK ONLY
+        working-directory: dxvk
+        run: |
+          set -euo pipefail
+          # x86 전용 헤더를 포함시키는 분기를 ARM64EC에서 비활성화
+          files=$(grep -RIl "x86intrin.h" src || true)
+          if [ -n "$files" ]; then
+            for f in $files; do
+              echo "Patching $f"
+              sed -i -E \
+                -e "s/defined\\(__x86_64__\\)/defined(__x86_64__) \&\& !defined(__arm64ec__)/" \
+                -e "s/defined\\(_M_X64\\)/defined(_M_X64) \&\& !defined(_M_ARM64EC)/" \
+                "$f"
+            done
+          fi
+          # 참고용 diff (있으면)
+          git --no-pager diff -- src/util/util_bit.h || true
+
       - name: Configure (Meson)
         working-directory: dxvk
         run: |
