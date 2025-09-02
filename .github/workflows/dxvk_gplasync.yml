@@ -62,11 +62,9 @@ jobs:
           GITLAB_PROJECT: ${{ env.GITLAB_PROJECT }}
         run: |
           set -Eeuo pipefail
-          GL_API="https://gitlab.com/api/v4/projects/$(python3 - <<'PY'
-          import urllib.parse, os
-          print(urllib.parse.quote(os.environ['GITLAB_PROJECT'], safe=''))
-          PY
-          )"
+          enc="$(python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["GITLAB_PROJECT"], safe=""))')"
+          GL_API="https://gitlab.com/api/v4/projects/${enc}"
+
           : > /tmp/gl_rel.jsonl
           page=1
           while :; do
@@ -76,7 +74,7 @@ jobs:
             [[ -z "${next:-}" || "${next}" == 0 ]] && break
             page="${next}"
           done
-
+      
           # Extract highest revision per base (rev in 1..9) from tag or name, allow optional 'v' prefix
           { cat /tmp/gl_rel.jsonl | jq -r '[.tag_name,.name] | map(select(.!=null)) | .[]' ; } \
             | grep -Eio 'v?[0-9]+\.[0-9]+(\.[0-9]+)?-[1-9]' || true \
@@ -84,8 +82,6 @@ jobs:
             | awk -F- '{print $1" "$2}' \
             | awk '{b=$1; r=$2+0; if(r>0 && r<=9 && r>max[b]) max[b]=r} END{for(b in max) print b, max[b]}' \
             | LC_ALL=C sort -V > /tmp/relmax.txt || true
-
-          echo "Release map (base -> max rev):"; cat /tmp/relmax.txt || true
 
       - name: Detect any missing candidate (use release map; prefer exact base, then major.minor)
         id: detect
