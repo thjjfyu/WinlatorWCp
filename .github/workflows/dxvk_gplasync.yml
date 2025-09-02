@@ -107,38 +107,43 @@ jobs:
             | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
             | LC_ALL=C sort -V > /tmp/tags.txt
 
+          tac /tmp/tags.txt > /tmp/tags.desc.txt
+          
           awk '
             function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
               for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1} return 0}
             { base=substr($0,2); if (cmp(base,"2.3.1")>=0) print $0 }
-          ' /tmp/tags.txt > /tmp/candidates.txt
-
+          ' /tmp/tags.desc.txt > /tmp/candidates.txt
+          
           : > /tmp/missing.flag
-
+          
           while read -r tag; do
             [ -n "$tag" ] || continue
-            base="${tag#v}"
+            base="${tag#v}"             # 2.7 | 2.7.0 | 2.6.2
             IFS=. read -r A B C <<<"$base"
-            mm=""; [[ -n "${C:-}" ]] && mm="${A}.${B}"
 
-            # Lookup rev from release map
-            rev="$(awk -v b="$base" '$1==b{print $2}' /tmp/relmax.txt | head -n1)"
+            cand_bases=("$base")
+            [[ "$base" =~ ^[0-9]+\.[0-9]+$    ]] && cand_bases+=("${base}.0")
+            [[ "$base" =~ ^[0-9]+\.[0-9]+\.0$ ]] && cand_bases+=("${A}.${B}")
+            [[ -n "${C:-}" ]] && cand_bases+=("${A}.${B}")  # 2.6.2 -> 2.6
+          
+            rev=""
             patch_base=""
-            if [[ -n "$rev" ]]; then
-              patch_base="$base"
-            elif [[ -n "$mm" ]]; then
-              rev="$(awk -v b="$mm" '$1==b{print $2}' /tmp/relmax.txt | head -n1)"
-              [[ -n "$rev" ]] && patch_base="$mm"
-            fi
+            for b in "${cand_bases[@]}"; do
+              r=$(awk -v b="$b" '$1==b{print $2}' /tmp/relmax.txt | head -n1)
+              if [[ -n "$r" ]]; then rev="$r"; patch_base="$b"; break; fi
+            done
 
-            if [[ -n "$rev" ]] && ! grep -Fq "${base} ${rev}" /tmp/exist.txt; then
-              echo "Missing: ${base}-${rev} (patch_base: ${patch_base:-$base})"
-              echo "yes" > /tmp/missing.flag
+            [[ -z "$rev" ]] && continue
+          
+            if ! grep -Fxq "${base} ${rev}" /tmp/exist.txt; then
+              echo "Missing: ${base}-${rev} (patch_base: ${patch_base})"
+              echo yes > /tmp/missing.flag
               break
             fi
           done < /tmp/candidates.txt
-
-          if [ "$(cat /tmp/missing.flag 2>/dev/null)" = "yes" ]; then
+          
+          if [ "$(cat /tmp/missing.flag 2>/dev/null)" = yes ]; then
             echo "missing=true" >> "$GITHUB_OUTPUT"
           else
             echo "missing=false" >> "$GITHUB_OUTPUT"
