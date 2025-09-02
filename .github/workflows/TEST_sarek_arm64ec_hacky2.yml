@@ -398,22 +398,42 @@ jobs:
           meson install -C build.w64
 
       # === Trust gates (block artifacts if not meeting criteria) ===
-      - name: Verify ARM64EC machine type
+      - name: Verify ARM64EC machine type (PE parser; tool-agnostic)
         working-directory: dxvk
+        shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          for f in install/bin/*.dll; do
-            echo "== $f =="
-            if command -v llvm-readobj >/dev/null 2>&1; then
-              llvm-readobj --coff-headers "$f" | tee /dev/stderr | grep -E 'Machine:.*(ARM64EC|0xA641)'
-            elif command -v llvm-objdump >/dev/null 2>&1; then
-              llvm-objdump -p "$f" | tee /dev/stderr | grep -E 'Machine:.*(ARM64EC|0xA641)'
-            else
-              echo "::error:: neither llvm-readobj nor llvm-objdump found in PATH"
-              exit 1
-            fi
-          done
+          python3 - <<'PY'
+      import glob, struct, sys
+      dlls = sorted(glob.glob('install/bin/*.dll'))
+      if not dlls:
+          print('::error::No DLLs found in install/bin')
+          sys.exit(1)
+      errors = 0
+      for p in dlls:
+          print(f'== {p} ==')
+          with open(p, 'rb') as f:
+              d = f.read(0x1000)
+          if len(d) < 0x40:
+              print(f'::error::{p}: file too small to be a PE')
+              errors += 1
+              continue
+          e_lfanew = struct.unpack_from('<I', d, 0x3C)[0]
+          with open(p, 'rb') as f:
+              f.seek(e_lfanew)
+              sig = f.read(4)
+              if sig != b"PE\0\0":
+                  print(f'::error::{p}: invalid PE signature {sig!r}')
+                  errors += 1
+                  continue
+              machine = struct.unpack('<H', f.read(2))[0]
+          if machine != 0xA641:
+              print(f'::error::{p}: Machine=0x{machine:04X}, expected 0xA641 (ARM64EC)')
+              errors += 1
+          else:
+              print(f'{p}: Machine=0xA641 (ARM64EC) OK')
+      sys.exit(1 if errors else 0)
+      PY
 
       - name: Enforce no x86 SIMD or x86 asm artifacts
         working-directory: dxvk
