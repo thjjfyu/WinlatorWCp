@@ -72,7 +72,6 @@ jobs:
           page=1
           while :; do
             curl -fsSL -D /tmp/h "${GL_API}/releases?per_page=100&page=${page}" -o /tmp/p.json || true
-            # jq 실패해도 파이프라인 계속; 다음 단계에서 비었는지 확인한다
             jq -r '.[] | [.tag_name, .name] | map(select(.!=null)) | .[]' /tmp/p.json >> /tmp/raw_names.txt 2>/dev/null || true
             next=$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')
             [[ -z "${next:-}" || "${next}" == "0" ]] && break
@@ -82,15 +81,23 @@ jobs:
           echo "::notice::releases/raw_names (first 30)"
           sed -n '1,30p' /tmp/raw_names.txt || true
           
-          # 2) 문자열에서 base/rev 추출
-          #    허용: v2.7-1 / 2.6.2-3 / v2.6 rev4 / V2.5 R10 / v2.4.1 r1 / 2.3.1   2
-          #    -> "2.7 1" 형식으로 변환
+          # 2) 문자열에서 base/rev를 awk로 안전하게 추출
+          #    허용: v2.7-1 / 2.6.2-3 / v2.6 rev4 / 2.6 r4 / 2.5.1   2
           : > /tmp/base_rev.txt
-          grep -Eio '^[Vv]?[0-9]+\.[0-9]+(\.[0-9]+)?([[:space:]]*(rev|r)[[:space:]]*|-)?[0-9]+$' /tmp/raw_names.txt \
-            | sed -E 's/^[Vv]?([0-9]+\.[0-9]+(\.[0-9]+)?)(?:[[:space:]]*(?:rev|r)[[:space:]]*|-)?([0-9]+)$/\1 \3/' \
-            | sed -E 's/[[:space:]]+/ /g' \
-            | LC_ALL=C sort -u -V \
-            > /tmp/base_rev.txt
+          awk '
+            {
+              s=$0
+              gsub(/^[Vv]/,"",s)                 # 선행 v 제거
+              gsub(/[[:space:]]+/, " ", s)       # 공백 정규화
+              sub(/^ +/,"",s); sub(/ +$/,"",s)   # 트림
+              # 패턴: base(필수) + 구분자(- 또는 스페이스) + 선택적 (rev/r) + 공백* + 숫자
+              if (match(s, /^([0-9]+\.[0-9]+(\.[0-9]+)?)([- ]?([Rr]([Ee]?[Vv])?)?)[ ]*([0-9]+)$/, m)) {
+                base = m[1]; rev = m[6]+0
+                if (rev>0) print base, rev
+              }
+            }
+          ' /tmp/raw_names.txt \
+          | LC_ALL=C sort -u -V > /tmp/base_rev.txt
           
           echo "::notice::parsed base/rev (first 30)"
           sed -n '1,30p' /tmp/base_rev.txt || true
@@ -101,10 +108,8 @@ jobs:
             > /tmp/relmax.txt
           
           if [[ ! -s /tmp/relmax.txt ]]; then
-            echo "::error::Release map is empty. The release names may not match expected patterns or API returned nothing."
-            echo "::group::DEBUG dump (raw first 50)"
-            sed -n '1,50p' /tmp/raw_names.txt || true
-            echo "::endgroup::"
+            echo "::error::Release map is empty. Parsed 0 base/rev from raw names."
+            echo "::group::DEBUG dump (raw first 50)"; sed -n '1,50p' /tmp/raw_names.txt || true; echo "::endgroup::"
             exit 1
           fi
           
