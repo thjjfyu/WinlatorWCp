@@ -131,38 +131,30 @@ jobs:
             | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
             | LC_ALL=C sort -V > /tmp/tags.txt
 
-          # 최신부터
-          tac /tmp/tags.txt > /tmp/tags.desc.txt
-
-          # 기준 버전 필터
-          awk '
-            function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
-              for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1} return 0}
-            { base=substr($0,2); if (cmp(base,"2.3.1")>=0) print $0 }
-          ' /tmp/tags.desc.txt > /tmp/candidates.txt
+          # 최신부터, 최소버전 필터
+          tac /tmp/tags.txt \
+            | awk '
+                function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
+                  for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1} return 0}
+                { base=substr($0,2); if (cmp(base,"2.3.1")>=0) print $0 }
+              ' > /tmp/candidates.txt
 
           [[ -f /tmp/exist.txt ]] || : > /tmp/exist.txt
 
           while read -r tag; do
             [ -n "$tag" ] || continue
-            base="${tag#v}"                       # 2.7 | 2.7.0 | 2.6.2
-            IFS=. read -r A B C <<<"$base"
-            # 정규화 후보: 2.7 <-> 2.7.0, 2.6.2 -> 2.6
-            cand_bases=("$base")
-            [[ "$base" =~ ^[0-9]+\.[0-9]+$    ]] && cand_bases+=("${base}.0")
-            [[ "$base" =~ ^[0-9]+\.[0-9]+\.0$ ]] && cand_bases+=("${A}.${B}")
-            [[ -n "${C:-}" ]] && cand_bases+=("${A}.${B}")
+            base="${tag#v}"   # 예: 2.7.1
 
-            found_rev=""; patch_base=""
-            for b in "${cand_bases[@]}"; do
-              r=$(awk -v b="$b" '$1==b{print $2}' /tmp/relmax.txt | head -n1)
-              if [[ -n "$r" ]]; then found_rev="$r"; patch_base="$b"; break; fi
-            done
-            [[ -z "$found_rev" ]] && continue
+            # 정확히 같은 base에 대한 rev만 찾음. 폴백(2.7) 금지.
+            rev="$(awk -v b="$base" '$1==b{print $2}' /tmp/relmax.txt | head -n1)"
+            [[ -z "$rev" ]] && { echo "::notice::no-exact-release ${base} -> skip"; continue; }
 
-            # 이미 올린 조합인지 정확 일치로 확인
-            if ! grep -Fxq "${base} ${found_rev}" /tmp/exist.txt; then
-              printf '%s %s %s %s\n' "$tag" "$base" "$found_rev" "$patch_base" >> "$PLAN"
+            # 이미 올린 조합인지 정확 일치로만 체크
+            if ! grep -Fxq "${base} ${rev}" /tmp/exist.txt; then
+              # tag base rev patch_base  (patch_base는 항상 base)
+              printf '%s %s %s %s\n' "$tag" "$base" "$rev" "$base" >> "$PLAN"
+            else
+              echo "::notice::already-exists ${base}-${rev}"
             fi
           done < /tmp/candidates.txt
 
@@ -184,75 +176,12 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Detect any missing candidate (use release map; prefer exact base, then major.minor)
+      - name: Detect any missing candidate (from build plan)
         id: detect
-        env:
-          GH_TOKEN: ${{ env.GH_TOKEN }}
-          DXVK_REPO: ${{ env.DXVK_REPO }}
         run: |
           set -Eeuo pipefail
-          API="https://api.github.com"
-          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-          ver=(-H "Accept: application/vnd.github+json")
-
-          # DXVK tags 수집
-          curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${DXVK_REPO}/tags?per_page=100" \
-            | jq -r '.[].name' \
-            | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
-            | LC_ALL=C sort -V > /tmp/tags.txt
-
-          # 최신부터 확인
-          tac /tmp/tags.txt > /tmp/tags.desc.txt
-
-          awk '
-            function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
-              for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1} return 0}
-            { base=substr($0,2); if (cmp(base,"2.3.1")>=0) print $0 }
-          ' /tmp/tags.desc.txt > /tmp/candidates.txt
-
-          # 선행 산출물 체크
-          if [[ ! -s /tmp/relmax.txt ]]; then
-            echo "::error::/tmp/relmax.txt(릴리즈 맵)이 비었음. 이전 스텝 확인 필요."
-            exit 1
-          fi
-          [[ -f /tmp/exist.txt ]] || : > /tmp/exist.txt
-
-          echo "::notice::relmap (first 20)"; sed -n '1,20p' /tmp/relmax.txt || true
-          echo "::notice::exist  (first 20)"; sed -n '1,20p' /tmp/exist.txt  || true
-
-          : > /tmp/missing.flag
-
-          while read -r tag; do
-            [ -n "$tag" ] || continue
-            base="${tag#v}"             # 2.7 | 2.7.0 | 2.6.2
-            IFS=. read -r A B C <<<"$base"
-
-            # 베이스 정규화: 2.7 <-> 2.7.0, 2.6.2 -> 2.6
-            cand_bases=("$base")
-            [[ "$base" =~ ^[0-9]+\.[0-9]+$    ]] && cand_bases+=("${base}.0")
-            [[ "$base" =~ ^[0-9]+\.[0-9]+\.0$ ]] && cand_bases+=("${A}.${B}")
-            [[ -n "${C:-}" ]] && cand_bases+=("${A}.${B}")
-
-            rev=""; patch_base=""
-            for b in "${cand_bases[@]}"; do
-              r=$(awk -v b="$b" '$1==b{print $2}' /tmp/relmax.txt | head -n1)
-              if [[ -n "$r" ]]; then
-                rev="$r"; patch_base="$b"; break
-              fi
-            done
-            [[ -z "$rev" ]] && continue
-
-            # 정확히 한 줄 일치로만 '이미 있음' 인정
-            if ! grep -Fxq "${base} ${rev}" /tmp/exist.txt; then
-              echo "::notice::MISSING base=${base} rev=${rev} (patch_base=${patch_base})"
-              echo yes > /tmp/missing.flag
-              break
-            else
-              echo "::notice::already-exists base=${base} rev=${rev}"
-            fi
-          done < /tmp/candidates.txt
-
-          if [ "$(cat /tmp/missing.flag 2>/dev/null)" = yes ]; then
+          PLAN="${GITHUB_WORKSPACE}/build_plan/to_build.txt"
+          if [[ -s "$PLAN" ]]; then
             echo "missing=true" >> "$GITHUB_OUTPUT"
           else
             echo "missing=false" >> "$GITHUB_OUTPUT"
