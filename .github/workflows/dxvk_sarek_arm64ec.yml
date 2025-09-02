@@ -236,6 +236,37 @@ jobs:
           else
             echo "warn: src/util/sync/sync_spinlock.h not found (skipped)"
           fi
+
+          # 2-ter) util_bit.h의 x86 asm(bsf/cmovz) 경로를 ARM64EC 전용 빌트인으로 대체
+          python3 - <<'PY'
+          import re, pathlib, sys
+          p = pathlib.Path("src/util/util_bit.h")
+          s = p.read_text(encoding="utf-8", errors="ignore")
+          
+          # __asm__ (또는 asm) 블록 중에 'bsf'가 들어있는 첫 블록을 찾아 ARM64EC 전용 대체 코드로 감싼다.
+          pat = re.compile(r'(?P<asm>(?:__asm__|asm)\s*\([^;]*bsf[^;]*\);\s*)', re.S|re.I)
+          
+          def repl(m):
+              asm = m.group("asm")
+              return (
+                  "#if defined(SAREK_ARM64EC) || defined(__arm64ec__) || defined(_M_ARM64EC)\n"
+                  "      /* SAREK ARM64EC: replace x86 asm (bsf/cmovz) with builtin */\n"
+                  "      /* Assumes local vars: res,tmp,n  (matches original block) */\n"
+                  "      res = (n ? __builtin_ctz((unsigned)n) : 32);\n"
+                  "      tmp = 0;\n"
+                  "#else\n" + asm + "#endif\n"
+              )
+          
+          ns, n = pat.subn(repl, s, count=1)
+          if n == 0:
+              print('note: no "bsf" asm block found in util_bit.h (skipped)')
+          else:
+              p.write_text(ns, encoding="utf-8")
+              print(f'patched util_bit.h: replaced {n} bsf-asm block(s)')
+          PY
+          
+          # 변경 확인(문맥 출력)
+          nl -ba src/util/util_bit.h | sed -n '60,120p'
       
           # 2) DXVK 자체 소스 목록(서드파티 제외)
           find src include -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.c' -o -name '*.cpp' -o -name '*.inl' \) \
