@@ -1,14 +1,13 @@
 name: Build DXVK v2
 
 on:
-  workflow_dispatch:              # Manual trigger (any branch)
+  workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"         # Daily (UTC)
+    - cron: "0 18 * * *"
 
 permissions:
   contents: write
 
-# Consistent, strict, fast shell (no caching anywhere)
 defaults:
   run:
     shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
@@ -19,7 +18,7 @@ concurrency:
 
 jobs:
   guard:
-    name: Fast guard (detect new upstream tag)
+    name: Check Upadate
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
@@ -30,7 +29,9 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends jq curl ca-certificates
 
-      - name: Resolve upstream latest tag (DXVK)            # Prefer release tag; fallback to highest v* tag
+# ------------------------------------------------------------------------------ #
+
+      - name: Get latest tag
         id: upstream
         env:
           GH_TOKEN: ${{ github.token }}
@@ -48,7 +49,7 @@ jobs:
           [[ -z "$LATEST" ]] && { echo "::error::No upstream tag found"; exit 1; }
           echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve current mirrored highest version in DXVK release  # API-only (no gh dependency)
+      - name: DXVK release?
         id: local
         env:
           GH_TOKEN: ${{ github.token }}
@@ -69,7 +70,7 @@ jobs:
           echo "cur=${CUR}" >> "$GITHUB_OUTPUT"
           echo "Current: ${CUR:-<none>}"
 
-      - name: Decide build                                      # Build only if upstream > mirrored
+      - name: Decide build
         id: decide
         run: |
           set -Eeuo pipefail
@@ -85,8 +86,10 @@ jobs:
             echo "build=false" >> "$GITHUB_OUTPUT"
           fi
 
+# ------------------------------------------------------------------------------ #
+  
   build-and-release:
-    name: Build & release missing DXVK versions
+    name: Build & release missing versions
     needs: guard
     if: needs.guard.outputs.build == 'true'
     runs-on: ubuntu-24.04
@@ -105,7 +108,7 @@ jobs:
             git meson ninja-build glslang-tools pkg-config \
             build-essential python3 zstd gh file
 
-      - name: Ensure glslang (--vn) is available
+      - name: Ensure glslang (--vn)
         run: |
           set -Eeuo pipefail
           cat > /tmp/min.comp <<'GLSL'
@@ -162,18 +165,18 @@ jobs:
           sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
-      - name: Clone DXVK (tags + submodules)
+      - name: Clone DXVK
         run: |
           set -Eeuo pipefail
           git clone --recurse-submodules https://github.com/${DXVK_REPO}.git src
           cd src && git fetch --tags --force
 
-      - name: Configure git identity (local)
+      - name: Configure git identity
         run: |
           git -C src config user.name "DXVK Builder"
           git -C src config user.email "builder@users.noreply.github.com"
 
-      - name: Resolve versions (>= v2.3.1) and compute NEW to build
+      - name: Resolve versions & compute NEW to build
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
@@ -211,7 +214,7 @@ jobs:
           echo "Already uploaded:"; cat "$EXIST" || true
           echo "To build:";         cat "${GITHUB_WORKSPACE}/to_build.txt" || true
 
-      - name: Build NEW versions only (package-release.sh + 공식 cross file)
+      - name: Build NEW versions
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
@@ -228,9 +231,9 @@ jobs:
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
 
-            # ── Minimal, conditional compatibility patches ──
             CHANGED=0
-            # 1) v2.5 UnmappedSubresource constexpr init issue -> safe cast
+            # patches --------------------------------------------------------------- #
+            # v2.5 UnmappedSubresource constexpr init issue -> safe cast
             TEX="src/d3d11/d3d11_texture.h"
             if [[ -f "$TEX" ]] && grep -qE '\bUnmappedSubresource\b' "$TEX"; then
               cp "$TEX" "${TEX}.bak"
@@ -238,8 +241,9 @@ jobs:
                 's/\bstatic\s+(?:const|constexpr)\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
                 -i "$TEX" && CHANGED=1
             fi
-
-            # 2) Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate if toolchain has it
+            
+            # patches --------------------------------------------------------------- #
+            # Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate if toolchain has it
             INC="src/d3d9/d3d9_include.h"
             TOOL_X64="/opt/llvm-mingw/x86_64-w64-mingw32/include/d3d9types.h"
             TOOL_X86="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
@@ -249,8 +253,9 @@ jobs:
                 perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;//s' -i "$INC" && CHANGED=1
               fi
             fi
-
-            # 3) Mismatched-tags warning: align forward decl to 'struct' (optional)
+            
+            # patches --------------------------------------------------------------- #
+            # Mismatched-tags warning: align forward decl to 'struct' (optional)
             MEM="src/dxvk/dxvk_memory.h"
             if [[ -f "$MEM" ]] \
                && grep -qE '^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;' "$MEM" \
@@ -258,24 +263,22 @@ jobs:
               cp "$MEM" "${MEM}.bak2"
               sed -E -i 's/^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;/struct DxvkMemoryChunk;/' "$MEM" && CHANGED=1
             fi
-            # ── End patches ──
 
             ver="${tag#v}"
 
-            # If we patched, commit once and temporarily retag so HUD shows clean version (no '+')
+            # Clean Tags ------------------------------------------------------------ #
             if [[ "$CHANGED" -eq 1 ]]; then
               git add -A
               git -c user.name="DXVK Builder" -c user.email="builder@noreply" commit -m "compat: minimal build fixes for ${tag}"
               git -c user.name="DXVK Builder" -c user.email="builder@noreply" tag -f "$tag" -m "temporary build tag for clean HUD"
             fi
 
-            # Build using official script + cross files
+            # Build using official script + cross files ----------------------------- #
             PKGDIR="${GITHUB_WORKSPACE}/pkg"
             mkdir -p "$PKGDIR"
             # --no-package to keep unpacked tree; --dev-build keeps build dirs for faster rebuilds (harmless)
             ./package-release.sh "$tag" "$PKGDIR" --no-package --dev-build
 
-            # Fresh layout per arch
             rm -rf "${GITHUB_WORKSPACE}/DXVK_WCP" "${GITHUB_WORKSPACE}/dist-x64" "${GITHUB_WORKSPACE}/dist-x86"
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
 
@@ -284,11 +287,10 @@ jobs:
             cp -v "$SRC64"/*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
             cp -v "$SRC32"/*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
 
-            # Strip (if not already) and reproducible timestamps
             export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct HEAD)"
             find "${GITHUB_WORKSPACE}/DXVK_WCP" -type f -name '*.dll' -print0 | xargs -0 -I{} llvm-strip -s {} || true
 
-            # Build verification: PE imports + embedded version string must match exact tag (no '+')
+            # Build verification ----------------------------------------------------- #
             fail=0
             for f in "${GITHUB_WORKSPACE}/DXVK_WCP/system32/d3d11.dll" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/d3d11.dll"; do
               [[ -f "$f" ]] || continue
@@ -303,7 +305,7 @@ jobs:
             done
             [[ "$fail" -eq 0 ]] || { echo "::error::Verification failed for $tag"; exit 1; }
 
-            # Collect file lists and generate profile.json
+            # Collect file lists and generate profile.json  -------------------------- #
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
             if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
@@ -327,7 +329,7 @@ jobs:
             echo "::endgroup::"
           done < "$LIST"
 
-      - name: Build release notes (minimal)
+      - name: Build release notes
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
