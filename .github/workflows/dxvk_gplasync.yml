@@ -63,7 +63,6 @@ jobs:
           enc="$(python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["GITLAB_PROJECT"], safe=""))')"
           GL_API="https://gitlab.com/api/v4/projects/${enc}"
 
-          # 1) Releases에서 tag_name/name을 단순 문자열로 수집
           : > /tmp/raw_names.txt
           page=1
           while :; do
@@ -74,18 +73,16 @@ jobs:
             page="${next}"
           done
 
-          echo "::notice::releases/raw_names (first 30)"
-          sed -n '1,30p' /tmp/raw_names.txt || true
+          echo "::notice::releases/raw_names (first 30)"; sed -n '1,30p' /tmp/raw_names.txt || true
 
-          # 2) 문자열에서 base/rev 추출(awk, POSIX ERE)
           : > /tmp/base_rev.txt
           awk '
             {
               s=$0
-              gsub(/^[Vv]/,"",s)                 # 선행 v 제거
-              gsub(/[[:space:]]+/, " ", s)       # 공백 정규화
-              sub(/^ +/,"",s); sub(/ +$/,"",s)   # 트림
-              # base + (하이픈 또는 스페이스) + 선택적 rev/r + 숫자
+              gsub(/^[Vv]/,"",s)                 # drop leading v
+              gsub(/[[:space:]]+/, " ", s)       # normalize spaces
+              sub(/^ +/,"",s); sub(/ +$/,"",s)   # trim
+              # base + (hyphen or space) + optional rev/r + digits
               if (match(s, /^([0-9]+\.[0-9]+(\.[0-9]+)?)([- ]?([Rr]([Ee]?[Vv])?)?)[ ]*([0-9]+)$/, m)) {
                 base = m[1]; rev = m[6]+0
                 if (rev>0) print base, rev
@@ -94,17 +91,15 @@ jobs:
           ' /tmp/raw_names.txt \
           | LC_ALL=C sort -u -V > /tmp/base_rev.txt
 
-          echo "::notice::parsed base/rev (first 30)"
-          sed -n '1,30p' /tmp/base_rev.txt || true
+          echo "::notice::parsed base/rev (first 30)"; sed -n '1,30p' /tmp/base_rev.txt || true
 
-          # 3) 같은 base의 최대 rev만 남김 → relmap
           awk '{b=$1; r=$2+0; if(r>0 && r>max[b]) max[b]=r} END{for (b in max) print b, max[b]}' /tmp/base_rev.txt \
             | LC_ALL=C sort -V \
             > /tmp/relmax.txt
 
           if [[ ! -s /tmp/relmax.txt ]]; then
             echo "::error::Release map is empty. Parsed 0 base/rev from raw names."
-            echo "::group::DEBUG dump (raw first 50)"; sed -n '1,50p' /tmp/raw_names.txt || true; echo "::endgroup::"
+            sed -n '1,50p' /tmp/raw_names.txt || true
             exit 1
           fi
 
@@ -118,11 +113,10 @@ jobs:
           DXVK_REPO: ${{ env.DXVK_REPO }}
         run: |
           set -Eeuo pipefail
-          mkdir -p "${GITHUB_WORKSPACE}/build_plan"
           PLAN="${GITHUB_WORKSPACE}/build_plan/to_build.txt"
+          mkdir -p "$(dirname "$PLAN")"
           : > "$PLAN"
 
-          # DXVK tags
           API="https://api.github.com"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
@@ -131,7 +125,6 @@ jobs:
             | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
             | LC_ALL=C sort -V > /tmp/tags.txt
 
-          # 최신부터, 최소버전 필터
           tac /tmp/tags.txt \
             | awk '
                 function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
@@ -143,15 +136,11 @@ jobs:
 
           while read -r tag; do
             [ -n "$tag" ] || continue
-            base="${tag#v}"   # 예: 2.7.1
-
-            # 정확히 같은 base에 대한 rev만 찾음. 폴백(2.7) 금지.
+            base="${tag#v}"   # exact-only
             rev="$(awk -v b="$base" '$1==b{print $2}' /tmp/relmax.txt | head -n1)"
             [[ -z "$rev" ]] && { echo "::notice::no-exact-release ${base} -> skip"; continue; }
-
-            # 이미 올린 조합인지 정확 일치로만 체크
             if ! grep -Fxq "${base} ${rev}" /tmp/exist.txt; then
-              # tag base rev patch_base  (patch_base는 항상 base)
+              # tag base rev patch_base (patch_base == base)
               printf '%s %s %s %s\n' "$tag" "$base" "$rev" "$base" >> "$PLAN"
             else
               echo "::notice::already-exists ${base}-${rev}"
@@ -164,8 +153,7 @@ jobs:
             echo "has=false" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "::notice::build_plan (first 20)"
-          sed -n '1,20p' "$PLAN" || true
+          echo "::notice::build_plan (first 20)"; sed -n '1,20p' "$PLAN" || true
 
       - name: Upload build plan artifact
         if: steps.plan.outputs.has == 'true'
@@ -196,8 +184,6 @@ jobs:
           else
             echo "build=false" >> "$GITHUB_OUTPUT"
           fi
-
-# ------------------------------------------------------------------------------ #
 
   build-and-release:
     name: Build & release missing versions
@@ -306,7 +292,7 @@ jobs:
           echo "::notice::Plan head"
           sed -n '1,20p' "$PLAN" || true
 
-      - name: Build NEW versions
+      - name: Build NEW versions (exact-match only)
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
@@ -316,7 +302,9 @@ jobs:
 
           LIST="${GITHUB_WORKSPACE}/build_plan/to_build.txt"
           if [[ ! -f "$LIST" || ! -s "$LIST" ]]; then
-            echo "No new versions to build."; exit 0; fi
+            echo "No new versions to build."
+            exit 0
+          fi
 
           while read -r tag base rev patch_base; do
             echo "::group::Build ${tag} (gplasync rev ${rev}, patch_base ${patch_base})"
@@ -324,8 +312,7 @@ jobs:
             git submodule update --init --recursive --checkout
 
             CHANGED=0
-            # patches --------------------------------------------------------------- #
-            # Apply gplasync patch picked from Releases map
+            # Apply exact-match gplasync patch
             url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${patch_base}-${rev}.patch"
             curl -fL "$url" -o /tmp/gpl.patch
             git config user.name  ci
@@ -333,8 +320,7 @@ jobs:
             if git am -3 /tmp/gpl.patch; then :; else git am --abort || true; git apply -p1 --reject /tmp/gpl.patch; fi
             grep -q "enableAsync" src/dxvk/dxvk_options.h || { echo "::error::Patch not applied cleanly for ${base} (using ${patch_base}-${rev})"; git status -sb; exit 1; }
 
-            # patches --------------------------------------------------------------- #
-            # v2.5 UnmappedSubresource constexpr init issue -> safe cast
+            # v2.5 fix: UnmappedSubresource constexpr init issue -> safe cast
             TEX="src/d3d11/d3d11_texture.h"
             if [[ -f "$TEX" ]] && grep -qE '\bUnmappedSubresource\b' "$TEX"; then
               cp "$TEX" "${TEX}.bak"
@@ -342,9 +328,8 @@ jobs:
                 's/\bstatic\s+(?:const|constexpr)\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
                 -i "$TEX" && CHANGED=1
             fi
-            
-            # patches --------------------------------------------------------------- #
-            # Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate if toolchain has it
+
+            # Newer mingw headers: drop DXVK duplicate if toolchain has it
             INC="src/d3d9/d3d9_include.h"
             TOOL_X64="/opt/llvm-mingw/x86_64-w64-mingw32/include/d3d9types.h"
             TOOL_X86="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
@@ -354,20 +339,19 @@ jobs:
                 perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;//s' -i "$INC" && CHANGED=1
               fi
             fi
-            
-            # patches --------------------------------------------------------------- #
-            # Mismatched-tags warning: align forward decl to 'struct' (optional)
+
+            # Mismatched-tags warning: align forward decl to struct
             MEM="src/dxvk/dxvk_memory.h"
             if [[ -f "$MEM" ]] \
                && grep -qE '^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;' "$MEM" \
-               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*\{' "$MEM"; then
+               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*{' "$MEM"; then
               cp "$MEM" "${MEM}.bak2"
               sed -E -i 's/^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;/struct DxvkMemoryChunk;/' "$MEM" && CHANGED=1
             fi
 
             ver="${tag#v}"
 
-            # Build using official script + cross files ----------------------------- #
+            # Build using official script + cross files
             PKGDIR="${GITHUB_WORKSPACE}/pkg"
             mkdir -p "$PKGDIR"
             ./package-release.sh "$tag" "$PKGDIR" --no-package --dev-build
@@ -380,7 +364,9 @@ jobs:
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
             if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
-              echo "::error::No DLLs discovered for ${base}-${rev}"; exit 1; fi
+              echo "::error::No DLLs discovered for ${base}-${rev}"
+              exit 1
+            fi
 
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
@@ -414,7 +400,7 @@ jobs:
               --sort=name \
               -cf "${GITHUB_WORKSPACE}/out/dxvk-gplasync-${base}-${rev}.wcp" profile.json system32 syswow64
             echo "::endgroup::"
-          done < "${GITHUB_WORKSPACE}/to_build.txt"
+          done < "${GITHUB_WORKSPACE}/build_plan/to_build.txt"
 
       - name: Build release notes (minimal)
         run: |
