@@ -282,11 +282,25 @@ jobs:
             ver="${tag#v}"
 
             # Clean Tags ------------------------------------------------------------ #
+            # 목적: HUD 버전에서 -dirty 제거(워킹트리 청결) + 항상 "-arm64ec" 접미사
+            # 전략: HEAD에 vX.Y[.Z]-arm64ec 태그를 달고, 로컬의 원래 vX.Y[.Z] 태그를 제거
+            #       (CI 로컬 클론에서만 삭제. 원격 태그는 건드리지 않음)
+
+            # 현재 태그의 베이스 버전은 위에서 ver="${tag#v}"로 계산되어 있음
+            HUD_TAG="${tag}-arm64ec"
+
             if [[ "$CHANGED" -eq 1 ]]; then
               git add -A
-              git -c user.name="DXVK Builder" -c user.email="builder@noreply" commit -m "compat: minimal build fixes for ${tag}"
-              git -c user.name="DXVK Builder" -c user.email="builder@noreply" tag -f "$tag" -m "temporary build tag for clean HUD"
+              git -c user.name="DXVK Builder" -c user.email="builder@noreply" \
+                  commit -m "compat: minimal build fixes for ${tag}"
             fi
+
+            # HUD용 태그 생성/이동
+            git tag -f "${HUD_TAG}" -m "HUD tag for arm64ec: ${HUD_TAG}"
+
+            # 로컬에서 원래 태그는 지워서 'git describe'가 arm64ec 태그만 보게 함
+            # (주의: 원격에 push 안 하므로 안전)
+            git tag -d "${tag}" || true
 
             # Configure & build (64-bit arm64ec)
             meson setup "${GITHUB_WORKSPACE}/build.ec" --cross-file "${GITHUB_WORKSPACE}/arm64ec.cross" \
