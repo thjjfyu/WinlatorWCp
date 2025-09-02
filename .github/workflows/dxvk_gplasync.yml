@@ -76,12 +76,13 @@ jobs:
           done
 
           # Extract highest revision per base (rev in 1..9) from tag or name, allow optional 'v' prefix
-          { cat /tmp/gl_rel.jsonl | jq -r '[.tag_name,.name] | map(select(.!=null)) | .[]' ; } \
+          { cat /tmp/gl_rel.jsonl | jq -r '[.tag_name,.name] | map(select(.!=null)) | .[]'; } \
             | grep -Eio 'v?[0-9]+\.[0-9]+(\.[0-9]+)?-[1-9]' || true \
             | sed -E 's/^[Vv]//' \
             | awk -F- '{print $1" "$2}' \
             | awk '{b=$1; r=$2+0; if(r>0 && r<=9 && r>max[b]) max[b]=r} END{for(b in max) print b, max[b]}' \
             | LC_ALL=C sort -V > /tmp/relmax.txt || true
+          [[ -f /tmp/relmax.txt ]] || : > /tmp/relmax.txt
 
           echo "Release map (base -> max rev):"; cat /tmp/relmax.txt || true
 
@@ -176,7 +177,10 @@ jobs:
       - name: Ensure glslang (--vn)
         run: |
           set -Eeuo pipefail
-          printf '#version 450\nvoid main() {}\n' > /tmp/min.comp
+          cat > /tmp/min.comp <<'GLSL'
+          #version 450
+          void main() {}
+          GLSL
           have() { command -v "$1" >/dev/null 2>&1 || return 1; "$1" --quiet --target-env vulkan1.3 --vn testvar -o /tmp/min.h /tmp/min.comp; }
           if have glslang; then :
           elif have glslangValidator; then
