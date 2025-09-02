@@ -1,4 +1,4 @@
-name: Build DXVK-Sarek (arm64ec + i686) — fast DLL test
+name: Build DXVK-Sarek (arm64ec + i686) — DLL quick test
 
 on:
   workflow_dispatch:
@@ -8,118 +8,206 @@ permissions:
 
 defaults:
   run:
-    shell: bash -Eeuo pipefail {0}
+    shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
 
 jobs:
   build:
-    name: Build DLLs (arm64ec + i686)
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     env:
-      # toolchain & output dirs
+      SAREK_REPO: pythonlover02/DXVK-Sarek
       LLVM_MINGW_DIR: ${{ github.workspace }}/.toolchains/llvm-mingw
-      OUT_DIR:        ${{ github.workspace }}/out
-      SAREK_REPO:     pythonlover02/DXVK-Sarek
+      OUT_DIR: ${{ github.workspace }}/out
+
     steps:
       - name: Install host deps
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
-            curl xz-utils jq ca-certificates git meson ninja-build \
-            python3 pkg-config glslang-tools llvm binutils file
+            curl xz-utils zstd jq ca-certificates \
+            git meson ninja-build pkg-config \
+            glslang-tools llvm binutils python3 file
 
-      - name: Fetch bylaws llvm-mingw (Ubuntu 20.04 x86_64)
+          # glslang 래퍼 (glslangValidator만 있을 때 --vn 지원용)
+          if command -v glslangValidator >/dev/null && ! command -v glslang >/dev/null; then
+            BIN="$HOME/.local/bin"; mkdir -p "$BIN"
+            ln -sf "$(command -v glslangValidator)" "$BIN/glslang"
+            echo "$BIN" >> "$GITHUB_PATH"
+          fi
+
+      - name: Download bylaws llvm-mingw (Ubuntu 20.04 x86_64 only)
         env:
           API: https://api.github.com/repos/bylaws/llvm-mingw/releases/latest
         run: |
           mkdir -p "$LLVM_MINGW_DIR"
           json="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$API")"
 
-          # 이 리포는 22.04 자산이 없어요 → 20.04만 검색
-          url="$(
-            echo "$json" | jq -r '
-              .assets[] |
-              select(.name|test("ucrt-ubuntu-20\\.04-x86_64\\.tar\\.xz$")) |
-              .browser_download_url' | head -n1
-          )"
-          [ -n "$url" ] || { echo "::error::llvm-mingw asset not found (ubuntu-20.04 x86_64)"; exit 1; }
+          # 이 저장소는 22.04 자산이 없으므로 20.04만 검색
+          url="$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-20\\.04-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)"
+          [ -n "$url" ] || { echo "::error::llvm-mingw 20.04 x86_64 asset not found"; exit 1; }
 
           echo "Chosen: $url"
-          curl -fL "$url" -o /tmp/llvm-mingw.tar.xz
-          tar -C "$LLVM_MINGW_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
+          f=/tmp/llvm-mingw.tar.xz
+          curl -fL "$url" -o "$f"
+          tar -C "$LLVM_MINGW_DIR" --strip-components=1 -xJf "$f"
+
           echo "$LLVM_MINGW_DIR/bin" >> "$GITHUB_PATH"
+          export PATH="$LLVM_MINGW_DIR/bin:$PATH"
+          hash -r
 
-      - name: Toolchain sanity (arm64ec helper lib check)
-        id: tc
+          # 필수 바이너리(래퍼 포함) 점검
+          need=(clang clang++ llvm-rc llvm-ar llvm-nm llvm-readobj)
+          for b in "${need[@]}"; do
+            command -v "$b" >/dev/null || { echo "::error::missing tool: $b"; exit 1; }
+          done
+
+          # 있으면 래퍼 사용, 없으면 --target으로 폴백
+          if command -v arm64ec-w64-mingw32-clang++ >/dev/null; then
+            echo "USE_ARM64EC_WRAPPER=true" >> "$GITHUB_ENV"
+          else
+            echo "USE_ARM64EC_WRAPPER=false" >> "$GITHUB_ENV"
+            echo "::warning::arm64ec-w64-mingw32-clang++ not found — will use clang++ --target=arm64ec-w64-mingw32 with -isystem fallback."
+          fi
+
+          if command -v i686-w64-mingw32-clang++ >/dev/null; then
+            echo "USE_I686_WRAPPER=true" >> "$GITHUB_ENV"
+          else
+            echo "USE_I686_WRAPPER=false" >> "$GITHUB_ENV"
+            echo "::error::i686-w64-mingw32-clang++ not found"; exit 1
+          fi
+
+          # windres 후보 (ARM64EC)
+          if command -v arm64ec-w64-mingw32-windres >/dev/null 2>&1; then
+            echo "ARM64EC_WINDRES=arm64ec-w64-mingw32-windres" >> "$GITHUB_ENV"
+            echo "ARM64EC_WINDRES_NEEDS_FLAG=false" >> "$GITHUB_ENV"
+          elif command -v x86_64-w64-mingw32-windres >/dev/null 2>&1; then
+            echo "ARM64EC_WINDRES=x86_64-w64-mingw32-windres" >> "$GITHUB_ENV"
+            echo "ARM64EC_WINDRES_NEEDS_FLAG=true" >> "$GITHUB_ENV"
+          elif command -v llvm-rc >/dev/null 2>&1; then
+            echo "ARM64EC_WINDRES=llvm-rc" >> "$GITHUB_ENV"
+            echo "ARM64EC_WINDRES_NEEDS_FLAG=false" >> "$GITHUB_ENV"
+            echo "::warning::Using llvm-rc for ARM64EC .rc — prefer *-windres"
+          else
+            echo "::error::No windres/llvm-rc found for ARM64EC"; exit 1
+          fi
+
+          # windres 후보 (i686)
+          if command -v i686-w64-mingw32-windres >/dev/null 2>&1; then
+            echo "I686_WINDRES=i686-w64-mingw32-windres" >> "$GITHUB_ENV"
+          elif command -v llvm-rc >/dev/null 2>&1; then
+            echo "I686_WINDRES=llvm-rc" >> "$GITHUB_ENV"
+          else
+            echo "::error::No windres/llvm-rc found for i686"; exit 1
+          fi
+
+      - name: Detect libc++ headers (fallback only)
+        id: cxx
         run: |
-          set -x
-          which clang
-          which i686-w64-mingw32-clang
-          which llvm-rc
-          which llvm-ar
-          which llvm-nm
-          which llvm-readobj
+          set -Eeuo pipefail
+          CXX_INCLUDE=""
+          for d in "$LLVM_MINGW_DIR/include/c++/v1" "$LLVM_MINGW_DIR/arm64ec-w64-mingw32/include/c++/v1"; do
+            if [ -d "$d" ]; then CXX_INCLUDE="$d"; break; fi
+          done
+          [ -n "$CXX_INCLUDE" ] && echo "CXX_INCLUDE=$CXX_INCLUDE" >> "$GITHUB_OUTPUT" || true
+          echo "Detected C++ include (fallback): ${CXX_INCLUDE:-<none>}"
 
-          # ARM64EC helper 라이브러리 존재 확인 + 경로 추출
-          ARM_WIN_DIR="$(echo "$LLVM_MINGW_DIR"/lib/clang/*/lib/windows)"
+      - name: Locate ARM64EC helper (libclang_rt.builtins-arm64ec.a)
+        id: helper
+        run: |
+          set -Eeuo pipefail
+          ARM_WIN_DIR="$(ls -d "$LLVM_MINGW_DIR"/lib/clang/*/lib/windows | LC_ALL=C sort -V | tail -n1)"
+          [ -d "$ARM_WIN_DIR" ] || { echo "::error::No clang windows lib dir found"; exit 1; }
           HELPER="$ARM_WIN_DIR/libclang_rt.builtins-arm64ec.a"
           [ -f "$HELPER" ] || { echo "::error::missing $HELPER"; exit 1; }
-
           echo "ARM_WIN_DIR=$ARM_WIN_DIR" >> "$GITHUB_OUTPUT"
-          echo "ARM64EC_HELPER_LIB=$HELPER" >> "$GITHUB_OUTPUT"
-
-          echo "== nm: expect __icall_helper_arm64ec symbol =="
-          if ! llvm-nm -g "$HELPER" | grep -q '__icall_helper_arm64ec'; then
-            echo "::warning::__icall_helper_arm64ec not visible via nm (will still force include with --whole-archive)"
-          fi
+          echo "HELPER=$HELPER" >> "$GITHUB_OUTPUT"
+          echo "nm check (optional):"
+          llvm-nm -g "$HELPER" | grep -E '__icall_helper_arm64ec' || echo "(symbol not listed but archive will be force-included)"
 
       - name: Clone DXVK-Sarek (main + submodules)
         run: |
-          git clone --recurse-submodules https://github.com/${SAREK_REPO}.git src
+          git clone --recurse-submodules "https://github.com/${SAREK_REPO}.git" src
           cd src
-          git fetch origin main --force
+          git fetch --force origin main
           git checkout -f origin/main
           git submodule update --init --recursive --checkout
 
       - name: Write Meson cross file (ARM64EC)
+        working-directory: src
+        env:
+          USE_ARM64EC_WRAPPER: ${{ env.USE_ARM64EC_WRAPPER }}
         run: |
-          cat > cross.arm64ec.ini <<'INI'
+          set -Eeuo pipefail
+          ARM_WIN_DIR='${{ steps.helper.outputs.ARM_WIN_DIR }}'
+          HELPER='${{ steps.helper.outputs.HELPER }}'
+
+          # windres command 배열 구성
+          if [ "${ARM64EC_WINDRES_NEEDS_FLAG:-false}" = "true" ]; then
+            WINDRES_LINE="['${ARM64EC_WINDRES}', '-F', 'pe-arm64ec']"
+          else
+            WINDRES_LINE="'${ARM64EC_WINDRES}'"
+          fi
+
+          # 기본 args
+          CARGS="[]"; CPARGS="[]"
+          CBIN="arm64ec-w64-mingw32-clang"
+          CXXBIN="arm64ec-w64-mingw32-clang++"
+
+          if [ "${USE_ARM64EC_WRAPPER}" != "true" ]; then
+            # 폴백: clang/clang++ --target + libc++ -isystem 경로 주입
+            CBIN="['clang','--target=arm64ec-w64-mingw32']"
+            CXXBIN="['clang++','--target=arm64ec-w64-mingw32']"
+            if [ -n "${{ steps.cxx.outputs.CXX_INCLUDE }}" ]; then
+              CARGS="['-isystem','${{ steps.cxx.outputs.CXX_INCLUDE }}']"
+              CPARGS="$CARGS"
+            fi
+          fi
+
+          cat > cross.arm64ec.ini <<EOF
           [binaries]
-          c = ['clang',   '--target=arm64ec-w64-mingw32']
-          cpp = ['clang++','--target=arm64ec-w64-mingw32']
+          c = ${CBIN}
+          cpp = ${CXXBIN}
           ar = 'llvm-ar'
           strip = 'llvm-strip'
-          windres = ['llvm-rc']
+          windres = ${WINDRES_LINE}
+          pkg-config = 'pkg-config'
 
           [host_machine]
           system = 'windows'
-          cpu_family = 'arm64'
-          cpu = 'arm64'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
           endian = 'little'
 
           [built-in options]
-          c_args = ['-D_WIN32_WINNT=0x0A00','-DWINVER=0x0A00']
-          cpp_args = ['-D_WIN32_WINNT=0x0A00','-DWINVER=0x0A00']
-          # 핵심: ARM64EC helper 정적 라이브러리를 강제로 통째로 포함해 심볼 미해결 방지
-          c_link_args = []
-          cpp_link_args = []
-          INI
-
-          # 동적으로 helper 경로 추가 (whole-archive)
-          sed -i "s|^c_link_args = \[\]|c_link_args = ['-fuse-ld=lld','-Wl,--whole-archive,${{ steps.tc.outputs.ARM64EC_HELPER_LIB }},--no-whole-archive','-L${{ steps.tc.outputs.ARM_WIN_DIR }}']|" cross.arm64ec.ini
-          sed -i "s|^cpp_link_args = \[\]|cpp_link_args = ['-fuse-ld=lld','-Wl,--whole-archive,${{ steps.tc.outputs.ARM64EC_HELPER_LIB }},--no-whole-archive','-L${{ steps.tc.outputs.ARM_WIN_DIR }}']|" cross.arm64ec.ini
+          c_args = ${CARGS}
+          cpp_args = ${CPARGS}
+          # 핵심: ARM64EC 링커 타깃 + compiler-rt helper를 통째로 포함
+          c_link_args = ['-fuse-ld=lld','-Wl,/machine:arm64ec','-Wl,--whole-archive,${HELPER},--no-whole-archive','-L','${ARM_WIN_DIR}']
+          cpp_link_args = ['-fuse-ld=lld','-Wl,/machine:arm64ec','-Wl,--whole-archive,${HELPER},--no-whole-archive','-L','${ARM_WIN_DIR}']
+          EOF
 
           echo "### cross.arm64ec.ini"
           cat cross.arm64ec.ini
 
       - name: Write Meson cross file (i686)
+        working-directory: src
         run: |
-          cat > cross.i686.ini <<'INI'
+          set -Eeuo pipefail
+          # i686 windres
+          if [ -n "${I686_WINDRES:-}" ]; then
+            WINDRES_LINE="'${I686_WINDRES}'"
+          else
+            WINDRES_LINE="'llvm-rc'"
+          fi
+
+          cat > cross.i686.ini <<EOF
           [binaries]
           c = 'i686-w64-mingw32-clang'
           cpp = 'i686-w64-mingw32-clang++'
           ar = 'llvm-ar'
           strip = 'llvm-strip'
-          windres = ['llvm-rc']
+          windres = ${WINDRES_LINE}
+          pkg-config = 'pkg-config'
 
           [host_machine]
           system = 'windows'
@@ -128,64 +216,75 @@ jobs:
           endian = 'little'
 
           [built-in options]
-          c_args = ['-D_WIN32_WINNT=0x0601','-DWINVER=0x0601']
-          cpp_args = ['-D_WIN32_WINNT=0x0601','-DWINVER=0x0601']
+          c_args = []
+          cpp_args = []
           c_link_args = ['-fuse-ld=lld']
           cpp_link_args = ['-fuse-ld=lld']
-          INI
+          EOF
+
           echo "### cross.i686.ini"
           cat cross.i686.ini
 
       - name: Build (ARM64EC)
         working-directory: src
+        env:
+          PREFIX: ${{ env.OUT_DIR }}/arm64ec
         run: |
-          PREFIX="${{ env.OUT_DIR }}/arm64ec"
           rm -rf build.arm64ec "$PREFIX"
           meson setup build.arm64ec \
-            --cross-file ../cross.arm64ec.ini \
+            --cross-file cross.arm64ec.ini \
             --buildtype release \
             --prefix "$PREFIX" \
             -Dbuild_id=false -Dstrip=true
           ninja -C build.arm64ec -j"$(nproc)"
           meson install --no-rebuild -C build.arm64ec
 
-          echo "== file headers =="
+          echo "== verify PE headers (ARM64EC) =="
           find "$PREFIX/bin" -name '*.dll' -print0 | xargs -0 -I{} sh -c 'echo "# {}"; llvm-readobj -file-headers "{}" | sed -n "1,40p"'
 
       - name: Build (i686)
         working-directory: src
+        env:
+          PREFIX: ${{ env.OUT_DIR }}/i686
         run: |
-          PREFIX="${{ env.OUT_DIR }}/i686"
           rm -rf build.i686 "$PREFIX"
           meson setup build.i686 \
-            --cross-file ../cross.i686.ini \
+            --cross-file cross.i686.ini \
             --buildtype release \
             --prefix "$PREFIX" \
             -Dbuild_id=false -Dstrip=true
           ninja -C build.i686 -j"$(nproc)"
           meson install --no-rebuild -C build.i686
 
-      - name: Prepare artifacts
+      - name: Collect & list DLLs
         run: |
+          set -Eeuo pipefail
           mkdir -p "$OUT_DIR/zips"
-          (cd "$OUT_DIR/arm64ec/bin" && ls -1 *.dll || true)
-          (cd "$OUT_DIR/i686/bin"    && ls -1 *.dll || true)
+          echo "ARM64EC DLLs:"; ls -1 "$OUT_DIR/arm64ec/bin"/*.dll 2>/dev/null || true
+          echo "i686 DLLs:";   ls -1 "$OUT_DIR/i686/bin"/*.dll    2>/dev/null || true
 
-          tar -C "$OUT_DIR/arm64ec/bin" -czf "$OUT_DIR/zips/dxvk-sarek-arm64ec-dlls.tgz" .
-          tar -C "$OUT_DIR/i686/bin"    -czf "$OUT_DIR/zips/dxvk-sarek-i686-dlls.tgz" .
+          if [ -z "$(find "$OUT_DIR/arm64ec/bin" -name '*.dll' -print -quit)" ] && \
+             [ -z "$(find "$OUT_DIR/i686/bin"    -name '*.dll' -print -quit)" ]; then
+            echo "::error::No DLLs produced"; exit 1
+          fi
+
+          tar -C "$OUT_DIR/arm64ec/bin" -czf "$OUT_DIR/zips/dxvk-sarek-arm64ec-dlls.tgz" . 2>/dev/null || true
+          tar -C "$OUT_DIR/i686/bin"    -czf "$OUT_DIR/zips/dxvk-sarek-i686-dlls.tgz"    . 2>/dev/null || true
 
       - name: Upload ARM64EC DLLs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dxvk-sarek-arm64ec-dlls
           path: ${{ env.OUT_DIR }}/zips/dxvk-sarek-arm64ec-dlls.tgz
-          if-no-files-found: error
-          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 6
 
       - name: Upload i686 DLLs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dxvk-sarek-i686-dlls
           path: ${{ env.OUT_DIR }}/zips/dxvk-sarek-i686-dlls.tgz
-          if-no-files-found: error
-          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 6
