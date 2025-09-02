@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   guard:
-    name: Check Update (detect new DXVK tag + GPLAsync patch)
+    name: Check Update (detect new DXVK tag + GPLAsync release map)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -29,15 +29,16 @@ jobs:
       RELEASE_TAG: DXVK-GPLASYNC
       GPLASYNC_BASE_URL: https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/patches
       DXVK_REPO: doitsujin/dxvk
+      GITLAB_PROJECT: Ph42oN/dxvk-gplasync
     steps:
       - name: Install jq, curl (minimal)
         run: |
           sudo apt-get -yq update
           sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
-          
+
 # ------------------------------------------------------------------------------ #
 
-      - name: Collect already-published (base,rev)           # Read current assets to avoid duplicates
+      - name: Collect already-published (base,rev)
         id: have
         run: |
           set -Eeuo pipefail
@@ -48,25 +49,56 @@ jobs:
                   "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
           if [ "$HTTP" = "200" ]; then
             jq -r '.assets[].name' /tmp/rel.json \
-              | sed -n -E 's/^dxvk-gplasync-([0-9]+\.[0-9]+(\.[0-9]+)?)-([0-9]+)\.wcp$/\1 \3/p' \
+              | sed -n -E 's/^dxvk-gplasync-([0-9]+\.[0-9]+(\.[0-9]+)?)-([1-9])\.wcp$/\1 \3/p' \
               | LC_ALL=C sort -V > /tmp/exist.txt
           else
             : > /tmp/exist.txt
           fi
           echo "Existing base/rev:"; cat /tmp/exist.txt || true
 
-      - name: Detect any missing candidate (API-only)        # Build only when a suitable patch exists and is new
+      - name: Build GPLAsync release map (from GitLab Releases)
+        id: relmap
+        env:
+          GITLAB_PROJECT: ${{ env.GITLAB_PROJECT }}
+        run: |
+          set -Eeuo pipefail
+          GL_API="https://gitlab.com/api/v4/projects/$(python3 - <<'PY'
+import urllib.parse, os
+print(urllib.parse.quote(os.environ['GITLAB_PROJECT'], safe=''))
+PY
+)"
+          : > /tmp/gl_rel.jsonl
+          page=1
+          while :; do
+            curl -fsSL -D /tmp/h "${GL_API}/releases?per_page=100&page=${page}" -o /tmp/p.json || true
+            jq -c '.[]' /tmp/p.json >> /tmp/gl_rel.jsonl || true
+            next=$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')
+            [[ -z "${next:-}" || "${next}" == 0 ]] && break
+            page="${next}"
+          done
+
+          # Extract highest revision per base (rev in 1..9) from tag or name, allow optional 'v' prefix
+          { cat /tmp/gl_rel.jsonl | jq -r '[.tag_name,.name] | map(select(.!=null)) | .[]' ; } \
+            | grep -Eio 'v?[0-9]+\.[0-9]+(\.[0-9]+)?-[1-9]' || true \
+            | sed -E 's/^[Vv]//' \
+            | awk -F- '{print $1" "$2}' \
+            | awk '{b=$1; r=$2+0; if(r>0 && r<=9 && r>max[b]) max[b]=r} END{for(b in max) print b, max[b]}' \
+            | LC_ALL=C sort -V > /tmp/relmax.txt || true
+
+          echo "Release map (base -> max rev):"; cat /tmp/relmax.txt || true
+
+      - name: Detect any missing candidate (use release map; prefer exact base, then major.minor)
         id: detect
         env:
           GH_TOKEN: ${{ env.GH_TOKEN }}
           DXVK_REPO: ${{ env.DXVK_REPO }}
-          GPLASYNC_BASE_URL: ${{ env.GPLASYNC_BASE_URL }}
         run: |
           set -Eeuo pipefail
           API="https://api.github.com"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
-          # Fetch tags and keep semantic v* >= 2.3.1
+
+          # Fetch DXVK tags and keep semantic v* >= 2.3.1
           curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${DXVK_REPO}/tags?per_page=100" \
             | jq -r '.[].name' \
             | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
@@ -83,24 +115,21 @@ jobs:
           while read -r tag; do
             [ -n "$tag" ] || continue
             base="${tag#v}"
-            mm="${base%.*}"
+            IFS=. read -r A B C <<<"$base"
+            mm=""; [[ -n "${C:-}" ]] && mm="${A}.${B}"
 
-            found_rev=""
-            # Try exact base first
-            for n in 9 8 7 6 5 4 3 2 1; do
-              url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${base}-${n}.patch"
-              if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; break; fi
-            done
-            # Fallback to major.minor if exact not found
-            if [ -z "$found_rev" ] && [ "$mm" != "$base" ]; then
-              for n in 9 8 7 6 5 4 3 2 1; do
-                url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${mm}-${n}.patch"
-                if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; break; fi
-              done
+            # Lookup rev from release map
+            rev="$(awk -v b="$base" '$1==b{print $2}' /tmp/relmax.txt | head -n1)"
+            patch_base=""
+            if [[ -n "$rev" ]]; then
+              patch_base="$base"
+            elif [[ -n "$mm" ]]; then
+              rev="$(awk -v b="$mm" '$1==b{print $2}' /tmp/relmax.txt | head -n1)"
+              [[ -n "$rev" ]] && patch_base="$mm"
             fi
 
-            if [ -n "$found_rev" ] && ! grep -Fq "${base} ${found_rev}" /tmp/exist.txt; then
-              echo "Missing: ${base}-${found_rev}"
+            if [[ -n "$rev" ]] && ! grep -Fq "${base} ${rev}" /tmp/exist.txt; then
+              echo "Missing: ${base}-${rev} (patch_base: ${patch_base:-$base})"
               echo "yes" > /tmp/missing.flag
               break
             fi
@@ -112,7 +141,7 @@ jobs:
             echo "missing=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Decide build                                    # Boolean output for downstream job
+      - name: Decide build
         id: decide
         run: |
           set -Eeuo pipefail
@@ -135,8 +164,8 @@ jobs:
       TOOLCHAIN_DIR: /opt/llvm-mingw
       RELEASE_TAG: DXVK-GPLASYNC
       GH_TOKEN: ${{ github.token }}
-      # Pinned llvm-mingw. Override via workflow input/env if needed.
       LLVM_MINGW_TAG: ${{ vars.LLVM_MINGW_TAG || '20250613' }}
+      GITLAB_PROJECT: Ph42oN/dxvk-gplasync
     steps:
       - name: Install host tooling (lean set; no cache)
         run: |
@@ -214,10 +243,11 @@ jobs:
           git -C src config user.name "DXVK Builder"
           git -C src config user.email "builder@users.noreply.github.com"
 
-      - name: Resolve versions & compute NEW to build
+      - name: Resolve versions & compute NEW to build (release-aware)
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
+          GITLAB_PROJECT: ${{ env.GITLAB_PROJECT }}
         run: |
           set -Eeuo pipefail
           cd src
@@ -236,36 +266,62 @@ jobs:
           if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             gh api repos/"${REPO}"/releases/tags/"${RELEASE_TAG}" \
               | jq -r '.assets[].name' \
-              | sed -n -E 's/^dxvk-gplasync-([0-9]+\.[0-9]+(\.[0-9]+)?)\-([0-9]+)\.wcp$/\1 \3/p' \
+              | sed -n -E 's/^dxvk-gplasync-([0-9]+\.[0-9]+(\.[0-9]+)?)\-([1-9])\.wcp$/\1 \3/p' \
               | LC_ALL=C sort -V > "$EXIST" || true
           fi
 
+          # Build release map from GitLab (allow optional 'v' prefix in names)
+          GL_API="https://gitlab.com/api/v4/projects/$(python3 - <<'PY'
+import urllib.parse, os
+print(urllib.parse.quote(os.environ['GITLAB_PROJECT'], safe=''))
+PY
+)"
+          : > /tmp/gl_rel.jsonl
+          page=1
+          while :; do
+            curl -fsSL -D /tmp/h "${GL_API}/releases?per_page=100&page=${page}" -o /tmp/p.json || true
+            jq -c '.[]' /tmp/p.json >> /tmp/gl_rel.jsonl || true
+            next=$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')
+            [[ -z "${next:-}" || "${next}" == 0 ]] && break
+            page="${next}"
+          done
+
+          { cat /tmp/gl_rel.jsonl | jq -r '[.tag_name,.name] | map(select(.!=null)) | .[]' ; } \
+            | grep -Eio 'v?[0-9]+\.[0-9]+(\.[0-9]+)?-[1-9]' || true \
+            | sed -E 's/^[Vv]//' \
+            | awk -F- '{print $1" "$2}' \
+            | awk '{b=$1; r=$2+0; if(r>0 && r<=9 && r>max[b]) max[b]=r} END{for(b in max) print b, max[b]}' \
+            | LC_ALL=C sort -V > /tmp/relmax.txt || true
+
           while IFS= read -r tag; do
             [ -n "$tag" ] || continue
-            base="${tag#v}"; mm="${base%.*}"
+            base="${tag#v}"
+            IFS=. read -r A B C <<<"$base"
+            mm=""; [[ -n "${C:-}" ]] && mm="${A}.${B}"
+
             found_rev=""; patch_base=""
-            # Try exact base first
-            for n in 9 8 7 6 5 4 3 2 1; do
-              url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${base}-${n}.patch"
-              if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; patch_base="$base"; break; fi
-            done
-            # Fallback to major.minor when exact not found
-            if [[ -z "$found_rev" && "$mm" != "$base" ]]; then
-              for n in 9 8 7 6 5 4 3 2 1; do
-                url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${mm}-${n}.patch"
-                if curl -fsI "$url" >/dev/null 2>&1; then found_rev="$n"; patch_base="$mm"; break; fi
-              done
+            r=$(awk -v b="$base" '$1==b{print $2}' /tmp/relmax.txt | head -n1)
+            if [[ -n "$r" ]]; then
+              found_rev="$r"; patch_base="$base"
+            elif [[ -n "$mm" ]]; then
+              r=$(awk -v b="$mm" '$1==b{print $2}' /tmp/relmax.txt | head -n1)
+              if [[ -n "$r" ]]; then
+                found_rev="$r"; patch_base="$mm"
+              fi
             fi
-            # If no patch exists, skip this tag
+
+            # If no patch exists per releases, skip this tag
             if [[ -z "$found_rev" ]]; then
-              echo "::notice::No gplasync patch for ${base} (or ${mm}); skipping"
+              echo "::notice::No gplasync release for ${base}$( [[ -n "$mm" ]] && printf ' (or %s)' "$mm" ); skipping"
               continue
             fi
+
             # Skip if already built
             if grep -Fq "${base} ${found_rev}" "$EXIST"; then
               echo "Skip ${base}-${found_rev} (already built)"
               continue
             fi
+
             # Record work item: tag base rev patch_base
             echo "${tag} ${base} ${found_rev} ${patch_base}" >> "${GITHUB_WORKSPACE}/to_build.txt"
           done < "${GITHUB_WORKSPACE}/versions.txt"
@@ -292,7 +348,7 @@ jobs:
 
             CHANGED=0
             # patches --------------------------------------------------------------- #
-            # Apply gplasync patch (use git am, fallback to apply --reject)
+            # Apply gplasync patch picked from Releases map
             url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${patch_base}-${rev}.patch"
             curl -fL "$url" -o /tmp/gpl.patch
             git config user.name  ci
@@ -309,7 +365,7 @@ jobs:
                 's/\bstatic\s+(?:const|constexpr)\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
                 -i "$TEX" && CHANGED=1
             fi
-            
+
             # patches --------------------------------------------------------------- #
             # Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate if toolchain has it
             INC="src/d3d9/d3d9_include.h"
@@ -321,7 +377,7 @@ jobs:
                 perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;//s' -i "$INC" && CHANGED=1
               fi
             fi
-            
+
             # patches --------------------------------------------------------------- #
             # Mismatched-tags warning: align forward decl to 'struct' (optional)
             MEM="src/dxvk/dxvk_memory.h"
@@ -337,7 +393,6 @@ jobs:
             # Build using official script + cross files ----------------------------- #
             PKGDIR="${GITHUB_WORKSPACE}/pkg"
             mkdir -p "$PKGDIR"
-            # --no-package to keep unpacked tree; --dev-build keeps build dirs for faster rebuilds (harmless)
             ./package-release.sh "$tag" "$PKGDIR" --no-package --dev-build
 
             # Collect DLLs
@@ -345,7 +400,6 @@ jobs:
             cp -v "${PREFIX_X64}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
             cp -v "${PREFIX_X86}/bin/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
 
-            # Build profile.json from discovered DLLs
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
             if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
@@ -377,7 +431,6 @@ jobs:
                 ]
               }' > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
 
-            # Pack WCP (reproducible-ish tar owner/group/sort); date from tag
             export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct "$tag")"
             mkdir -p "${GITHUB_WORKSPACE}/out"
             tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
