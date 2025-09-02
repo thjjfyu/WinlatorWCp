@@ -99,25 +99,71 @@ jobs:
           #ifndef ARM64EC_PREINCLUDE_GUARD
           #define ARM64EC_PREINCLUDE_GUARD 1
 
-          /* Disable all x86/x64 arch macros */
-          #ifdef __i386__      #undef __i386__   #endif
-          #ifdef __i386        #undef __i386     #endif
-          #ifdef _M_IX86       #undef _M_IX86    #endif
-          #ifdef _X86_         #undef _X86_      #endif
-          #ifdef __x86_64__    #undef __x86_64__ #endif
-          #ifdef __x86_64      #undef __x86_64   #endif
-          #ifdef __amd64__     #undef __amd64__  #endif
-          #ifdef __amd64       #undef __amd64    #endif
-          #ifdef _M_X64        #undef _M_X64     #endif
-          #ifdef _M_AMD64      #undef _M_AMD64   #endif
-          #ifdef _AMD64_       #undef _AMD64_    #endif
+          /* Disable all x86/x64 arch macros (each on its own line; no inline directives) */
+          #ifdef __i386__
+          #undef __i386__
+          #endif
+
+          #ifdef __i386
+          #undef __i386
+          #endif
+
+          #ifdef _M_IX86
+          #undef _M_IX86
+          #endif
+
+          #ifdef _X86_
+          #undef _X86_
+          #endif
+
+          #ifdef __x86_64__
+          #undef __x86_64__
+          #endif
+
+          #ifdef __x86_64
+          #undef __x86_64
+          #endif
+
+          #ifdef __amd64__
+          #undef __amd64__
+          #endif
+
+          #ifdef __amd64
+          #undef __amd64
+          #endif
+
+          #ifdef _M_X64
+          #undef _M_X64
+          #endif
+
+          #ifdef _M_AMD64
+          #undef _M_AMD64
+          #endif
+
+          #ifdef _AMD64_
+          #undef _AMD64_
+          #endif
 
           /* Assert ARM64/ARM64EC */
-          #ifndef __aarch64__  #define __aarch64__ 1  #endif
-          #ifndef _M_ARM64     #define _M_ARM64  1    #endif
-          #ifndef __ARM64EC__  #define __ARM64EC__ 1  #endif
-          #ifndef _M_ARM64EC   #define _M_ARM64EC 1   #endif
-          #ifndef __CHPE__     #define __CHPE__ 1     #endif
+          #ifndef __aarch64__
+          #define __aarch64__ 1
+          #endif
+
+          #ifndef _M_ARM64
+          #define _M_ARM64 1
+          #endif
+
+          #ifndef __ARM64EC__
+          #define __ARM64EC__ 1
+          #endif
+
+          #ifndef _M_ARM64EC
+          #define _M_ARM64EC 1
+          #endif
+
+          #ifndef __CHPE__
+          #define __CHPE__ 1
+          #endif
 
           /* Conservative: reduce inline-asm based paths in some headers */
           #ifndef __NO_INLINE__
@@ -230,6 +276,9 @@ jobs:
         working-directory: src
         env:
           PREFIX: ${{ env.OUT_DIR }}/arm64ec
+          # 안전벨트: shim 경로를 환경변수에도 주입
+          CPLUS_INCLUDE_PATH: ${{ github.workspace }}/src/shim:$CPLUS_INCLUDE_PATH
+          C_INCLUDE_PATH: ${{ github.workspace }}/src/shim:$C_INCLUDE_PATH
         run: |
           set -Eeuo pipefail
           rm -rf build.arm64ec "$PREFIX"
@@ -242,7 +291,7 @@ jobs:
             sed -n '1,200p' build.arm64ec/meson-logs/meson-log.txt || true
             exit 1
           fi
-          ninja -C build.arm64ec -j"$(nproc)"
+          ninja -v -C build.arm64ec -j"$(nproc)"
           meson install --no-rebuild -C build.arm64ec
 
       - name: Build (i686)
@@ -261,7 +310,7 @@ jobs:
             sed -n '1,200p' build.i686/meson-logs/meson-log.txt || true
             exit 1
           fi
-          ninja -C build.i686 -j"$(nproc)"
+          ninja -v -C build.i686 -j"$(nproc)"
           meson install --no-rebuild -C build.i686
 
       - name: Quick sanity — print PE headers
