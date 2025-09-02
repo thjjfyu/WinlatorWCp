@@ -129,28 +129,36 @@ jobs:
         run: |
           set -Eeuo pipefail
           API="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/tags/${TAG}"
-          json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$API")
-          # Prefer Ubuntu 22.04, then 20.04
-          for dist in 22.04 20.04; do
-            url=$(echo "$json" | jq -r \
-              ".assets[] | select(.name|test(\"ucrt-ubuntu-${dist}-x86_64\\.tar\\.xz$\")) .browser_download_url" | head -n1)
-            [[ -n "$url" ]] && break
-          done
-          if [[ -z "$url" ]]; then
-            echo "::warning::Pinned llvm-mingw ${TAG} asset not found; falling back to latest";
-            json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
+          json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$API" || true)
+
+          pick_url() {
+            local json="$1"
+            local url=""
             for dist in 22.04 20.04; do
-              url=$(echo "$json" | jq -r \
-                ".assets[] | select(.name|test(\"ucrt-ubuntu-${dist}-x86_64\\.tar\\.xz$\")) .browser_download_url" | head -n1)
-              [[ -n "$url" ]] && break
+              # Use character class for dot to avoid double-escaping in jq strings
+              re="ucrt-ubuntu-${dist}-x86_64[.]tar[.]xz$"
+              url=$(jq -r --arg re "$re" '.assets[] | select(.name|test($re)) | .browser_download_url' <<<"$json" | head -n1 || true)
+              [[ -n "$url" && "$url" != "null" ]] && { echo "$url"; return 0; }
             done
+            return 1
+          }
+
+          url="$(pick_url "$json" || true)"
+          if [[ -z "${url:-}" ]]; then
+            echo "::warning::Pinned llvm-mingw ${TAG} asset not found; falling back to latest"
+            json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
+            url="$(pick_url "$json" || true)"
           fi
-          [[ -n "$url" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
+
+          [[ -n "${url:-}" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
+
           TOOLCHAIN_DIR=/opt/llvm-mingw
           sudo mkdir -p "$TOOLCHAIN_DIR"
           curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
           sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+
+      - name:
 
       - name: Clone DXVK (tags + submodules)
         run: |
