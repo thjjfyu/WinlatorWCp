@@ -4,41 +4,48 @@ on:
   workflow_dispatch:
 
 env:
-  TOOLCHAIN_URL: "https://github.com/bylaws/llvm-mingw/releases/download/20250305/llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz"
+  # Upstream SAREK repo & fixed ARM64EC toolchain
   UPSTREAM_REPO: pythonlover02/DXVK-Sarek
+  TOOLCHAIN_URL: https://github.com/bylaws/llvm-mingw/releases/download/20250305/llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz
 
 jobs:
   build:
     runs-on: ubuntu-24.04
+
     steps:
       - name: Checkout this repo (workflow)
         uses: actions/checkout@v4
 
       - name: Install build dependencies
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ninja-build meson python3 \
-            glslang-tools ca-certificates curl xz-utils pkgconf git
+            glslang-tools ca-certificates curl xz-utils \
+            pkgconf jq git
 
       - name: Resolve latest release tag on 'main' (upstream)
         id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends jq
           api="https://api.github.com/repos/${{ env.UPSTREAM_REPO }}"
-          tag=$(curl -fsSL -H "Authorization: Bearer ${{ github.token }}" -H "X-GitHub-Api-Version: 2022-11-28" "$api/releases" \
+          # Prefer the most recent published release that targets 'main'
+          tag=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "X-GitHub-Api-Version: 2022-11-28" "$api/releases" \
             | jq -r '[.[] | select(.draft==false and .prerelease==false and .target_commitish=="main")] 
                       | (max_by(.created_at//.published_at) | .tag_name) // ""')
           if [ -z "$tag" ]; then
-            tag=$(curl -fsSL -H "Authorization: Bearer ${{ github.token }}" -H "X-GitHub-Api-Version: 2022-11-28" "$api/releases/latest" \
+            # Fallback to 'latest'
+            tag=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "X-GitHub-Api-Version: 2022-11-28" "$api/releases/latest" \
               | jq -r '.tag_name // ""')
           fi
-          [ -n "$tag" ] || { echo "::error::Failed to resolve a release tag"; exit 1; }
+          [ -n "$tag" ] || { echo "::error::Failed to resolve a release tag for ${{ env.UPSTREAM_REPO }}"; exit 1; }
           echo "Resolved tag: $tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout upstream DXVK-Sarek source (release tag)
+      - name: Checkout upstream DXVK-Sarek (release tag)
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM_REPO }}
@@ -48,19 +55,25 @@ jobs:
           path: dxvk
 
       - name: Download ARM64EC llvm-mingw toolchain (bylaws)
-        env:
-          URL: ${{ env.TOOLCHAIN_URL }}
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           mkdir -p "$HOME/toolchain"
-          curl -L "$URL" -o /tmp/llvm-mingw.tar.xz
+          curl -L "${{ env.TOOLCHAIN_URL }}" -o /tmp/llvm-mingw.tar.xz
           tar -xJf /tmp/llvm-mingw.tar.xz -C "$HOME/toolchain" --strip-components=1
           echo "$HOME/toolchain/bin" >> "$GITHUB_PATH"
-          arm64ec-w64-mingw32-gcc --version || true
+
+      - name: Show toolchain info (diagnostics)
+        run: |
+          set -euo pipefail
+          which arm64ec-w64-mingw32-g++
+          arm64ec-w64-mingw32-g++ --version
+          # Include search paths (useful for header issues)
+          arm64ec-w64-mingw32-g++ -v -E -x c++ /dev/null || true
 
       - name: Generate Meson cross file for ARM64EC
         working-directory: dxvk
         run: |
+          set -euo pipefail
           cat > arm64ec.meson <<'EOF'
           [binaries]
           ar = 'arm64ec-w64-mingw32-ar'
@@ -77,50 +90,61 @@ jobs:
           cpu = 'aarch64'
           endian = 'little'
           EOF
-          echo "Meson cross file:" && cat arm64ec.meson
+          echo "== arm64ec.meson =="
+          cat arm64ec.meson
 
-      - name: Pre-flight check
-        working-directory: dxvk
+      - name: Preflight macros (diagnostics)
         run: |
-          meson --version
-          test -f meson.build || { echo "::error::meson.build not found in $PWD"; ls -la; exit 1; }
-
-      - name: "Preflight: show key macros (for diagnosis) SAREK ONLY"
-        run: |
-          set -e
+          set -euo pipefail
           arm64ec-w64-mingw32-g++ -dM -E - < /dev/null | \
             egrep -E '__arm64ec__|_M_ARM64EC|__x86_64__|_M_X64|_M_AMD64' || true
 
-      - name: Patch DXVK headers for ARM64EC (avoid x86 intrinsics) SAREK ONLY
+      # --- SAREK-SPECIFIC PATCH START ---
+      # SAREK 전용: ARM64EC에서 x86 인트린식 헤더(<x86intrin.h> 등)가 포함되는 현상 차단
+      # (ARM64EC는 호환성 때문에 x64 매크로를 정의하므로, 아키텍처 분기가 x86 경로로 잘못 들어감)
+      - name: Patch SAREK headers to avoid x86 intrinsics on ARM64EC
         working-directory: dxvk
         run: |
           set -euo pipefail
-          # x86 전용 헤더를 포함시키는 분기를 ARM64EC에서 비활성화
-          files=$(grep -RIl "x86intrin.h" src || true)
-          if [ -n "$files" ]; then
-            for f in $files; do
-              echo "Patching $f"
-              sed -i -E \
-                -e "s/defined\\(__x86_64__\\)/defined(__x86_64__) \&\& !defined(__arm64ec__)/" \
-                -e "s/defined\\(_M_X64\\)/defined(_M_X64) \&\& !defined(_M_ARM64EC)/" \
-                "$f"
-            done
-          fi
-          # 참고용 diff (있으면)
-          git --no-pager diff -- src/util/util_bit.h || true
+          # 1) x86 인트린식 헤더 포함부를 ARM64EC에서 비활성화
+          git ls-files src include | xargs -r sed -i -E \
+            -e 's@(#\s*include\s*<)(x86intrin|x86gprintrin|immintrin|intrin)\.h>@#if !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)\n\1\2.h>\n#endif@g'
+          # 2) x86 감지 조건에서 ARM64EC 제외
+          git ls-files src include | xargs -r sed -i -E \
+            -e 's@defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)@defined(\1) \&\& !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)@g'
+          # 참고용 diff (있으면만 출력)
+          git --no-pager diff -- src/ include/ || true
+      # --- SAREK-SPECIFIC PATCH END ---
+
+      - name: Wipe build dir
+        working-directory: dxvk
+        run: |
+          rm -rf build.w64 install
+
+      - name: Preflight: meson.build presence
+        working-directory: dxvk
+        run: |
+          set -euo pipefail
+          test -f meson.build || { echo "::error::meson.build not found in $PWD"; ls -la; exit 1; }
 
       - name: Configure (Meson)
         working-directory: dxvk
         run: |
+          set -euo pipefail
           meson setup build.w64 . --cross-file arm64ec.meson --buildtype release --prefix "$PWD/install"
+          meson configure -C build.w64
 
       - name: Build
         working-directory: dxvk
-        run: meson compile -C build.w64
+        run: |
+          set -euo pipefail
+          meson compile -C build.w64 -v
 
       - name: Install into staging dir
         working-directory: dxvk
-        run: meson install -C build.w64
+        run: |
+          set -euo pipefail
+          meson install -C build.w64
 
       - name: Upload DLL artifacts
         uses: actions/upload-artifact@v4
@@ -130,3 +154,16 @@ jobs:
             dxvk/install/bin/*.dll
             dxvk/install/bin/*.pdb
           if-no-files-found: error
+
+      # 진단 로그는 빌드 성공/실패와 관계없이 항상 업로드
+      - name: Upload build logs (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxvk-sarek-arm64ec-logs
+          path: |
+            dxvk/build.w64/meson-logs/**
+            dxvk/build.w64/meson-info/**
+            dxvk/meson-logs/**
+            dxvk/arm64ec.meson
+          if-no-files-found: warn
