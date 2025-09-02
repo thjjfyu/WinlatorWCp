@@ -51,7 +51,7 @@ jobs:
           name="$(echo "$json" | jq -r '.assets[].name' | grep -E 'ucrt-ubuntu-20\.04-x86_64\.tar\.xz$' | head -n1)"
           if [ -z "$name" ]; then
             echo "::group::Available assets"; echo "$json" | jq -r '.assets[].name'; echo "::endgroup::"
-            echo "::error::ARM64EC-capable ubuntu-20.04 x86_64 tar.xz not found"; exit 1
+            echo "::error::ubuntu-20.04 x86_64 ucrt tar.xz asset not found"; exit 1
           fi
           url="$(echo "$json" | jq -r --arg N "$name" '.assets[] | select(.name==$N) .browser_download_url')"
           mkdir -p "$LLVM_MINGW_DIR"
@@ -100,56 +100,24 @@ jobs:
           #define ARM64EC_PREINCLUDE_GUARD 1
 
           /* Disable all x86/x64 arch macros */
-          #ifdef __i386__
-          #undef __i386__
-          #endif
-          #ifdef __i386
-          #undef __i386
-          #endif
-          #ifdef _M_IX86
-          #undef _M_IX86
-          #endif
-          #ifdef _X86_
-          #undef _X86_
-          #endif
-          #ifdef __x86_64__
-          #undef __x86_64__
-          #endif
-          #ifdef __x86_64
-          #undef __x86_64
-          #endif
-          #ifdef __amd64__
-          #undef __amd64__
-          #endif
-          #ifdef __amd64
-          #undef __amd64
-          #endif
-          #ifdef _M_X64
-          #undef _M_X64
-          #endif
-          #ifdef _M_AMD64
-          #undef _M_AMD64
-          #endif
-          #ifdef _AMD64_
-          #undef _AMD64_
-          #endif
+          #ifdef __i386__      #undef __i386__   #endif
+          #ifdef __i386        #undef __i386     #endif
+          #ifdef _M_IX86       #undef _M_IX86    #endif
+          #ifdef _X86_         #undef _X86_      #endif
+          #ifdef __x86_64__    #undef __x86_64__ #endif
+          #ifdef __x86_64      #undef __x86_64   #endif
+          #ifdef __amd64__     #undef __amd64__  #endif
+          #ifdef __amd64       #undef __amd64    #endif
+          #ifdef _M_X64        #undef _M_X64     #endif
+          #ifdef _M_AMD64      #undef _M_AMD64   #endif
+          #ifdef _AMD64_       #undef _AMD64_    #endif
 
           /* Assert ARM64/ARM64EC */
-          #ifndef __aarch64__
-          #define __aarch64__ 1
-          #endif
-          #ifndef _M_ARM64
-          #define _M_ARM64 1
-          #endif
-          #ifndef __ARM64EC__
-          #define __ARM64EC__ 1
-          #endif
-          #ifndef _M_ARM64EC
-          #define _M_ARM64EC 1
-          #endif
-          #ifndef __CHPE__
-          #define __CHPE__ 1
-          #endif
+          #ifndef __aarch64__  #define __aarch64__ 1  #endif
+          #ifndef _M_ARM64     #define _M_ARM64  1    #endif
+          #ifndef __ARM64EC__  #define __ARM64EC__ 1  #endif
+          #ifndef _M_ARM64EC   #define _M_ARM64EC 1   #endif
+          #ifndef __CHPE__     #define __CHPE__ 1     #endif
 
           /* Conservative: reduce inline-asm based paths in some headers */
           #ifndef __NO_INLINE__
@@ -160,6 +128,30 @@ jobs:
           EOF
           test -s arm64ec-preinclude.h
 
+      - name: Write ARM64EC shim headers (mask x86 intrinsics on ARM64EC)
+        working-directory: src
+        run: |
+          set -Eeuo pipefail
+          mkdir -p shim
+          cat > shim/x86intrin.h <<'EOF'
+          /* Shim to avoid pulling x86-only intrinsics on ARM64EC builds */
+          #if !defined(__ARM64EC__) && !defined(_M_ARM64EC)
+          #  include_next <x86intrin.h>
+          #else
+          /* no-op for ARM64EC */
+          #endif
+          EOF
+          cat > shim/immintrin.h <<'EOF'
+          /* Guarded include for x86 SIMD umbrella on ARM64EC */
+          #if !defined(__ARM64EC__) && !defined(_M_ARM64EC)
+          #  include_next <immintrin.h>
+          #else
+          /* no-op for ARM64EC */
+          #endif
+          EOF
+          echo "shim dir: $(pwd)/shim"
+          ls -l shim
+
       - name: Write Meson cross file (ARM64EC)
         working-directory: src
         env:
@@ -168,6 +160,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           PREINC="$(pwd)/arm64ec-preinclude.h"
+          SHIM_DIR="$(pwd)/shim"
           [ -f "$PREINC" ] || { echo "::error::missing $PREINC"; exit 1; }
 
           if command -v arm64ec-w64-mingw32-windres >/dev/null 2>&1; then
@@ -178,8 +171,8 @@ jobs:
 
           cat > cross.arm64ec.ini <<EOF
           [binaries]
-          c = ['arm64ec-w64-mingw32-clang','-target','arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec']
-          cpp = ['arm64ec-w64-mingw32-clang++','-target','arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec']
+          c = ['arm64ec-w64-mingw32-clang','-target','arm64ec-w64-mingw32']
+          cpp = ['arm64ec-w64-mingw32-clang++','-target','arm64ec-w64-mingw32']
           ar = 'llvm-ar'
           strip = 'llvm-strip'
           windres = ${WINDRES_LINE}
@@ -192,10 +185,10 @@ jobs:
           endian = 'little'
 
           [built-in options]
-          c_args = ['-include','${PREINC}','-D__aarch64__=1','-D_M_ARM64=1','-D__ARM64EC__=1','-D_M_ARM64EC=1','-D__CHPE__=1','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
-          cpp_args = ['-include','${PREINC}','-D__aarch64__=1','-D_M_ARM64=1','-D__ARM64EC__=1','-D_M_ARM64EC=1','-D__CHPE__=1','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
-          c_link_args = ['-L','${ARM_WIN_DIR}','-Wl,--whole-archive,${HELPER},--no-whole-archive']
-          cpp_link_args = ['-L','${ARM_WIN_DIR}','-Wl,--whole-archive,${HELPER},--no-whole-archive']
+          c_args = ['-I','${SHIM_DIR}','-include','${PREINC}','-D__aarch64__=1','-D_M_ARM64=1','-D__ARM64EC__=1','-D_M_ARM64EC=1','-D__CHPE__=1','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
+          cpp_args = ['-I','${SHIM_DIR}','-include','${PREINC}','-D__aarch64__=1','-D_M_ARM64=1','-D__ARM64EC__=1','-D_M_ARM64EC=1','-D__CHPE__=1','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
+          c_link_args = ['-fuse-ld=lld','-Wl,/machine:arm64ec','-L','${ARM_WIN_DIR}','-Wl,--whole-archive,${HELPER},--no-whole-archive']
+          cpp_link_args = ['-fuse-ld=lld','-Wl,/machine:arm64ec','-L','${ARM_WIN_DIR}','-Wl,--whole-archive,${HELPER},--no-whole-archive']
 
           [properties]
           needs_exe_wrapper = true
@@ -216,8 +209,8 @@ jobs:
 
           cat > cross.i686.ini <<EOF
           [binaries]
-          c = ['i686-w64-mingw32-clang','-fuse-ld=lld']
-          cpp = ['i686-w64-mingw32-clang++','-fuse-ld=lld']
+          c = ['i686-w64-mingw32-clang']
+          cpp = ['i686-w64-mingw32-clang++']
           ar = 'llvm-ar'
           strip = 'llvm-strip'
           windres = ${WINDRES_LINE}
