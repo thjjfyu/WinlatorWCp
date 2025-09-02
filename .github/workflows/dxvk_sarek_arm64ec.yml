@@ -174,7 +174,7 @@ jobs:
           [ -d build.w64 ] && rm -rf build.w64
           [ -d install   ] && rm -rf install
 
-      - name: Preflight: meson.build presence
+      - name: "Preflight: meson.build presence"
         working-directory: dxvk
         run: |
           set -euo pipefail
