@@ -398,42 +398,30 @@ jobs:
           meson install -C build.w64
 
       # === Trust gates (block artifacts if not meeting criteria) ===
-      - name: Verify ARM64EC machine type (PE parser; tool-agnostic)
+      - name: Verify ARM64EC machine type (tool-agnostic, pure Bash)
         working-directory: dxvk
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-      import glob, struct, sys
-      dlls = sorted(glob.glob('install/bin/*.dll'))
-      if not dlls:
-          print('::error::No DLLs found in install/bin')
-          sys.exit(1)
-      errors = 0
-      for p in dlls:
-          print(f'== {p} ==')
-          with open(p, 'rb') as f:
-              d = f.read(0x1000)
-          if len(d) < 0x40:
-              print(f'::error::{p}: file too small to be a PE')
-              errors += 1
-              continue
-          e_lfanew = struct.unpack_from('<I', d, 0x3C)[0]
-          with open(p, 'rb') as f:
-              f.seek(e_lfanew)
-              sig = f.read(4)
-              if sig != b"PE\0\0":
-                  print(f'::error::{p}: invalid PE signature {sig!r}')
-                  errors += 1
-                  continue
-              machine = struct.unpack('<H', f.read(2))[0]
-          if machine != 0xA641:
-              print(f'::error::{p}: Machine=0x{machine:04X}, expected 0xA641 (ARM64EC)')
-              errors += 1
-          else:
-              print(f'{p}: Machine=0xA641 (ARM64EC) OK')
-      sys.exit(1 if errors else 0)
-      PY
+          shopt -s nullglob
+          files=(install/bin/*.dll)
+          [ ${#files[@]} -gt 0 ] || { echo "::error::No DLLs found in install/bin"; exit 1; }
+          for f in "${files[@]}"; do
+            echo "== $f =="
+            # e_lfanew at 0x3C (60)
+            e_lfanew=$(od -An -tu4 -j 60 -N 4 "$f" | tr -d '[:space:]')
+            # check PE signature "PE\0\0" == 50 45 00 00
+            sig=$(dd if="$f" bs=1 skip="$e_lfanew" count=4 2>/dev/null | hexdump -v -e '1/1 "%02X"')
+            if [ "$sig" != "50450000" ]; then
+              echo "::error::$f: invalid PE signature $sig"; exit 1
+            fi
+            # read Machine (2 bytes, little-endian)
+            mach=$(od -An -tx2 -j $((e_lfanew+4)) -N 2 "$f" | tr -d '[:space:]')
+            if [ "${mach,,}" != "a641" ]; then
+              echo "::error::$f: Machine=0x$mach, expected 0xA641 (ARM64EC)"; exit 1
+            fi
+            echo "$f: Machine=0x$mach (ARM64EC) OK"
+          done
 
       - name: Enforce no x86 SIMD or x86 asm artifacts
         working-directory: dxvk
