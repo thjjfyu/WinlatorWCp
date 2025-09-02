@@ -132,7 +132,7 @@ jobs:
           git checkout -f origin/main
           git submodule update --init --recursive --checkout
 
-      - name: Write Meson cross file (ARM64EC)
+      - name: Write Meson cross file (ARM64EC) — FIX quoted binaries
         working-directory: src
         env:
           USE_ARM64EC_WRAPPER: ${{ env.USE_ARM64EC_WRAPPER }}
@@ -140,29 +140,30 @@ jobs:
           set -Eeuo pipefail
           ARM_WIN_DIR='${{ steps.helper.outputs.ARM_WIN_DIR }}'
           HELPER='${{ steps.helper.outputs.HELPER }}'
-
-          # windres command 배열 구성
+      
+          # windres 커맨드
           if [ "${ARM64EC_WINDRES_NEEDS_FLAG:-false}" = "true" ]; then
-            WINDRES_LINE="['${ARM64EC_WINDRES}', '-F', 'pe-arm64ec']"
+            WINDRES_LINE="['${ARM64EC_WINDRES}','-F','pe-arm64ec']"
           else
             WINDRES_LINE="'${ARM64EC_WINDRES}'"
           fi
-
-          # 기본 args
-          CARGS="[]"; CPARGS="[]"
-          CBIN="arm64ec-w64-mingw32-clang"
-          CXXBIN="arm64ec-w64-mingw32-clang++"
-
-          if [ "${USE_ARM64EC_WRAPPER}" != "true" ]; then
-            # 폴백: clang/clang++ --target + libc++ -isystem 경로 주입
+      
+          # 래퍼가 있으면 래퍼, 없으면 --target 폴백(+ libc++ -isystem 보정)
+          if [ "${USE_ARM64EC_WRAPPER}" = "true" ]; then
+            CBIN="['arm64ec-w64-mingw32-clang']"
+            CXXBIN="['arm64ec-w64-mingw32-clang++']"
+            CARGS="[]"; CPARGS="[]"
+          else
             CBIN="['clang','--target=arm64ec-w64-mingw32']"
             CXXBIN="['clang++','--target=arm64ec-w64-mingw32']"
             if [ -n "${{ steps.cxx.outputs.CXX_INCLUDE }}" ]; then
               CARGS="['-isystem','${{ steps.cxx.outputs.CXX_INCLUDE }}']"
               CPARGS="$CARGS"
+            else
+              CARGS="[]"; CPARGS="[]"
             fi
           fi
-
+      
           cat > cross.arm64ec.ini <<EOF
           [binaries]
           c = ${CBIN}
@@ -171,21 +172,21 @@ jobs:
           strip = 'llvm-strip'
           windres = ${WINDRES_LINE}
           pkg-config = 'pkg-config'
-
+      
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
-
+      
           [built-in options]
           c_args = ${CARGS}
           cpp_args = ${CPARGS}
-          # 핵심: ARM64EC 링커 타깃 + compiler-rt helper를 통째로 포함
+          # 핵심: ARM64EC 타깃 + compiler-rt helper를 통째로 포함
           c_link_args = ['-fuse-ld=lld','-Wl,/machine:arm64ec','-Wl,--whole-archive,${HELPER},--no-whole-archive','-L','${ARM_WIN_DIR}']
           cpp_link_args = ['-fuse-ld=lld','-Wl,/machine:arm64ec','-Wl,--whole-archive,${HELPER},--no-whole-archive','-L','${ARM_WIN_DIR}']
           EOF
-
+      
           echo "### cross.arm64ec.ini"
           cat cross.arm64ec.ini
 
