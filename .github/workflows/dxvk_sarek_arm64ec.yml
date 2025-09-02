@@ -1,242 +1,57 @@
-name: Build DXVK-Sarek (ARM64EC)
+name: build-dxvk-sarek-arm64ec
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
-  push:
-    branches: [ main, master ]
+
+env:
+  TOOLCHAIN_URL: "https://github.com/bylaws/llvm-mingw/releases/download/20250305/llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz"
 
 jobs:
-  arm64ec:
-    runs-on: ubuntu-22.04
-
-    env:
-      # ⬇️ 필요시 바꾸세요
-      SAREK_REPO: pythonlover02/DXVK-Sarek
-      LLVM_MINGW_DIR: ${{ github.workspace }}/.toolchains/llvm-mingw
-      OUT_DIR: ${{ github.workspace }}/out
-
+  build-arm64ec:
+    # Only build releases that target 'main'; allow manual runs
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && github.event.release.target_commitish == 'main') }}
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout this repo
+      - name: Checkout source (release tag if available)
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          submodules: recursive
+          fetch-depth: 0
 
       - name: Install build dependencies
         run: |
-          set -Eeuo pipefail
           sudo apt-get update
-          sudo apt-get install -y curl zstd jq ninja-build meson python3 pkg-config libvulkan-dev
-    
-      - name: Fetch DXVK-Sarek sources
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build meson python3 \
+            glslang-tools pkg-config-aarch64-linux-gnu ca-certificates curl xz-utils
+
+      - name: Download ARM64EC llvm-mingw toolchain (bylaws)
+        env:
+          URL: ${{ env.TOOLCHAIN_URL }}
         run: |
-          set -Eeuo pipefail
-          rm -rf src
-          git clone --depth=1 "https://github.com/${SAREK_REPO}.git" src
+          set -euxo pipefail
+          mkdir -p "$HOME/toolchain"
+          curl -L "$URL" -o /tmp/llvm-mingw.tar.xz
+          tar -xJf /tmp/llvm-mingw.tar.xz -C "$HOME/toolchain" --strip-components=1
+          echo "$HOME/toolchain/bin" >> "$GITHUB_PATH"
+          arm64ec-w64-mingw32-gcc --version || true
 
-      - name: Install LLVM-MinGW (bylaws) — Ubuntu 20.04 x86_64
+      - name: Generate Meson cross file for ARM64EC
         run: |
-          set -Eeuo pipefail
-          API="https://api.github.com/repos/bylaws/llvm-mingw/releases/latest"
-          json="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$API")"
-
-          # ubuntu-20.04-x86_64 타르볼만 선택 (22.04 폴백 제거)
-          url="$(
-            echo "$json" | jq -r '
-              .assets[]
-              | select((.name|test("ubuntu-20\\.04-x86_64";"i"))
-                       and (.name|test("\\.(tar\\.(xz|gz|zst)|t(x|g|z)z)$";"i")))
-              .browser_download_url' | head -n1
-          )"
-
-          if [ -z "$url" ]; then
-            echo "::group::Available assets (for debugging)"
-            echo "$json" | jq -r '.assets[].name'
-            echo "::endgroup::"
-            echo "::error::No llvm-mingw Ubuntu 20.04 x86_64 tarball found"
-            exit 1
-          fi
-
-          echo "Chosen: $url"
-          mkdir -p "$LLVM_MINGW_DIR"
-          file=/tmp/llvm-mingw.tar.any
-          curl -fL "$url" -o "$file"
-
-          # 해제
-          case "$url" in
-            *.tar.zst|*.tzst) tar -C "$LLVM_MINGW_DIR" --strip-components=1 --zstd -xvf "$file" ;;
-            *.tar.xz|*.txz)  tar -C "$LLVM_MINGW_DIR" --strip-components=1 -xJf  "$file" ;;
-            *.tar.gz|*.tgz)  tar -C "$LLVM_MINGW_DIR" --strip-components=1 -xzf  "$file" ;;
-            *)               tar -C "$LLVM_MINGW_DIR" --strip-components=1 -xvf  "$file" ;;
-          esac
-
-          echo "$LLVM_MINGW_DIR/bin" >> "$GITHUB_PATH"
-
-      - name: Show toolchain info & ensure ARM64EC runtime
-        run: |
-          set -Eeuo pipefail
-          arm64ec-w64-mingw32-clang --version
-          CLANG_DIR=$(ls -d "$LLVM_MINGW_DIR/lib/clang/"* | sort -V | tail -n1)
-          echo "CLANG_DIR=$CLANG_DIR"
-          test -f "$CLANG_DIR/lib/windows/libclang_rt.builtins-arm64ec.a" \
-            || { echo "::error::libclang_rt.builtins-arm64ec.a not found under $CLANG_DIR/lib/windows"; exit 1; }
-
-      - name: Prepare ARM64EC pre-include & source shims
-        working-directory: src
-        run: |
-          set -Eeuo pipefail
-          SRCDIR="$(pwd)"
-
-          # 1) 올바른 pre-include 헤더 (전처리기 지시문 1줄 1개)
-          cat > "$SRCDIR/arm64ec-preinclude.h" <<'H'
-          #ifndef ARM64EC_PREINCLUDE_GUARD
-          #define ARM64EC_PREINCLUDE_GUARD 1
-
-          /* zap x86/x64 id macros */
-          #ifdef __i386__
-          #undef __i386__
-          #endif
-          #ifdef __i386
-          #undef __i386
-          #endif
-          #ifdef _M_IX86
-          #undef _M_IX86
-          #endif
-          #ifdef _X86_
-          #undef _X86_
-          #endif
-          #ifdef __x86_64__
-          #undef __x86_64__
-          #endif
-          #ifdef __x86_64
-          #undef __x86_64
-          #endif
-          #ifdef __amd64__
-          #undef __amd64__
-          #endif
-          #ifdef __amd64
-          #undef __amd64
-          #endif
-          #ifdef _M_X64
-          #undef _M_X64
-          #endif
-          #ifdef _M_AMD64
-          #undef _M_AMD64
-          #endif
-          #ifdef _AMD64_
-          #undef _AMD64_
-          #endif
-
-          /* assert ARM/EC identity */
-          #ifndef __aarch64__
-          #define __aarch64__ 1
-          #endif
-          #ifndef _M_ARM64
-          #define _M_ARM64 1
-          #endif
-          #ifndef __ARM64EC__
-          #define __ARM64EC__ 1
-          #endif
-          #ifndef _M_ARM64EC
-          #define _M_ARM64EC 1
-          #endif
-          #ifndef __CHPE__
-          #define __CHPE__ 1
-          #endif
-
-          #endif /* ARM64EC_PREINCLUDE_GUARD */
-          H
-
-          # 2) util_bit.h: x86 인라인 ASM → ARM/EC에선 빌틴으로 래핑
-          python3 - <<'PY'
-          import re, os
-          p='src/util/util_bit.h'
-          if os.path.exists(p):
-              t=open(p,'r',encoding='utf-8',errors='ignore').read()
-              def wrap(fn,body):
-                  pat=r'(inline\s+[^;{]*\b%s\s*\([^)]*\)\s*\{)(.*?)(\n\})' % re.escape(fn)
-                  if re.search(pat,t,flags=re.S):
-                      t=re.sub(pat,
-                               r'\1\n#if defined(__aarch64__) || defined(__ARM64EC__) || defined(_M_ARM64) || defined(_M_ARM64EC)\n%s\n#else\n\2\n#endif\3' % body,
-                               t, flags=re.S)
-                      open(p,'w',encoding='utf-8').write(t)
-          PY
-
-          # 3) util_vector.h: 최소 SSE 에뮬 (한 번만 삽입)
-          V=src/util/util_vector.h
-          if [ -f "$V" ] && ! grep -q 'DXVK_NO_X86_INTRIN' "$V"; then
-            tmp="$(mktemp)"
-            {
-              echo '#if defined(__aarch64__) || defined(__ARM64EC__) || defined(_M_ARM64) || defined(_M_ARM64EC)'
-              echo '#define DXVK_NO_X86_INTRIN 1'
-              echo '#include <string.h>'
-              echo 'typedef struct { float m[4]; } __m128;'
-              echo 'static inline __m128 _mm_loadu_ps(const float* p){ __m128 r; memcpy(r.m,p,16); return r; }'
-              echo 'static inline __m128 _mm_cmpeq_ps(__m128 a, __m128 b){ __m128 r; for(int i=0;i<4;i++){ float av=a.m[i],bv=b.m[i]; unsigned u=(av==bv)?0xFFFFFFFFu:0u; memcpy(&r.m[i],&u,4);} return r; }'
-              echo 'static inline __m128 _mm_and_ps(__m128 a, __m128 b){ __m128 r; for(int i=0;i<4;i++){ unsigned ua,ub,ur; memcpy(&ua,&a.m[i],4); memcpy(&ub,&b.m[i],4); ur=ua&ub; memcpy(&r.m[i],&ur,4);} return r; }'
-              echo 'static inline void _mm_storeu_ps(float* p, __m128 a){ memcpy(p,a.m,16); }'
-              echo '#endif'
-              cat "$V"
-            } > "$tmp"
-            mv "$tmp" "$V"
-          fi
-
-          # 4) x86 인트린식 헤더 include를 ARM/EC에선 가드
-          python3 - <<'PY'
-          import os, re
-          guards = 'defined(__aarch64__) || defined(__ARM64EC__) || defined(_M_ARM64) || defined(_M_ARM64EC)'
-          inc_re = re.compile(r'^[ \t]*#\s*include\s*(?:<|")(x86intrin\.h|immintrin\.h|emmintrin\.h|xmmintrin\.h|tmmintrin\.h|smmintrin\.h)(?:>|")[ \t]*$', re.M)
-          for root, _, files in os.walk('src'):
-              for f in files:
-                  if not f.endswith(('.h','.hpp','.hh','.hxx','.c','.cc','.cpp','.cxx')):
-                      continue
-                  p = os.path.join(root, f)
-                  with open(p,'r',encoding='utf-8',errors='ignore') as fh:
-                      t = fh.read()
-                  def repl(m):
-                      hdr=m.group(1)
-                      return f'#if !({guards})\n#include <{hdr}>\n#endif'
-                  new = inc_re.sub(repl, t)
-                  if new != t:
-                      with open(p,'w',encoding='utf-8') as fh:
-                          fh.write(new)
-          PY
-
-      - name: Write Meson cross file (ARM64EC)
-        run: |
-          set -Eeuo pipefail
-          SRCDIR="$GITHUB_WORKSPACE/src"
-          TC="$LLVM_MINGW_DIR"
-          CLANG_DIR=$(ls -d "$TC/lib/clang/"* | sort -V | tail -n1)
-          
-          cat > "$SRCDIR/cross.arm64ec.ini" <<EOF
+          cat > arm64ec.meson <<'EOF'
           [binaries]
-          c = 'arm64ec-w64-mingw32-clang'
-          cpp = 'arm64ec-w64-mingw32-clang++'
-          ar = 'llvm-ar'
+          ar = 'arm64ec-w64-mingw32-ar'
+          c = 'arm64ec-w64-mingw32-gcc'
+          cpp = 'arm64ec-w64-mingw32-g++'
+          ld = 'arm64ec-w64-mingw32-ld'
+          windres = 'arm64ec-w64-mingw32-windres'
+          widl = 'arm64ec-w64-mingw32-widl'
           strip = 'llvm-strip'
-          windres = 'llvm-rc'
-          pkg-config = 'pkg-config'
-          
-          [properties]
-          needs_exe_wrapper = true
-          
-          [built-in options]
-          # 컴파일 단계 인자(링커 옵션 금지)
-          c_args = ['-target','arm64ec-w64-mingw32',
-                    '-D_FILE_OFFSET_BITS=64',
-                    '-include','${SRCDIR}/arm64ec-preinclude.h',
-                    '-isystem','/usr/include',
-                    '-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
-          cpp_args = ['-target','arm64ec-w64-mingw32',
-                      '-D_FILE_OFFSET_BITS=64',
-                      '-include','${SRCDIR}/arm64ec-preinclude.h',
-                      '-isystem','/usr/include',
-                      '-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
-          
-          # 링크 단계 인자만 여기
-          c_link_args = ['-target','arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec',
-                         '-L${CLANG_DIR}/lib/windows','-lclang_rt.builtins-arm64ec']
-          cpp_link_args = ['-target','arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec',
-                           '-L${CLANG_DIR}/lib/windows','-lclang_rt.builtins-arm64ec']
-          
+          pkgconfig = 'aarch64-linux-gnu-pkg-config'
+
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
@@ -244,28 +59,21 @@ jobs:
           endian = 'little'
           EOF
 
-      - name: Configure & Build (ARM64EC)
-        working-directory: src
-        env:
-          OUT_DIR: ${{ env.OUT_DIR }}
+      - name: Configure (Meson)
         run: |
-          set -Eeuo pipefail
-          rm -rf build.arm64ec "$OUT_DIR/arm64ec"
-          meson setup build.arm64ec \
-            --cross-file ./cross.arm64ec.ini \
-            --buildtype release \
-            --prefix "$OUT_DIR/arm64ec" \
-            -Dbuild_id=false -Dstrip=true
-          ninja -C build.arm64ec -j"$(nproc)"
-          meson install --no-rebuild -C build.arm64ec
+          meson setup --cross-file arm64ec.meson --buildtype release --prefix "$PWD/install" build.w64
 
-      - name: Verify PE headers (ARM64EC)
-        run: |
-          set -Eeuo pipefail
-          find "$OUT_DIR/arm64ec/bin" -name '*.dll' -print0 | xargs -0 -I{} sh -c 'echo "# {}"; llvm-readobj -file-headers "{}" | sed -n "1,50p"'
+      - name: Build
+        run: meson compile -C build.w64
 
-      - name: Upload artifact
+      - name: Install into staging dir
+        run: meson install -C build.w64
+
+      - name: Upload DLL artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dxvk-sarek-arm64ec
-          path: out/arm64ec
+          name: dxvk-sarek-arm64ec-dlls
+          path: |
+            install/bin/*.dll
+            install/bin/*.pdb
+          if-no-files-found: error
