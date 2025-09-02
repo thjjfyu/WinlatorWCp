@@ -109,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # (1) ARM64EC 프롤로그(매크로 언디파인) 주입
+          # -------- A) ARM64EC 프롤로그 주입 (문제 파일만) --------
           ARM64EC_PROLOG='#if defined(__arm64ec__) || defined(_M_ARM64EC)
             /* SAREK on ARM64EC: disable x86/SSE/AVX paths */
             #undef __x86_64__
@@ -138,8 +138,13 @@ jobs:
             fi
           done
 
-          # (2) x86 인트린식 헤더 포함부를 ARM64EC에서 비활성화(치환)
-          mapfile -t HDR_FILES < <(grep -RIl -E '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' src include 2>/dev/null || true)
+          # -------- B) 치환 패치: x86 인트린식 include/아키텍처 가드 --------
+          #   - 범위를 DXVK 소스/헤더로만 한정
+          #   - 외부 서드파티는 제외(특히 include/vulkan, include/spirv)
+          find src include -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.c' -o -name '*.cpp' -o -name '*.inl' \) \
+            -not -path 'include/vulkan/*' -not -path 'include/spirv/*' > __filelist.txt
+
+          mapfile -t HDR_FILES < <(grep -RIl -E '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' --file=__filelist.txt 2>/dev/null || true)
           for f in "${HDR_FILES[@]}"; do
             echo "Patching includes in: $f"
             sed -i -E \
@@ -147,8 +152,7 @@ jobs:
               "$f"
           done
 
-          # (3) x86 감지 조건에서 ARM64EC 제외(치환)
-          mapfile -t COND_FILES < <(grep -RIl -E 'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' src include 2>/dev/null || true)
+          mapfile -t COND_FILES < <(grep -RIl -E 'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' --file=__filelist.txt 2>/dev/null || true)
           for f in "${COND_FILES[@]}"; do
             echo "Patching arch guards in: $f"
             sed -i -E \
@@ -156,23 +160,35 @@ jobs:
               "$f"
           done
 
-          # (4) "텍스트 grep" 대신 "전처리 기반" 검증: include 트리를 컴파일러로 확인
-          echo '/* inc_test.cpp (generated) */' > __inc_test.cpp
-          echo '#include "src/util/util_bit.h"'    >> __inc_test.cpp
-          echo '#include "src/util/util_vector.h"' >> __inc_test.cpp
+          # -------- C) 검증: 전처리/컴파일러 기반으로 확인 (텍스트 grep 금지) --------
+          # inc_test.cpp는 최소한의 유틸 헤더만 포함
+          cat > __inc_test.cpp <<'INC'
+          #include "src/util/util_bit.h"
+          #include "src/util/util_vector.h"
+          INC
 
-          # -H: include 트리 출력(표준에러), ARM64EC 타깃으로 전처리
-          if arm64ec-w64-mingw32-g++ -E -x c++ -H __inc_test.cpp -o /dev/null 2> __inc_tree.log; then
-            echo "== Include tree (truncated) ==" && tail -n 100 __inc_tree.log || true
+          # 공통 빌드 플래그를 최대한 반영
+          CXX=arm64ec-w64-mingw32-g++
+          CXXFLAGS="-E -x c++ -std=c++17 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude"
+
+          # 1) 1차: -H 지원 시 include 트리 검사
+          if $CXX $CXXFLAGS -H __inc_test.cpp -o /dev/null 2> __inc_tree.log; then
+            tail -n 120 __inc_tree.log || true
             if egrep -q '/(x86intrin|immintrin|intrin)\.h' __inc_tree.log; then
               echo "::error::Compiler still includes x86 intrinsics headers under ARM64EC"; exit 1
             fi
           else
-            echo "::error::Preprocessing failed for include tree check"; exit 1
+            echo "note: -H failed or preprocessing failed, trying dependency scan fallback..."
+            # 2) 폴백: 의존성 목록(-MMD -MF)으로 포함 헤더를 확인
+            $CXX -MMD -MF __inc_deps.d -MP -MT dummy $CXXFLAGS __inc_test.cpp -o /dev/null 2> __inc_dep_err.log || true
+            cat __inc_dep_err.log || true
+            if [ -f __inc_deps.d ] && egrep -q '(x86intrin|immintrin|intrin)\.h' __inc_deps.d; then
+              echo "::error::Deps show x86 intrinsics headers"; cat __inc_deps.d; exit 1
+            fi
           fi
 
-          # 참고용 diff(있으면)
-          git --no-pager diff -- src/ include/ || true
+          # 참고 diff
+          git --no-pager diff -- src/ include/ | sed -n '1,200p' || true
       # --- SAREK-SPECIFIC PATCH END ---
 
       - name: Wipe build dir
