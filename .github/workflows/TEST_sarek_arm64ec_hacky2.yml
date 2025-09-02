@@ -1,4 +1,4 @@
-name: TEST build-dxvk-sarek-arm64ec
+name: TEST sarek arm64 hacky2
 
 on:
   workflow_dispatch:
@@ -227,7 +227,34 @@ jobs:
             echo "warn: src/util/sync/sync_spinlock.h not found (skipped)"
           fi
 
-          # 3) util_bit.h의 x86 asm(bsf/cmovz) 블록을 ARM64EC 전용 빌트인으로 포괄 치환
+          # 3) DXVK 자체 소스 목록(서드파티 제외)
+          find src include -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.c' -o -name '*.cpp' -o -name '*.inl' \) \
+            -not -path 'include/vulkan/*' -not -path 'include/spirv/*' > __filelist.txt
+
+          # 4) x86 전용 인트린식 include 라인 주석화 (intrin.h 는 유지)
+          mapfile -t KILL_HDRS < <(
+            xargs -a __filelist.txt grep -RInE \
+              '#\s*include\s*[<"]\s*((x86intrin|x86gprintrin|immintrin|xmmintrin|emmintrin|smmintrin|tmmintrin|pmmintrin|nmmintrin|wmmintrin))\.h\s*[>"]' 2>/dev/null \
+            | cut -d: -f1 | sort -u
+          )
+          for f in "${KILL_HDRS[@]:-}"; do
+            echo "Neutralizing x86 intrinsics includes in: $f"
+            sed -i -E '/SAREK_ARM64EC neutralized/! s@(^\s*#\s*include\s*[<"]((x86intrin|x86gprintrin|immintrin|xmmintrin|emmintrin|smmintrin|tmmintrin|pmmintrin|nmmintrin|wmmintrin))\.h[>"])@/* SAREK_ARM64EC neutralized */ // \1@' "$f"
+          done
+
+          # 5) x86 감지 조건에 ARM64EC 제외
+          mapfile -t COND_FILES < <(
+            xargs -a __filelist.txt grep -RIl -E \
+              'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' 2>/dev/null
+          )
+          for f in "${COND_FILES[@]:-}"; do
+            echo "Patching arch guards in: $f"
+            sed -i -E '/defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)/{
+              /SAREK_ARM64EC|__arm64ec__|_M_ARM64EC/! s@defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)@defined(\1) \&\& !defined(SAREK_ARM64EC) \&\& !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)@g
+            }' "$f"
+          done
+
+          # 6) util_bit.h의 x86 asm(bsf/cmovz) 블록을 ARM64EC 전용 빌트인으로 포괄 치환
           python3 - <<'PY'
           import re, pathlib, sys
           p = pathlib.Path("src/util/util_bit.h")
@@ -253,57 +280,26 @@ jobs:
           print(f'patched util_bit.h: replaced {n} asm block(s)')
           PY
 
-          # --- ARM64EC 정의를 넣고 전처리 결과에서 x86 asm(bsf) 존재 여부를 검사 (남아있으면 실패) ---
+          # 7) 전처리 결과에서 x86 asm(bsf) / x86-only 헤더 존재 여부 검사 (남아있으면 실패)
           CXX=arm64ec-w64-mingw32-g++
           BASE="-std=c++17 -DSAREK_ARM64EC=1 -D__CRT__NO_INLINE=1 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude -fno-fast-math -ffp-contract=off"
 
           echo '#include "src/util/util_bit.h"' > __pp_probe.cpp
           $CXX -E -x c++ -P $BASE __pp_probe.cpp > __pp_probe.i
 
-          if grep -qE '(^|[^A-Za-z_])(asm|__asm__)\s*\([^;]*bsf' __pp_probe.i; then
+          if egrep -qi '(^|[^A-Za-z_])(asm|__asm__)\s*\([^;]*bsf' __pp_probe.i; then
             echo "::error:: Preprocessed output still contains x86 asm bsf under SAREK_ARM64EC"
             tail -n 200 __pp_probe.i || true
             exit 1
           fi
+          if egrep -q '(immintrin|x86intrin|xmmintrin|emmintrin|smmintrin|tmmintrin|pmmintrin|nmmintrin|wmmintrin)\.h' __pp_probe.i; then
+            echo "::error:: x86-only intrinsics header pulled in during preprocessing"
+            exit 1
+          fi
       
-          # 4) DXVK 자체 소스 목록(서드파티 제외)
-          find src include -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.c' -o -name '*.cpp' -o -name '*.inl' \) \
-            -not -path 'include/vulkan/*' -not -path 'include/spirv/*' > __filelist.txt
-      
-          # 5) x86 전용 인트린식 include 라인 주석화 (intrin.h 는 유지)
-          mapfile -t KILL_HDRS < <(
-            xargs -a __filelist.txt grep -RInE \
-              '#\s*include\s*[<"]\s*(x86intrin|x86gprintrin|immintrin)\.h\s*[>"]' 2>/dev/null \
-            | cut -d: -f1 | sort -u
-          )
-          for f in "${KILL_HDRS[@]:-}"; do
-            echo "Neutralizing x86 intrinsics includes in: $f"
-            sed -i -E '/SAREK_ARM64EC neutralized/! s@(^\s*#\s*include\s*[<"](x86intrin|x86gprintrin|immintrin)\.h[>"])@/* SAREK_ARM64EC neutralized */ // \1@' "$f"
-          done
-      
-          # 6) x86 감지 조건에 ARM64EC 제외
-          mapfile -t COND_FILES < <(
-            xargs -a __filelist.txt grep -RIl -E \
-              'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' 2>/dev/null
-          )
-          for f in "${COND_FILES[@]:-}"; do
-            echo "Patching arch guards in: $f"
-            sed -i -E '/defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)/{
-              /SAREK_ARM64EC|__arm64ec__|_M_ARM64EC/! s@defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)@defined(\1) \&\& !defined(SAREK_ARM64EC) \&\& !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)@g
-            }' "$f"
-          done
-      
-          # 7) 대표 TU 전처리 스캔하여 x86-only 헤더 유입 검사 (남아있으면 실패)
-          CXX=arm64ec-w64-mingw32-g++
-          BASE="-std=c++17 -DSAREK_ARM64EC=1 -D__CRT__NO_INLINE=1 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude -fno-fast-math -ffp-contract=off"
-      
-          cat > __inc_test.cpp <<'INC'
-          #include "src/util/util_bit.h"
-          #include "src/util/util_vector.h"
-          INC
-      
+          # 8) 대표 TU 인클루드 트리 검사 — x86-only 헤더 유입 시 실패
           : > __inc_tree_all.log
-          if $CXX -E -x c++ -H $BASE __inc_test.cpp -o /dev/null &>> __inc_tree_all.log; then
+          if $CXX -E -x c++ -H $BASE __pp_probe.cpp -o /dev/null &>> __inc_tree_all.log; then
             true
           fi
           find src -type f -name '*.cpp' | sort | head -n 20 > __probe_files.txt || true
@@ -313,17 +309,16 @@ jobs:
               $CXX -E -x c++ -H $BASE "$tu" -o /dev/null &>> __inc_tree_all.log || true
             done
           fi
-      
-          if grep -qE '/(x86intrin|immintrin)\.h' __inc_tree_all.log; then
+          if grep -qE '/(immintrin|x86intrin|xmmintrin|emmintrin|smmintrin|tmmintrin|pmmintrin|nmmintrin|wmmintrin)\.h' __inc_tree_all.log; then
             echo "== Include tree tail ==" && tail -n 200 __inc_tree_all.log || true
             echo "::error:: x86-only intrinsics headers still included"
             exit 1
           fi
-      
+
           echo "== Head of src/util/util_bit.h (after patch) =="
           head -n 60 src/util/util_bit.h || true
 
-          # 8) D3D9 타입 호환 레이어 삽입(중복 방지)
+          # 9) D3D9 타입 호환 레이어 삽입(중복 방지)
           cat > include/sarek_d3d9_compat.h <<'HDR'
           #pragma once
           #if defined(__has_include)
@@ -419,7 +414,7 @@ jobs:
           set -euo pipefail
           echo '#include "src/util/util_bit.h"' > __probe.cpp
           arm64ec-w64-mingw32-g++ -E -x c++ -P -DSAREK_ARM64EC=1 -I. -Isrc -Iinclude __probe.cpp > __probe.i
-          if egrep -q '(immintrin|x86intrin)\.h' __probe.i; then
+          if egrep -q '(immintrin|x86intrin|xmmintrin|emmintrin|smmintrin|tmmintrin|pmmintrin|nmmintrin|wmmintrin)\.h' __probe.i; then
             echo "::error:: x86-only intrinsics headers detected in preprocessed output"
             exit 1
           fi
