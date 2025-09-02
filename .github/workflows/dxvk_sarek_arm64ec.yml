@@ -150,7 +150,7 @@ jobs:
         run: |
           set -euo pipefail
           meson setup build.w64 . --cross-file arm64ec.meson --buildtype release --prefix "$PWD/install"
-          meson configure -C build.w64
+          meson configure build.w64
 
       - name: Build
         working-directory: dxvk
