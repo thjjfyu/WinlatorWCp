@@ -91,14 +91,10 @@ jobs:
           endian = 'little'
           
           [built-in options]
-          c_args = [
-            '-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__=0',
-            '-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0'
-          ]
-          cpp_args = [
-            '-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__=0',
-            '-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0'
-          ]
+          c_args  = ['-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__bib','-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0']
+          cpp_args = ['-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__=0','-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0']
+          EOF
+          echo "== arm64ec.meson ==" && nl -ba arm64ec.meson
 
       - name: Preflight macros (diagnostics)
         run: |
