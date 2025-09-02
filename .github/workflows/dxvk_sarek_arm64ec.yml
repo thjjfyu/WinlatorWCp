@@ -57,8 +57,11 @@ jobs:
           EOF
 
       - name: Configure (Meson)
+        working-directory: ${{ github.workspace }}   # 선택(권장)
         run: |
-          meson setup --cross-file arm64ec.meson --buildtype release --prefix "$PWD/install" build.w64
+          meson --version
+          test -f meson.build || { echo "::error::meson.build not found in $PWD"; ls -la; exit 1; }
+          meson setup build.w64 . --cross-file arm64ec.meson --buildtype release --prefix "$PWD/install"
 
       - name: Build
         run: meson compile -C build.w64
