@@ -328,6 +328,7 @@ jobs:
           head -n 60 src/util/util_bit.h || true
 
           # 2-quater) D3D9 devinfo 타입명 호환 레이어 (llvm-mingw 헤더와 이름차 보정)
+          # 타입은 매크로가 아니라서 #ifdef로 존재 여부 확인 불가 → 그냥 옛 이름을 새 이름으로 매핑
           cat > include/sarek_d3d9_compat.h <<'HDR'
           #pragma once
           #if defined(__has_include)
@@ -336,26 +337,27 @@ jobs:
           # endif
           #endif
           
-          /* Map legacy names to llvm-mingw's D3D9 type names if needed */
+          /* Old SDK → mingw-w64 이름 매핑 (무조건 매핑, 이미 정의돼 있으면 매크로가 덮어씌워짐) */
           #ifndef D3DDEVINFO_RESOURCEMANAGER
-          # ifdef D3DDEVINFO_D3DRESOURCEMANAGER
-          #  define D3DDEVINFO_RESOURCEMANAGER D3DDEVINFO_D3DRESOURCEMANAGER
-          # endif
+          #define D3DDEVINFO_RESOURCEMANAGER D3DDEVINFO_D3DRESOURCEMANAGER
           #endif
           
           #ifndef D3DDEVINFO_VERTEXSTATS
-          # ifdef D3DDEVINFO_D3DVERTEXSTATS
-          #  define D3DDEVINFO_VERTEXSTATS D3DDEVINFO_D3DVERTEXSTATS
-          # endif
+          #define D3DDEVINFO_VERTEXSTATS D3DDEVINFO_D3DVERTEXSTATS
           #endif
           HDR
           
-          # d3d9 공용 인클루드에 호환 헤더를 한 줄 삽입(중복 방지)
-          if [ -f src/d3d9/d3d9_include.h ] && ! grep -q 'sarek_d3d9_compat.h' src/d3d9/d3d9_include.h; then
-            echo "Prepending D3D9 compat include to src/d3d9/d3d9_include.h"
-            tmp=$(mktemp)
-            { echo '#include <sarek_d3d9_compat.h>'; cat src/d3d9/d3d9_include.h; } > "$tmp"
-            mv "$tmp" src/d3d9/d3d9_include.h
+          # d3d9 공용 인클루드에 호환 헤더를 한 줄 삽입(중복 방지). 로컬 헤더 탐색을 확실히 하려고 따옴표 사용.
+          if [ -f src/d3d9/d3d9_include.h ]; then
+            if ! grep -q 'sarek_d3d9_compat.h' src/d3d9/d3d9_include.h; then
+              echo "Prepending D3D9 compat include to src/d3d9/d3d9_include.h"
+              tmp=$(mktemp)
+              { echo '#include "sarek_d3d9_compat.h"'; cat src/d3d9/d3d9_include.h; } > "$tmp"
+              mv "$tmp" src/d3d9/d3d9_include.h
+            else
+              # 예전에 <...>로 들어갔을 수도 있으니 첫 부분만 "..."로 교체
+              sed -i '1,16{s|#include <sarek_d3d9_compat.h>|#include "sarek_d3d9_compat.h"|}' src/d3d9/d3d9_include.h || true
+            fi
           fi
 
       - name: Wipe build dir (idempotent & -e safe)
