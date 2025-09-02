@@ -18,9 +18,9 @@ concurrency:
 
 jobs:
   guard:
-    name: Check Upadate
+    name: Check Update
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     outputs:
       build: ${{ steps.decide.outputs.build }}
     steps:
