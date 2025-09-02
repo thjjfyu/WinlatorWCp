@@ -129,17 +129,22 @@ jobs:
         run: |
           set -Eeuo pipefail
           API="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/tags/${TAG}"
-          json=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$API" || true)
+          json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$API" || true)
 
           pick_url() {
             local json="$1"
             local url=""
             for dist in 22.04 20.04; do
               url=$(jq -r --arg dist "$dist" '
-                .assets[]?
+                .assets[]
                 | select(.name | endswith("ucrt-ubuntu-" + $dist + "-x86_64.tar.xz"))
                 | .browser_download_url
               ' <<<"$json" | head -n1 || true)
+              [[ -n "$url" && "$url" != "null" ]] && { echo "$url"; return 0; }
+            done
+            return 1
+          }-x86_64[.]tar[.]xz$"
+              url=$(jq -r --arg re "$re" '.assets[] | select(.name|test($re)) | .browser_download_url' <<<"$json" | head -n1 || true)
               [[ -n "$url" && "$url" != "null" ]] && { echo "$url"; return 0; }
             done
             return 1
@@ -148,8 +153,7 @@ jobs:
           url="$(pick_url "$json" || true)"
           if [[ -z "${url:-}" ]]; then
             echo "::warning::Pinned llvm-mingw ${TAG} asset not found; falling back to latest"
-            json=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" \
-                   https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest || true)
+            json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)
             url="$(pick_url "$json" || true)"
           fi
 
@@ -157,8 +161,7 @@ jobs:
 
           TOOLCHAIN_DIR=/opt/llvm-mingw
           sudo mkdir -p "$TOOLCHAIN_DIR"
-          curl -fL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" \
-               "$url" -o /tmp/llvm-mingw.tar.xz
+          curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
           sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
@@ -167,6 +170,11 @@ jobs:
           set -Eeuo pipefail
           git clone --recurse-submodules https://github.com/${DXVK_REPO}.git src
           cd src && git fetch --tags --force
+
+      - name: Configure git identity (local)
+        run: |
+          git -C src config user.name "DXVK Builder"
+          git -C src config user.email "builder@users.noreply.github.com"
 
       - name: Resolve versions (>= v2.3.1) and compute NEW to build
         env:
@@ -261,7 +269,7 @@ jobs:
             if [[ "$CHANGED" -eq 1 ]]; then
               git add -A
               git -c user.name="DXVK Builder" -c user.email="builder@noreply" commit -m "compat: minimal build fixes for ${tag}"
-              git tag -f "$tag" -m "temporary build tag for clean HUD"
+              git -c user.name="DXVK Builder" -c user.email="builder@noreply" tag -f "$tag" -m "temporary build tag for clean HUD"
             fi
 
             # Build using official script + cross files
