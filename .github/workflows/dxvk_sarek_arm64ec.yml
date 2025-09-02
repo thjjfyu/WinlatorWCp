@@ -191,11 +191,24 @@ jobs:
           git --no-pager diff -- src/ include/ | sed -n '1,200p' || true
       # --- SAREK-SPECIFIC PATCH END ---
 
-      - name: Wipe build dir
+      - name: Wipe build dir (idempotent & -e safe)
         working-directory: dxvk
+        shell: bash
         run: |
-          [ -d build.w64 ] && rm -rf build.w64
-          [ -d install   ] && rm -rf install
+          # '-e' 환경에서도 안전한 if 블록으로 처리
+          if [ -d build.w64 ]; then
+            rm -rf build.w64
+            echo "Removed build.w64"
+          else
+            echo "No build.w64 (ok)"
+          fi
+      
+          if [ -d install ]; then
+            rm -rf install
+            echo "Removed install"
+          else
+            echo "No install (ok)"
+          fi
 
       - name: "Preflight: meson.build presence"
         working-directory: dxvk
