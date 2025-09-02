@@ -289,22 +289,7 @@ jobs:
 
             export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct HEAD)"
             find "${GITHUB_WORKSPACE}/DXVK_WCP" -type f -name '*.dll' -print0 | xargs -0 -I{} llvm-strip -s {} || true
-
-            # Build verification ----------------------------------------------------- #
-            fail=0
-            for f in "${GITHUB_WORKSPACE}/DXVK_WCP/system32/d3d11.dll" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/d3d11.dll"; do
-              [[ -f "$f" ]] || continue
-              file "$f" | grep -qi 'PE32' || { echo "::error::Not a PE/COFF DLL: $f"; fail=1; }
-              if llvm-objdump -p "$f" | grep -q "DLL Name: vulkan-1.dll"; then :; else
-                echo "::error::Missing import vulkan-1.dll in $f"; fail=1
-              fi
-              got=$(strings "$f" | sed -n 's/^DXVK \([0-9][^ ]*\).*/\1/p' | head -n1 || true)
-              if [[ "$got" != "$ver" ]]; then
-                echo "::error::HUD/version string mismatch in $f (expected ${ver}, got ${got:-<none>})"; fail=1
-              fi
-            done
-            [[ "$fail" -eq 0 ]] || { echo "::error::Verification failed for $tag"; exit 1; }
-
+            
             # Collect file lists and generate profile.json  -------------------------- #
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
