@@ -132,7 +132,37 @@ jobs:
           git checkout -f origin/main
           git submodule update --init --recursive --checkout
 
-      - name: Write Meson cross file (ARM64EC) — FIX quoted binaries
+      - name: Write ARM64EC pre-include header (disable x86 intrinsics)
+        run: |
+          set -Eeuo pipefail
+          cat > "$GITHUB_WORKSPACE/arm64ec-preinclude.h" <<'EOF'
+          #ifndef ARM64EC_PREINCLUDE_GUARD
+          #define ARM64EC_PREINCLUDE_GUARD 1
+          /* DXVK가 x86 경로로 빠지지 않도록 x86 관련 매크로를 모두 비활성화 */
+          #ifdef __i386__
+          #undef __i386__
+          #endif
+          #ifdef __x86_64__
+          #undef __x86_64__
+          #endif
+          #ifdef _M_IX86
+          #undef _M_IX86
+          #endif
+          #ifdef _M_X64
+          #undef _M_X64
+          #endif
+          /* ARM64EC 타깃 매크로 보강 */
+          #ifndef __ARM64EC__
+          #define __ARM64EC__ 1
+          #endif
+          #ifndef _M_ARM64EC
+          #define _M_ARM64EC 1
+          #endif
+          #endif /* ARM64EC_PREINCLUDE_GUARD */
+          EOF
+          ls -l "$GITHUB_WORKSPACE/arm64ec-preinclude.h"
+
+      - name: Write Meson cross file (ARM64EC) — with pre-include
         working-directory: src
         env:
           USE_ARM64EC_WRAPPER: ${{ env.USE_ARM64EC_WRAPPER }}
@@ -140,6 +170,7 @@ jobs:
           set -Eeuo pipefail
           ARM_WIN_DIR='${{ steps.helper.outputs.ARM_WIN_DIR }}'
           HELPER='${{ steps.helper.outputs.HELPER }}'
+          PREINC="$GITHUB_WORKSPACE/arm64ec-preinclude.h"
       
           # windres 커맨드
           if [ "${ARM64EC_WINDRES_NEEDS_FLAG:-false}" = "true" ]; then
@@ -148,7 +179,7 @@ jobs:
             WINDRES_LINE="'${ARM64EC_WINDRES}'"
           fi
       
-          # 래퍼가 있으면 래퍼, 없으면 --target 폴백(+ libc++ -isystem 보정)
+          # 기본 컴파일러(래퍼/폴백)
           if [ "${USE_ARM64EC_WRAPPER}" = "true" ]; then
             CBIN="['arm64ec-w64-mingw32-clang']"
             CXXBIN="['arm64ec-w64-mingw32-clang++']"
@@ -163,6 +194,22 @@ jobs:
               CARGS="[]"; CPARGS="[]"
             fi
           fi
+      
+          # 프리인클루드 + 매크로 보강 + 잡스러운 경고 눌러주기
+          EXTRA_ARGS="['-include','${PREINC}','-D__ARM64EC__=1','-D_M_ARM64EC=1','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']"
+      
+          # 기존 CARGS에 EXTRA를 병합
+          join_arrays () {
+            # $1: 기존 배열 문자열, $2: 추가 배열 문자열
+            python3 - "$1" "$2" <<'PY'
+      import ast,sys
+      a=ast.literal_eval(sys.argv[1])
+      b=ast.literal_eval(sys.argv[2])
+      print(str(list(a)+list(b)).replace('"',"'"))
+      PY
+          }
+          CARGS=$(join_arrays "$CARGS" "$EXTRA_ARGS")
+          CPARGS=$(join_arrays "$CPARGS" "$EXTRA_ARGS")
       
           cat > cross.arm64ec.ini <<EOF
           [binaries]
@@ -182,7 +229,7 @@ jobs:
           [built-in options]
           c_args = ${CARGS}
           cpp_args = ${CPARGS}
-          # 핵심: ARM64EC 타깃 + compiler-rt helper를 통째로 포함
+          # 링커: ARM64EC + compiler-rt helper를 whole-archive로 강제 포함
           c_link_args = ['-fuse-ld=lld','-Wl,/machine:arm64ec','-Wl,--whole-archive,${HELPER},--no-whole-archive','-L','${ARM_WIN_DIR}']
           cpp_link_args = ['-fuse-ld=lld','-Wl,/machine:arm64ec','-Wl,--whole-archive,${HELPER},--no-whole-archive','-L','${ARM_WIN_DIR}']
           EOF
