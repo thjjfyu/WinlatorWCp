@@ -312,13 +312,51 @@ jobs:
             git submodule update --init --recursive --checkout
 
             CHANGED=0
-            # Apply exact-match gplasync patch
+            # Apply exact-match gplasync patch (robust)
             url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${patch_base}-${rev}.patch"
             curl -fL "$url" -o /tmp/gpl.patch
+            
             git config user.name  ci
             git config user.email ci@local
-            if git am -3 /tmp/gpl.patch; then :; else git am --abort || true; git apply -p1 --reject /tmp/gpl.patch; fi
-            grep -q "enableAsync" src/dxvk/dxvk_options.h || { echo "::error::Patch not applied cleanly for ${base} (using ${patch_base}-${rev})"; git status -sb; exit 1; }
+            
+            apply_ok=0
+            
+            # 1) 메일 패치인지 판별
+            if grep -qE '^From [0-9a-f]{40} ' /tmp/gpl.patch; then
+              # mbox 형식 → git am로 시도
+              if git am -3 /tmp/gpl.patch; then
+                apply_ok=1
+              else
+                git am --abort || true
+              fi
+            fi
+            
+            # 2) 일반 unified diff면 git apply로 시도. strip -p1, -p0, -p2 순회
+            if [ $apply_ok -eq 0 ]; then
+              for p in 1 0 2; do
+                if git apply --check -p$p /tmp/gpl.patch; then
+                  git apply -p$p --3way --reject /tmp/gpl.patch
+                  apply_ok=1
+                  break
+                fi
+              done
+            fi
+            
+            # 3) 아직도 실패면 명확히 종료
+            if [ $apply_ok -ne 1 ]; then
+              echo "::group::PATCH DEBUG"
+              head -n 20 /tmp/gpl.patch || true
+              echo "::endgroup::"
+              echo "::error::Failed to apply gplasync patch ${patch_base}-${rev} (neither mbox nor clean unified diff with -p0/-p1/-p2)."
+              exit 1
+            fi
+            
+            # 4) 핵심 심볼로 실제 적용 확인
+            if ! grep -q "enableAsync" src/dxvk/dxvk_options.h; then
+              echo "::error::Patch seems applied but 'enableAsync' not found. Failing fast."
+              git status -sb || true
+              exit 1
+            fi
 
             # v2.5 fix: UnmappedSubresource constexpr init issue -> safe cast
             TEX="src/d3d11/d3d11_texture.h"
