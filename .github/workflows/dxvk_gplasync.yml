@@ -71,10 +71,10 @@ jobs:
             curl -fsSL -D /tmp/h "${GL_API}/releases?per_page=100&page=${page}" -o /tmp/p.json || true
             jq -c '.[]' /tmp/p.json >> /tmp/gl_rel.jsonl || true
             next=$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')
-            [[ -z "${next:-}" || "${next}" == 0 ]] && break
+            [[ -z "${next:-}" || "${next}" == "0" ]] && break
             page="${next}"
           done
-      
+
           # Extract highest revision per base (rev in 1..9) from tag or name, allow optional 'v' prefix
           { cat /tmp/gl_rel.jsonl | jq -r '[.tag_name,.name] | map(select(.!=null)) | .[]' ; } \
             | grep -Eio 'v?[0-9]+\.[0-9]+(\.[0-9]+)?-[1-9]' || true \
@@ -82,6 +82,8 @@ jobs:
             | awk -F- '{print $1" "$2}' \
             | awk '{b=$1; r=$2+0; if(r>0 && r<=9 && r>max[b]) max[b]=r} END{for(b in max) print b, max[b]}' \
             | LC_ALL=C sort -V > /tmp/relmax.txt || true
+
+          echo "Release map (base -> max rev):"; cat /tmp/relmax.txt || true
 
       - name: Detect any missing candidate (use release map; prefer exact base, then major.minor)
         id: detect
@@ -174,10 +176,7 @@ jobs:
       - name: Ensure glslang (--vn)
         run: |
           set -Eeuo pipefail
-          cat > /tmp/min.comp <<'GLSL'
-          #version 450
-          void main() {}
-          GLSL
+          printf '#version 450\nvoid main() {}\n' > /tmp/min.comp
           have() { command -v "$1" >/dev/null 2>&1 || return 1; "$1" --quiet --target-env vulkan1.3 --vn testvar -o /tmp/min.h /tmp/min.comp; }
           if have glslang; then :
           elif have glslangValidator; then
@@ -267,18 +266,15 @@ jobs:
           fi
 
           # Build release map from GitLab (allow optional 'v' prefix in names)
-          GL_API="https://gitlab.com/api/v4/projects/$(python3 - <<'PY'
-import urllib.parse, os
-print(urllib.parse.quote(os.environ['GITLAB_PROJECT'], safe=''))
-PY
-)"
+          enc="$(python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["GITLAB_PROJECT"], safe=""))')"
+          GL_API="https://gitlab.com/api/v4/projects/${enc}"
           : > /tmp/gl_rel.jsonl
           page=1
           while :; do
             curl -fsSL -D /tmp/h "${GL_API}/releases?per_page=100&page=${page}" -o /tmp/p.json || true
             jq -c '.[]' /tmp/p.json >> /tmp/gl_rel.jsonl || true
             next=$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')
-            [[ -z "${next:-}" || "${next}" == 0 ]] && break
+            [[ -z "${next:-}" || "${next}" == "0" ]] && break
             page="${next}"
           done
 
@@ -355,10 +351,10 @@ PY
             # patches --------------------------------------------------------------- #
             # v2.5 UnmappedSubresource constexpr init issue -> safe cast
             TEX="src/d3d11/d3d11_texture.h"
-            if [[ -f "$TEX" ]] && grep -qE '\bUnmappedSubresource\b' "$TEX"; then
+            if [[ -f "$TEX" ]] && grep -qE '\\bUnmappedSubresource\\b' "$TEX"; then
               cp "$TEX" "${TEX}.bak"
               perl -0777 -pe \
-                's/\bstatic\s+(?:const|constexpr)\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
+                's/\\bstatic\\s+(?:const|constexpr)\\s+D3D11_MAP\\s+UnmappedSubresource\\s*=\\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
                 -i "$TEX" && CHANGED=1
             fi
 
@@ -368,9 +364,9 @@ PY
             TOOL_X64="/opt/llvm-mingw/x86_64-w64-mingw32/include/d3d9types.h"
             TOOL_X86="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
             if [[ -f "$INC" ]] && (grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X64" || grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X86"); then
-              if grep -qE 'typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b' "$INC"; then
+              if grep -qE 'typedef\\s+struct\\s+_D3DDEVINFO_RESOURCEMANAGER\\b' "$INC"; then
                 cp "$INC" "${INC}.bak"
-                perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;//s' -i "$INC" && CHANGED=1
+                perl -0777 -pe 's/typedef\\s+struct\\s+_D3DDEVINFO_RESOURCEMANAGER\\b.*?}\\s*D3DDEVINFO_RESOURCEMANAGER\\b[^;]*;//s' -i "$INC" && CHANGED=1
               fi
             fi
 
@@ -379,7 +375,7 @@ PY
             MEM="src/dxvk/dxvk_memory.h"
             if [[ -f "$MEM" ]] \
                && grep -qE '^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;' "$MEM" \
-               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*\{' "$MEM"; then
+               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*\\{' "$MEM"; then
               cp "$MEM" "${MEM}.bak2"
               sed -E -i 's/^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;/struct DxvkMemoryChunk;/' "$MEM" && CHANGED=1
             fi
