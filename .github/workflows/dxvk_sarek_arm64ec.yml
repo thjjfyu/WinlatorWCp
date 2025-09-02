@@ -132,23 +132,55 @@ jobs:
           git checkout -f origin/main
           git submodule update --init --recursive --checkout
 
-      - name: Write ARM64EC pre-include header (disable x86 intrinsics)
+      - name: Write ARM64EC pre-include header (nuke x86 macros, assert ARM64/EC)
         run: |
           set -Eeuo pipefail
           cat > "$GITHUB_WORKSPACE/arm64ec-preinclude.h" <<'EOF'
           #ifndef ARM64EC_PREINCLUDE_GUARD
           #define ARM64EC_PREINCLUDE_GUARD 1
-          #ifdef __i386__
+      
+          /* ---- 1) 모든 x86/x64 계열 매크로 비활성화 ---- */
+          #ifdef __i386__      /* GCC/Clang i386 */
           #undef __i386__
           #endif
-          #ifdef __x86_64__
-          #undef __x86_64__
+          #ifdef __i386        /* 일부 툴체인 변형 */
+          #undef __i386
           #endif
-          #ifdef _M_IX86
+          #ifdef _M_IX86       /* MSVC 스타일 */
           #undef _M_IX86
           #endif
-          #ifdef _M_X64
+          #ifdef _X86_         /* Win SDK에서 쓰는 기호 */
+          #undef _X86_
+          #endif
+      
+          #ifdef __x86_64__    /* GCC/Clang x86_64 */
+          #undef __x86_64__
+          #endif
+          #ifdef __x86_64      /* 변형 */
+          #undef __x86_64
+          #endif
+          #ifdef __amd64__     /* 동의어 */
+          #undef __amd64__
+          #endif
+          #ifdef __amd64
+          #undef __amd64
+          #endif
+          #ifdef _M_X64        /* MSVC 스타일 */
           #undef _M_X64
+          #endif
+          #ifdef _M_AMD64
+          #undef _M_AMD64
+          #endif
+          #ifdef _AMD64_       /* Win SDK에서 쓰는 기호 */
+          #undef _AMD64_
+          #endif
+      
+          /* ---- 2) ARM64/ARM64EC/CHPE 매크로를 명시적으로 켠다 ---- */
+          #ifndef __aarch64__
+          #define __aarch64__ 1
+          #endif
+          #ifndef _M_ARM64
+          #define _M_ARM64 1
           #endif
           #ifndef __ARM64EC__
           #define __ARM64EC__ 1
@@ -156,11 +188,25 @@ jobs:
           #ifndef _M_ARM64EC
           #define _M_ARM64EC 1
           #endif
+          /* MS에서 ARM64EC 구분용으로 쓰는 기호 */
+          #ifndef __CHPE__
+          #define __CHPE__ 1
           #endif
+      
+          /* ---- 3) mingw의 x87 인라인 ASM 경로를 피하도록 안전장치(보수적) ----
+             일부 헤더는 아키텍처 매크로 외에도 asm 사용을 전제로 할 수 있어
+             최소한의 완충을 둡니다. (필요시 해제 가능)
+          */
+          #ifndef __NO_INLINE__
+          #define __NO_INLINE__ 1
+          #endif
+      
+          #endif /* ARM64EC_PREINCLUDE_GUARD */
           EOF
+      
           ls -l "$GITHUB_WORKSPACE/arm64ec-preinclude.h"
 
-      - name: Write Meson cross file (ARM64EC) — no Python, quoted binaries
+      - name: Write Meson cross file (ARM64EC) — enforce preinclude & macros
         working-directory: src
         env:
           USE_ARM64EC_WRAPPER: ${{ env.USE_ARM64EC_WRAPPER }}
@@ -177,7 +223,7 @@ jobs:
             WINDRES_LINE="'${ARM64EC_WINDRES}'"
           fi
       
-          # 래퍼/폴백 선택
+          # 래퍼/폴백
           if [ "${USE_ARM64EC_WRAPPER}" = "true" ]; then
             CBIN="['arm64ec-w64-mingw32-clang']"
             CXXBIN="['arm64ec-w64-mingw32-clang++']"
@@ -193,14 +239,14 @@ jobs:
             fi
           fi
       
-          # 추가 컴파일 옵션(프리인클루드 + 경고 억제)
-          EXTRA_ARGS="['-include','${PREINC}','-D__ARM64EC__=1','-D_M_ARM64EC=1','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']"
+          # 추가 컴파일 옵션: 프리인클루드 + 강제 아키텍처 매크로
+          EXTRA_ARGS="['-include','${PREINC}',\
+      '-D__aarch64__=1','-D_M_ARM64=1','-D__ARM64EC__=1','-D_M_ARM64EC=1','-D__CHPE__=1',\
+      '-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']"
       
-          # ===== Bash만으로 배열 문자열 병합 =====
           merge_arrays () {
-            # $1: '[]' 또는 "['a','b']" 형태, $2: 동일
             local a="$1" b="$2"
-            a="${a#[}" ; a="${a%]}"   # 양끝 대괄호 제거
+            a="${a#[}" ; a="${a%]}"
             b="${b#[}" ; b="${b%]}"
             if [ -z "$a" ]; then
               [ -z "$b" ] && echo "[]" || echo "[$b]"
@@ -210,7 +256,6 @@ jobs:
           }
           CARGS="$(merge_arrays "$CARGS" "$EXTRA_ARGS")"
           CPARGS="$(merge_arrays "$CPARGS" "$EXTRA_ARGS")"
-          # =====================================
       
           cat > cross.arm64ec.ini <<EOF
           [binaries]
@@ -230,6 +275,7 @@ jobs:
           [built-in options]
           c_args = ${CARGS}
           cpp_args = ${CPARGS}
+          # 링커: ARM64EC + compiler-rt helper 강제 포함
           c_link_args = ['-fuse-ld=lld','-Wl,/machine:arm64ec','-Wl,--whole-archive,${HELPER},--no-whole-archive','-L','${ARM_WIN_DIR}']
           cpp_link_args = ['-fuse-ld=lld','-Wl,/machine:arm64ec','-Wl,--whole-archive,${HELPER},--no-whole-archive','-L','${ARM_WIN_DIR}']
           EOF
