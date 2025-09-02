@@ -206,11 +206,12 @@ jobs:
           p = pathlib.Path("src/util/util_bit.h")
           s = p.read_text(encoding="utf-8", errors="ignore")
 
-          # DOTALL 플래그를 compile 인자로 주고, 패턴 안에서는 .*? 만 사용
+          # asm(...) 전체 블록을 잡되, 내용에 bsf/cmovz가 들어간 것만 치환
           pat = re.compile(r'(?P<asm>(?:__asm__|asm)\s*(?:volatile\s*)?\(.*?\)\s*;)', re.IGNORECASE | re.DOTALL)
           replaced = 0
+
           def wrap(m):
-              nonlocal replaced
+              global replaced  # <-- nonlocal 대신 global
               block = m.group('asm')
               low = block.lower()
               if 'bsf' in low or 'cmovz' in low:
@@ -228,7 +229,7 @@ jobs:
           ns = pat.sub(wrap, s)
           if replaced == 0:
               print('error: could not find x86 asm block with bsf/cmovz to replace in util_bit.h', file=sys.stderr)
-              print('\\n'.join(s.splitlines()[:160]))
+              print('\n'.join(s.splitlines()[:160]))
               sys.exit(1)
           p.write_text(ns, encoding="utf-8")
           print(f'patched util_bit.h: replaced {replaced} asm block(s)')
