@@ -23,7 +23,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           sudo apt-get update
-          sudo apt-get install -y jq ninja-build meson python3 pkg-config
+          sudo apt-get install -y curl zstd jq ninja-build meson python3 pkg-config vulkan-headers
 
       - name: Fetch DXVK-Sarek sources
         run: |
@@ -205,7 +205,7 @@ jobs:
           SRCDIR="$GITHUB_WORKSPACE/src"
           TC="$LLVM_MINGW_DIR"
           CLANG_DIR=$(ls -d "$TC/lib/clang/"* | sort -V | tail -n1)
-
+          
           cat > "$SRCDIR/cross.arm64ec.ini" <<EOF
           [binaries]
           c = 'arm64ec-w64-mingw32-clang'
@@ -223,10 +223,12 @@ jobs:
           c_args = ['-target','arm64ec-w64-mingw32',
                     '-D_FILE_OFFSET_BITS=64',
                     '-include','${SRCDIR}/arm64ec-preinclude.h',
+                    '-isystem','/usr/include',
                     '-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
           cpp_args = ['-target','arm64ec-w64-mingw32',
                       '-D_FILE_OFFSET_BITS=64',
                       '-include','${SRCDIR}/arm64ec-preinclude.h',
+                      '-isystem','/usr/include',
                       '-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
           
           # 링크 단계 인자만 여기
