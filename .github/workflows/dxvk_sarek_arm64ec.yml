@@ -23,8 +23,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build meson python3 \
-            glslang-tools pkg-config-aarch64-linux-gnu ca-certificates curl xz-utils
+            ninja-build meson python3 glslang-tools ca-certificates curl xz-utils pkgconf
 
       - name: Download ARM64EC llvm-mingw toolchain (bylaws)
         env:
@@ -48,7 +47,7 @@ jobs:
           windres = 'arm64ec-w64-mingw32-windres'
           widl = 'arm64ec-w64-mingw32-widl'
           strip = 'llvm-strip'
-          pkgconfig = 'aarch64-linux-gnu-pkg-config'
+          pkg-config = 'aarch64-linux-gnu-pkg-config'
 
           [host_machine]
           system = 'windows'
