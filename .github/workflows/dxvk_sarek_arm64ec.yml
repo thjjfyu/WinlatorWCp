@@ -132,35 +132,89 @@ jobs:
           git checkout -f origin/main
           git submodule update --init --recursive --checkout
 
-      - name: Write ARM64EC pre-include header (nuke x86 macros, assert ARM64/EC)
+      - name: Write Meson cross file (ARM64EC) — force link flags in compiler cmd
+        working-directory: src
+        env:
+          USE_ARM64EC_WRAPPER: ${{ env.USE_ARM64EC_WRAPPER }}
+          LLVM_MINGW_DIR: ${{ env.LLVM_MINGW_DIR }}
         run: |
           set -Eeuo pipefail
-          cat > "$GITHUB_WORKSPACE/arm64ec-preinclude.h" <<'EOF'
-          #ifndef ARM64EC_PREINCLUDE_GUARD
-          #define ARM64EC_PREINCLUDE_GUARD 1
-          /* x86/x64 매크로 전부 끄기 */
-          #ifdef __i386__      /* GCC/Clang i386 */   #undef __i386__    #endif
-          #ifdef __i386        /* 변형 */             #undef __i386      #endif
-          #ifdef _M_IX86                                  #undef _M_IX86   #endif
-          #ifdef _X86_                                     #undef _X86_    #endif
-          #ifdef __x86_64__                                #undef __x86_64__ #endif
-          #ifdef __x86_64                                  #undef __x86_64 #endif
-          #ifdef __amd64__                                 #undef __amd64__ #endif
-          #ifdef __amd64                                   #undef __amd64  #endif
-          #ifdef _M_X64                                    #undef _M_X64   #endif
-          #ifdef _M_AMD64                                  #undef _M_AMD64 #endif
-          #ifdef _AMD64_                                   #undef _AMD64_  #endif
-          /* ARM64/EC 매크로 명시적으로 켜기 */
-          #ifndef __aarch64__  #define __aarch64__ 1  #endif
-          #ifndef _M_ARM64     #define _M_ARM64  1    #endif
-          #ifndef __ARM64EC__  #define __ARM64EC__ 1  #endif
-          #ifndef _M_ARM64EC   #define _M_ARM64EC 1   #endif
-          #ifndef __CHPE__     #define __CHPE__ 1     #endif
-          /* 보수적 안전핀: 일부 mingw 헤더의 인라인 ASM 경로 비활성화 */
-          #ifndef __NO_INLINE__ #define __NO_INLINE__ 1 #endif
-          #endif /* ARM64EC_PREINCLUDE_GUARD */
+          ARM_WIN_DIR='${{ steps.helper.outputs.ARM_WIN_DIR }}'
+          HELPER='${{ steps.helper.outputs.HELPER }}'
+          PREINC="$GITHUB_WORKSPACE/arm64ec-preinclude.h"
+      
+          # windres 커맨드
+          if [ "${ARM64EC_WINDRES_NEEDS_FLAG:-false}" = "true" ]; then
+            WINDRES_LINE="['${ARM64EC_WINDRES}','-F','pe-arm64ec']"
+          else
+            WINDRES_LINE="'${ARM64EC_WINDRES}'"
+          fi
+      
+          # 컴파일러 커맨드(래퍼가 있어도, 드라이버에 target/ld/machine을 강제)
+          if [ "${USE_ARM64EC_WRAPPER}" = "true" ]; then
+            CBIN="['arm64ec-w64-mingw32-clang','-target','arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec']"
+            CXXBIN="['arm64ec-w64-mingw32-clang++','-target','arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec']"
+            CARGS="[]"; CPARGS="[]"
+          else
+            CBIN="['clang','--target=arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec']"
+            CXXBIN="['clang++','--target=arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec']"
+            if [ -n "${{ steps.cxx.outputs.CXX_INCLUDE }}" ]; then
+              CARGS="['-isystem','${{ steps.cxx.outputs.CXX_INCLUDE }}']"
+              CPARGS="$CARGS"
+            else
+              CARGS="[]"; CPARGS="[]"
+            fi
+          fi
+      
+          # 프리인클루드 + 강제 매크로
+          EXTRA_ARGS="['-include','${PREINC}','-D__aarch64__=1','-D_M_ARM64=1','-D__ARM64EC__=1','-D_M_ARM64EC=1','-D__CHPE__=1','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']"
+      
+          merge_arrays () {
+            local a="$1" b="$2"
+            a="${a#[}" ; a="${a%]}"
+            b="${b#[}" ; b="${b%]}"
+            if [ -z "$a" ]; then
+              [ -z "$b" ] && echo "[]" || echo "[$b]"
+            else
+              [ -z "$b" ] && echo "[$a]" || echo "[$a,$b]"
+            fi
+          }
+          CARGS="$(merge_arrays "$CARGS" "$EXTRA_ARGS")"
+          CPARGS="$(merge_arrays "$CPARGS" "$EXTRA_ARGS")"
+      
+          # 툴체인 lib 경로(표준 라이브러리/임포트 라이브러리)도 -L에 추가
+          TOOL_LIB_A="${LLVM_MINGW_DIR}/arm64ec-w64-mingw32/lib"
+          TOOL_LIB_B="${LLVM_MINGW_DIR}/lib"
+          LINK_EXTRAS="['-L','${TOOL_LIB_A}','-L','${TOOL_LIB_B}','-L','${ARM_WIN_DIR}','-Wl,--whole-archive,${HELPER},--no-whole-archive']"
+      
+          cat > cross.arm64ec.ini <<EOF
+          [binaries]
+          c = ${CBIN}
+          cpp = ${CXXBIN}
+          ar = 'llvm-ar'
+          strip = 'llvm-strip'
+          windres = ${WINDRES_LINE}
+          pkg-config = 'pkg-config'
+      
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+      
+          [built-in options]
+          c_args = ${CARGS}
+          cpp_args = ${CPARGS}
+          c_link_args = ${LINK_EXTRAS}
+          cpp_link_args = ${LINK_EXTRAS}
+      
+          [properties]
+          # 교차빌드에서 실행은 안 함
+          needs_exe_wrapper = true
           EOF
-          ls -l "$GITHUB_WORKSPACE/arm64ec-preinclude.h"
+      
+          echo "### cross.arm64ec.ini"
+          cat cross.arm64ec.ini
 
       - name: Write Meson cross file (ARM64EC) — enforce preinclude & macros
         working-directory: src
@@ -278,14 +332,18 @@ jobs:
           PREFIX: ${{ env.OUT_DIR }}/arm64ec
         run: |
           rm -rf build.arm64ec "$PREFIX"
-          meson setup build.arm64ec \
+          if ! meson setup build.arm64ec \
             --cross-file cross.arm64ec.ini \
             --buildtype release \
             --prefix "$PREFIX" \
-            -Dbuild_id=false -Dstrip=true
+            -Dbuild_id=false -Dstrip=true; then
+            echo "==== meson-log.txt (ARM64EC) ===="
+            sed -n '1,200p' build.arm64ec/meson-logs/meson-log.txt || true
+            exit 1
+          fi
           ninja -C build.arm64ec -j"$(nproc)"
           meson install --no-rebuild -C build.arm64ec
-
+      
           echo "== verify PE headers (ARM64EC) =="
           find "$PREFIX/bin" -name '*.dll' -print0 | xargs -0 -I{} sh -c 'echo "# {}"; llvm-readobj -file-headers "{}" | sed -n "1,40p"'
 
