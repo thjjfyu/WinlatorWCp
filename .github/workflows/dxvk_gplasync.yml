@@ -62,49 +62,50 @@ jobs:
           GITLAB_PROJECT: ${{ env.GITLAB_PROJECT }}
         run: |
           set -Eeuo pipefail
-          
-          # URL-encode project path for GitLab API
+
           enc="$(python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["GITLAB_PROJECT"], safe=""))')"
           GL_API="https://gitlab.com/api/v4/projects/${enc}"
-          
+
           : > /tmp/gl_rel.jsonl
           page=1
           while :; do
             curl -fsSL -D /tmp/h "${GL_API}/releases?per_page=100&page=${page}" -o /tmp/p.json
-            jq -c '.[]' /tmp/p.json >> /tmp/gl_rel.jsonl
+            jq -c '.[]' /tmp/p.json >> /tmp/gl_rel.jsonl || true
             next=$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')
             [[ -z "${next:-}" || "${next}" == "0" ]] && break
             page="${next}"
           done
-          
-          # 1) tag_name / name에서 base, rev를 jq capture로 직접 추출
-          #   허용: v2.7-1, 2.6.1-2, v2.6 rev3, V2.5 R4, v2.4.1 r1 ...
-          # 2) 같은 base의 최대 rev만 남김
+
+          # tag_name/name에서 base,rev를 안전하게 추출
+          # 허용 형식 예:
+          #  v2.7-1, 2.6.2-3, v2.6 rev4, V2.5 R10, v2.4.1 r1, 2.3.1  2
           jq -r -s '
-            [ .[]                             # gl_rel.jsonl의 각 release 오브젝트
-              | [.tag_name, .name]
-              | map(select(. != null))        # null 제거
-              | .[]                           # 문자열로 평탄화
-            ]
-            | map(                             # 정규식으로 base/rev 추출
-                capture("^(?i)v?(?<base>[0-9]+\\.[0-9]+(?:\\.[0-9]+)?)\\s*(?:[-_ ]?(?:rev|r))?\\s*(?<rev>[0-9]+)$")
+            [ .[] | [.tag_name, .name] | map(select(. != null)) | .[] ]
+            | map(
+                ( . | tostring )
+                | gsub("\\s+"; " ")                            # 공백 정규화
+                | try capture(
+                    "(?i)^v?(?<base>[0-9]+\\.[0-9]+(?:\\.[0-9]+)?)" +
+                    "\\s*(?:[-_ ]*(?:rev|r)\\s*)?" +            # rev/r 토큰이 있어도 되고 없어도 됨
+                    "(?<rev>[0-9]+)\\s*$"
+                  )
+                  catch empty
               )
+            | map(select(. != null))
             | map("\(.base) \(.rev)")
             | .[]
           ' /tmp/gl_rel.jsonl \
           | awk '{b=$1; r=$2+0; if(r>0 && r>max[b]) max[b]=r} END{for(b in max) print b, max[b]}' \
           | LC_ALL=C sort -V > /tmp/relmax.txt
-          
-          # 디버그: 맵이 비면 즉시 실패시켜 상류 문제를 바로 보게 함
+
           if [[ ! -s /tmp/relmax.txt ]]; then
             echo "::error::Release map is empty after parsing GitLab Releases. Check release names/format."
-            echo "::group::DEBUG sample names from GitLab"
-            # 원시 문자열 20개만 확인
-            jq -r 'select(line_number<=20) | [.tag_name, .name] | map(select(.!=null)) | .[]' /tmp/gl_rel.jsonl | nl -ba
+            echo "::group::DEBUG first 20 raw items from GitLab"
+            head -n 20 /tmp/gl_rel.jsonl | jq -r '[.tag_name, .name] | map(select(.!=null)) | .[]' || true
             echo "::endgroup::"
             exit 1
           fi
-          
+
           echo "Release map (base -> max rev):"
           sed -n '1,50p' /tmp/relmax.txt || true
 
