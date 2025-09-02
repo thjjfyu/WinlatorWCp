@@ -1,4 +1,4 @@
-name: TEST
+name: build-dxvk-sarek-arm64ec
 
 on:
   workflow_dispatch:
