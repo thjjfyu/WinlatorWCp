@@ -200,34 +200,33 @@ jobs:
             echo "warn: src/util/sync/sync_spinlock.h not found (skipped)"
           fi
 
-          # 2-ter) util_bit.h의 x86 asm(bsf/cmovz) 블록을 ARM64EC 전용 빌트인으로 포괄 치환 (세미콜론/개행 포함 안전)
+          # 2-ter) util_bit.h의 x86 asm(bsf/cmovz) 블록을 ARM64EC 전용 빌트인으로 포괄 치환
           python3 - <<'PY'
           import re, pathlib, sys
           p = pathlib.Path("src/util/util_bit.h")
           s = p.read_text(encoding="utf-8", errors="ignore")
 
-          # asm(...) 전체 블록을 잡되, 내용에 bsf/cmovz가 들어간 것만 치환
-          pat = re.compile(r'(?P<asm>(?:__asm__|asm)\\s*(?:volatile\\s*)?\\((?s).*?\\)\\s*;)', re.IGNORECASE)
+          # DOTALL 플래그를 compile 인자로 주고, 패턴 안에서는 .*? 만 사용
+          pat = re.compile(r'(?P<asm>(?:__asm__|asm)\s*(?:volatile\s*)?\(.*?\)\s*;)', re.IGNORECASE | re.DOTALL)
           replaced = 0
-          def repl(m):
-              global replaced
+          def wrap(m):
+              nonlocal replaced
               block = m.group('asm')
               low = block.lower()
               if 'bsf' in low or 'cmovz' in low:
                   replaced += 1
                   return (
-                      "#if defined(SAREK_ARM64EC) || defined(__arm64ec__) || defined(_M_ARM64EC)\\n"
-                      "      /* SAREK ARM64EC: replace x86 asm (bsf/cmovz) with builtin */\\n"
-                      "      /* Assumes local vars: res,tmp,n (matches original block) */\\n"
-                      "      res = (n ? __builtin_ctz((unsigned)n) : 32);\\n"
-                      "      tmp = 0;\\n"
-                      "#else\\n" + block + "\\n#endif\\n"
+                      "#if defined(SAREK_ARM64EC) || defined(__arm64ec__) || defined(_M_ARM64EC)\n"
+                      "      /* SAREK ARM64EC: replace x86 asm (bsf/cmovz) with builtin */\n"
+                      "      /* Assumes local vars: res,tmp,n (matches original block) */\n"
+                      "      res = (n ? __builtin_ctz((unsigned)n) : 32);\n"
+                      "      tmp = 0;\n"
+                      "#else\n" + block + "\n#endif\n"
                   )
               return block
 
-          ns = pat.sub(repl, s)
+          ns = pat.sub(wrap, s)
           if replaced == 0:
-              # 힌트 출력(앞부분 160줄)
               print('error: could not find x86 asm block with bsf/cmovz to replace in util_bit.h', file=sys.stderr)
               print('\\n'.join(s.splitlines()[:160]))
               sys.exit(1)
@@ -237,7 +236,7 @@ jobs:
 
           # 변경 확인(문맥 출력 + 남은 bsf asm 검사)
           nl -ba src/util/util_bit.h | sed -n '60,160p' || true
-          if grep -RInE '(?:__asm__|asm)[^;]*bsf' src/util/util_bit.h >/dev/null 2>&1; then
+          if grep -RInE '(__asm__|asm)[^;]*bsf' src/util/util_bit.h >/dev/null 2>&1; then
             echo "::error:: util_bit.h still contains asm bsf block(s)"
             exit 1
           fi
@@ -316,7 +315,6 @@ jobs:
       
           echo "== Head of src/util/util_bit.h (after patch) =="
           head -n 60 src/util/util_bit.h || true
-      # --- SAREK-SPECIFIC PATCH (ARM64EC SSE shim) ---
 
       - name: Wipe build dir (idempotent & -e safe)
         working-directory: dxvk
