@@ -105,7 +105,9 @@ jobs:
         working-directory: dxvk
         run: |
           set -euo pipefail
-
+      
+          # --- SAREK-SPECIFIC PATCH START ---
+          # 0) util_vector.h / util_bit.h 상단에 ARM64EC 프로로그(이미 있으면 생략)
           ARM64EC_PROLOG='#if defined(SAREK_ARM64EC) || defined(__arm64ec__) || defined(_M_ARM64EC)
             /* SAREK on ARM64EC: disable x86/SSE/AVX paths */
             #undef __x86_64__
@@ -123,7 +125,7 @@ jobs:
             #undef __AVX2__
           #endif
           '
-
+      
           for f in src/util/util_vector.h src/util/util_bit.h; do
             if [ -f "$f" ] && ! grep -q 'SAREK on ARM64EC: disable x86/SSE/AVX' "$f"; then
               echo "Injecting ARM64EC prolog into: $f"
@@ -133,21 +135,23 @@ jobs:
               mv "$tmp" "$f"
             fi
           done
-
-          # DXVK 소스/헤더만 대상으로 하고, 서드파티(include/vulkan, include/spirv)는 제외
+      
+          # 1) DXVK 자체 소스/헤더만 대상, 서드파티는 건들지 않음
           find src include -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.c' -o -name '*.cpp' -o -name '*.inl' \) \
             -not -path 'include/vulkan/*' -not -path 'include/spirv/*' > __filelist.txt
-
-          # 1) x86 인트린식 include 가드 치환
-          mapfile -t HDR_FILES < <(grep -RIl -E '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' --file=__filelist.txt 2>/dev/null || true)
-          for f in "${HDR_FILES[@]}"; do
-            echo "Patching includes in: $f"
-            sed -i -E \
-              's@(#\s*include\s*<)(x86intrin|x86gprintrin|immintrin|intrin)\.h>@#if !defined(SAREK_ARM64EC) \&\& !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)\n\1\2.h>\n#endif@g' \
-              "$f"
+      
+          # 2) ARM64EC일 땐 x86 인트린식 include 라인을 "아예 주석 처리" (조건부 감싸기보다 강력)
+          mapfile -t KILL_HDRS < <(grep -RInE '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' --file=__filelist.txt 2>/dev/null | cut -d: -f1 | sort -u || true)
+          for f in "${KILL_HDRS[@]}"; do
+            echo "Neutralizing x86 intrinsics includes in: $f"
+            # '#' 주석화: 원문을 남겨 추적 가능. 중복 주석화 방지.
+            sed -i -E '/#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>/{
+              /SAREK_ARM64EC neutralized/! s@^@/* SAREK_ARM64EC neutralized */ //
+          @
+            }' "$f"
           done
-
-          # 2) x86 감지 조건 치환
+      
+          # 3) x86 감지 조건에서 ARM64EC도 확실히 제외(기존 치환 유지)
           mapfile -t COND_FILES < <(grep -RIl -E 'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' --file=__filelist.txt 2>/dev/null || true)
           for f in "${COND_FILES[@]}"; do
             echo "Patching arch guards in: $f"
@@ -155,33 +159,35 @@ jobs:
               's@defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)@defined(\1) \&\& !defined(SAREK_ARM64EC) \&\& !defined(__arm64ec__) \&\& !defined(_M_ARM64EC)@g' \
               "$f"
           done
-
-          # 검증(컴파일러 관점): ARM64EC 조건에서 실제로 x86 인트린식이 포함되는지 확인
+      
+          # 4) 컴파일러 기반 검증 (-H 또는 의존성 스캔). 텍스트 grep 금지.
           cat > __inc_test.cpp <<'INC'
           #include "src/util/util_bit.h"
           #include "src/util/util_vector.h"
           INC
-
+      
           CXX=arm64ec-w64-mingw32-g++
-          CXXFLAGS="-E -x c++ -std=c++17 -DSAREK_ARM64EC=1 -D__CRT__NO_INLINE=1 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude"
-
-          if $CXX $CXXFLAGS -H __inc_test.cpp -o /dev/null 2> __inc_tree.log; then
+          BASE="-std=c++17 -DSAREK_ARM64EC=1 -D__CRT__NO_INLINE=1 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude"
+      
+          # 4-1) include 트리 체크(가능하면)
+          if $CXX -E -x c++ -H $BASE __inc_test.cpp -o /dev/null 2> __inc_tree.log; then
             echo "== Include tree (tail) ==" && tail -n 120 __inc_tree.log || true
             if egrep -q '/(x86intrin|immintrin|intrin)\.h' __inc_tree.log; then
               echo "::error::Compiler still includes x86 intrinsics headers under ARM64EC"; exit 1
             fi
           else
-            echo "note: -H failed or preprocessing failed, trying dependency scan fallback..."
-            $CXX -MMD -MF __inc_deps.d -MP -MT dummy $CXXFLAGS __inc_test.cpp -o /dev/null 2> __inc_dep_err.log || true
+            echo "note: -H unsupported or failed, using dependency scan fallback..."
+            # 4-2) 의존성 스캔: -fsyntax-only + -MMD (※ -E 제거)
+            $CXX -fsyntax-only -MMD -MF __inc_deps.d -MP -MT dummy $BASE __inc_test.cpp 2> __inc_dep_err.log || true
             cat __inc_dep_err.log || true
             if [ -f __inc_deps.d ] && egrep -q '(x86intrin|immintrin|intrin)\.h' __inc_deps.d; then
               echo "::error::Deps show x86 intrinsics headers"; cat __inc_deps.d; exit 1
             fi
           fi
-
+      
           echo "== Head of src/util/util_bit.h (after patch) =="
-          head -n 40 src/util/util_bit.h || true
-      # --- SAREK-SPECIFIC PATCH END ---
+          head -n 50 src/util/util_bit.h || true
+          # --- SAREK-SPECIFIC PATCH END ---
 
       - name: Wipe build dir (idempotent & -e safe)
         working-directory: dxvk
