@@ -1,4 +1,4 @@
-name: TEST sarek arm64 hacky2
+name: TEST
 
 on:
   workflow_dispatch:
@@ -405,7 +405,14 @@ jobs:
           shopt -s nullglob
           for f in install/bin/*.dll; do
             echo "== $f =="
-            llvm-readobj -coff-headers "$f" | tee /dev/stderr | grep -E 'Machine:.*ARM64EC|0xA641'
+            if command -v llvm-readobj >/dev/null 2>&1; then
+              llvm-readobj --coff-headers "$f" | tee /dev/stderr | grep -E 'Machine:.*(ARM64EC|0xA641)'
+            elif command -v llvm-objdump >/dev/null 2>&1; then
+              llvm-objdump -p "$f" | tee /dev/stderr | grep -E 'Machine:.*(ARM64EC|0xA641)'
+            else
+              echo "::error:: neither llvm-readobj nor llvm-objdump found in PATH"
+              exit 1
+            fi
           done
 
       - name: Enforce no x86 SIMD or x86 asm artifacts
