@@ -1,4 +1,4 @@
-name: Build DXVK v3
+name: Build DXVK rev4
 
 on:
   workflow_dispatch:
@@ -278,7 +278,8 @@ jobs:
             mkdir -p "$PKGDIR"
             # --no-package to keep unpacked tree; --dev-build keeps build dirs for faster rebuilds (harmless)
             ./package-release.sh "$tag" "$PKGDIR" --no-package --dev-build
-
+            
+            # Collect DLLs
             rm -rf "${GITHUB_WORKSPACE}/DXVK_WCP" "${GITHUB_WORKSPACE}/dist-x64" "${GITHUB_WORKSPACE}/dist-x86"
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
 
@@ -298,6 +299,7 @@ jobs:
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
 
+            # Create profile.json
             jq -n --arg VN "${ver}" --argjson VC 0 --arg DESC "DXVK build by Ari" \
                   --arg SYS '${system32}/' --arg WOW '${syswow64}/' \
                   --slurpfile x64 /tmp/x64.json --slurpfile x86 /tmp/x86.json '
