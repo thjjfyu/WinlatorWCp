@@ -222,23 +222,23 @@ jobs:
           # 컴파일 단계 인자(링커 옵션 금지)
           c_args = ['-target','arm64ec-w64-mingw32',
                     '-D_FILE_OFFSET_BITS=64',
-                    '-include','$SRCDIR/arm64ec-preinclude.h',
+                    '-include','${SRCDIR}/arm64ec-preinclude.h',
                     '-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
           cpp_args = ['-target','arm64ec-w64-mingw32',
                       '-D_FILE_OFFSET_BITS=64',
-                      '-include','$SRCDIR/arm64ec-preinclude.h',
+                      '-include','${SRCDIR}/arm64ec-preinclude.h',
                       '-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
           
           # 링크 단계 인자만 여기
           c_link_args = ['-target','arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec',
-                         '-L' + '$CLANG_DIR' + '/lib/windows','-lclang_rt.builtins-arm64ec']
+                         '-L${CLANG_DIR}/lib/windows','-lclang_rt.builtins-arm64ec']
           cpp_link_args = ['-target','arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec',
-                           '-L' + '$CLANG_DIR' + '/lib/windows','-lclang_rt.builtins-arm64ec']
+                           '-L${CLANG_DIR}/lib/windows','-lclang_rt.builtins-arm64ec']
           
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
-          cpu = 'arm64'
+          cpu = 'aarch64'
           endian = 'little'
           EOF
 
