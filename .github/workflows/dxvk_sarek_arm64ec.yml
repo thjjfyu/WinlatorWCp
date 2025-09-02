@@ -99,16 +99,76 @@ jobs:
           EOF
           echo "== arm64ec.meson ==" && nl -ba arm64ec.meson
 
-      # --- SAREK-SPECIFIC PATCH (FIXED) ---
-      - name: Patch SAREK headers to avoid x86 intrinsics on ARM64EC (fixed)
+      # --- SAREK-SPECIFIC PATCH (ARM64EC SSE shim) ---
+      - name: Patch SAREK headers to avoid x86 intrinsics on ARM64EC (shim)
         working-directory: dxvk
         shell: bash
         run: |
           set -euo pipefail
       
-          # 0) util_vector.h / util_bit.h 상단에 ARM64EC 프로로그(중복 방지)
+          # 0) ARM64EC 전용 SSE 폴리필 헤더 생성 (최소 필요 집합)
+          mkdir -p include
+          cat > include/sarek_arm64ec_sse_shim.h <<'SHIM'
+          #pragma once
+          #if (defined(SAREK_ARM64EC) || defined(__arm64ec__) || defined(_M_ARM64EC))
+          #include <cstdint>
+          #include <cstring>
+      
+          // __m128 / __m128i 대체 타입 (16바이트 정렬)
+          struct alignas(16) __m128  { float     v[4];  };
+          struct alignas(16) __m128i { uint8_t   v[16]; };
+      
+          // ==== float (ps) ====
+          static inline __m128 _mm_loadu_ps(const float* p) {
+            __m128 r; std::memcpy(r.v, p, 16); return r;
+          }
+          static inline void _mm_storeu_ps(float* p, const __m128& a) {
+            std::memcpy(p, a.v, 16);
+          }
+          // cmp eq: 같으면 all-ones(비트마스크), 아니면 0. (SSE의 비트동작만 흉내)
+          static inline __m128 _mm_cmpeq_ps(const __m128& a, const __m128& b) {
+            __m128 r;
+            for (int i=0;i<4;i++) {
+              uint32_t m = (a.v[i] == b.v[i]) ? 0xFFFFFFFFu : 0u;
+              std::memcpy(&r.v[i], &m, 4);
+            }
+            return r;
+          }
+          // and(ps): 비트 AND (float 비트를 int로 취급)
+          static inline __m128 _mm_and_ps(const __m128& a, const __m128& b) {
+            __m128 r;
+            for (int i=0;i<4;i++) {
+              uint32_t ai, bi, ci;
+              std::memcpy(&ai, &a.v[i], 4);
+              std::memcpy(&bi, &b.v[i], 4);
+              ci = ai & bi;
+              std::memcpy(&r.v[i], &ci, 4);
+            }
+            return r;
+          }
+      
+          // ==== int8 (epi8) ====
+          static inline __m128i _mm_cmpeq_epi8(const __m128i& a, const __m128i& b) {
+            __m128i r;
+            for (int i=0;i<16;i++) r.v[i] = (a.v[i]==b.v[i]) ? 0xFF : 0x00;
+            return r;
+          }
+          static inline __m128i _mm_and_si128(const __m128i& a, const __m128i& b) {
+            __m128i r;
+            for (int i=0;i<16;i++) r.v[i] = a.v[i] & b.v[i];
+            return r;
+          }
+          static inline int _mm_movemask_epi8(const __m128i& a) {
+            int m = 0;
+            for (int i=0;i<16;i++) m |= ((a.v[i] & 0x80) ? 1 : 0) << i;
+            return m;
+          }
+          #endif
+          SHIM
+      
+          # 1) util_vector.h / util_bit.h 상단에 ARM64EC 프로로그 + shim include (중복 방지)
           ARM64EC_PROLOG='#if defined(SAREK_ARM64EC) || defined(__arm64ec__) || defined(_M_ARM64EC)
-          /* SAREK on ARM64EC: disable x86/SSE/AVX paths */
+          /* SAREK on ARM64EC: disable x86/SSE/AVX paths + provide SSE shim */
           #undef __x86_64__
           #undef _M_X64
           #undef _M_AMD64
@@ -122,12 +182,13 @@ jobs:
           #undef __SSE4_2__
           #undef __AVX__
           #undef __AVX2__
+          #include "sarek_arm64ec_sse_shim.h"
           #endif
           '
       
           for f in src/util/util_vector.h src/util/util_bit.h; do
-            if [ -f "$f" ] && ! grep -q 'SAREK on ARM64EC: disable x86/SSE/AVX' "$f"; then
-              echo "Injecting ARM64EC prolog into: $f"
+            if [ -f "$f" ] && ! grep -q 'SAREK on ARM64EC: disable x86/SSE/AVX paths' "$f"; then
+              echo "Injecting ARM64EC prolog + shim into: $f"
               tmp=$(mktemp)
               printf "%s\n" "$ARM64EC_PROLOG" > "$tmp"
               cat "$f" >> "$tmp"
@@ -135,11 +196,11 @@ jobs:
             fi
           done
       
-          # 1) DXVK 자체 소스/헤더만 대상(서드파티 제외) 목록 작성
+          # 2) DXVK 자체 소스 목록(서드파티 제외)
           find src include -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.c' -o -name '*.cpp' -o -name '*.inl' \) \
             -not -path 'include/vulkan/*' -not -path 'include/spirv/*' > __filelist.txt
       
-          # 2) x86 전용 인트린식 include 라인 주석화 (intrin.h 는 제외)
+          # 3) x86 전용 인트린식 include 라인 주석화 (intrin.h 는 유지)
           mapfile -t KILL_HDRS < <(
             xargs -a __filelist.txt grep -RInE \
               '#\s*include\s*[<"]\s*(x86intrin|x86gprintrin|immintrin)\.h\s*[>"]' 2>/dev/null \
@@ -147,11 +208,10 @@ jobs:
           )
           for f in "${KILL_HDRS[@]:-}"; do
             echo "Neutralizing x86 intrinsics includes in: $f"
-            # 이미 주석 처리된 라인은 건너뜀
             sed -i -E '/SAREK_ARM64EC neutralized/! s@(^\s*#\s*include\s*[<"](x86intrin|x86gprintrin|immintrin)\.h[>"])@/* SAREK_ARM64EC neutralized */ // \1@' "$f"
           done
       
-          # 3) x86 감지 조건에 ARM64EC 확실히 제외(중복 주입 방지)
+          # 4) x86 감지 조건에 ARM64EC 제외
           mapfile -t COND_FILES < <(
             xargs -a __filelist.txt grep -RIl -E \
               'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' 2>/dev/null
@@ -163,18 +223,16 @@ jobs:
             }' "$f"
           done
       
-          # 4) 컴파일러 기반 검증: 대표 TU 전처리 스캔(-H). 실패 시 deps 스캔 대체.
+          # 5) 컴파일러 기반 검증: 대표 TU 전처리 스캔 (-H 또는 deps)
           CXX=arm64ec-w64-mingw32-g++
           BASE="-std=c++17 -DSAREK_ARM64EC=1 -D__CRT__NO_INLINE=1 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude"
       
-          # 4-1) util 헤더 포함 테스트 TU
           cat > __inc_test.cpp <<'INC'
           #include "src/util/util_bit.h"
           #include "src/util/util_vector.h"
           INC
       
           : > __inc_tree_all.log
-          # 4-2) 소스 트리에서 대표 TU 최대 20개 선택
           find src -type f -name '*.cpp' | sort | head -n 20 > __probe_files.txt || true
           PROBES=(__inc_test.cpp)
           if [ -s __probe_files.txt ]; then
@@ -191,9 +249,8 @@ jobs:
           done
       
           if grep -qE '/(x86intrin|immintrin)\.h' __inc_tree_all.log; then
-            echo "== Include tree tail =="
-            tail -n 200 __inc_tree_all.log || true
-            echo "::error:: Compiler still includes x86-only intrinsics headers under ARM64EC"
+            echo "== Include tree tail ==" && tail -n 200 __inc_tree_all.log || true
+            echo "::error:: x86-only intrinsics headers still included"
             exit 1
           fi
       
@@ -212,8 +269,8 @@ jobs:
           fi
       
           echo "== Head of src/util/util_bit.h (after patch) =="
-          head -n 50 src/util/util_bit.h || true
-      # --- SAREK-SPECIFIC PATCH (FIXED) ---
+          head -n 60 src/util/util_bit.h || true
+      # --- SAREK-SPECIFIC PATCH (ARM64EC SSE shim) ---
 
       - name: Wipe build dir (idempotent & -e safe)
         working-directory: dxvk
