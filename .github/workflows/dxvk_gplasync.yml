@@ -351,31 +351,31 @@ jobs:
             # patches --------------------------------------------------------------- #
             # v2.5 UnmappedSubresource constexpr init issue -> safe cast
             TEX="src/d3d11/d3d11_texture.h"
-            if [[ -f "$TEX" ]] && grep -qE '\\bUnmappedSubresource\\b' "$TEX"; then
+            if [[ -f "$TEX" ]] && grep -qE '\bUnmappedSubresource\b' "$TEX"; then
               cp "$TEX" "${TEX}.bak"
               perl -0777 -pe \
-                's/\\bstatic\\s+(?:const|constexpr)\\s+D3D11_MAP\\s+UnmappedSubresource\\s*=\\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
+                's/\bstatic\s+(?:const|constexpr)\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
                 -i "$TEX" && CHANGED=1
             fi
-
+            
             # patches --------------------------------------------------------------- #
             # Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate if toolchain has it
             INC="src/d3d9/d3d9_include.h"
             TOOL_X64="/opt/llvm-mingw/x86_64-w64-mingw32/include/d3d9types.h"
             TOOL_X86="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
             if [[ -f "$INC" ]] && (grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X64" || grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X86"); then
-              if grep -qE 'typedef\\s+struct\\s+_D3DDEVINFO_RESOURCEMANAGER\\b' "$INC"; then
+              if grep -qE 'typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b' "$INC"; then
                 cp "$INC" "${INC}.bak"
-                perl -0777 -pe 's/typedef\\s+struct\\s+_D3DDEVINFO_RESOURCEMANAGER\\b.*?}\\s*D3DDEVINFO_RESOURCEMANAGER\\b[^;]*;//s' -i "$INC" && CHANGED=1
+                perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;//s' -i "$INC" && CHANGED=1
               fi
             fi
-
+            
             # patches --------------------------------------------------------------- #
             # Mismatched-tags warning: align forward decl to 'struct' (optional)
             MEM="src/dxvk/dxvk_memory.h"
             if [[ -f "$MEM" ]] \
                && grep -qE '^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;' "$MEM" \
-               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*\\{' "$MEM"; then
+               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*\{' "$MEM"; then
               cp "$MEM" "${MEM}.bak2"
               sed -E -i 's/^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;/struct DxvkMemoryChunk;/' "$MEM" && CHANGED=1
             fi
