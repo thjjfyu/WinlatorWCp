@@ -49,7 +49,7 @@ jobs:
                   "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
           if [ "$HTTP" = "200" ]; then
             jq -r '.assets[].name' /tmp/rel.json \
-              | sed -n -E 's/^dxvk-gplasync-([0-9]+\.[0-9]+(\.[0-9]+)?)-([1-9])\.wcp$/\1 \3/p' \
+              | sed -n -E 's/^dxvk-gplasync-([0-9]+\.[0-9]+(\.[0-9]+)?)-([1-9][0-9]*)\.wcp$/\1 \3/p' \
               | LC_ALL=C sort -V > /tmp/exist.txt
           else
             : > /tmp/exist.txt
@@ -107,42 +107,51 @@ jobs:
             | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
             | LC_ALL=C sort -V > /tmp/tags.txt
 
+          # 최신부터 확인
           tac /tmp/tags.txt > /tmp/tags.desc.txt
-          
+
           awk '
             function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
               for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1} return 0}
             { base=substr($0,2); if (cmp(base,"2.3.1")>=0) print $0 }
           ' /tmp/tags.desc.txt > /tmp/candidates.txt
-          
+
           : > /tmp/missing.flag
-          
+
           while read -r tag; do
             [ -n "$tag" ] || continue
             base="${tag#v}"             # 2.7 | 2.7.0 | 2.6.2
             IFS=. read -r A B C <<<"$base"
 
+            # 베이스 정규화 후보: 2.7 <-> 2.7.0, 2.6.2 -> 2.6
             cand_bases=("$base")
             [[ "$base" =~ ^[0-9]+\.[0-9]+$    ]] && cand_bases+=("${base}.0")
             [[ "$base" =~ ^[0-9]+\.[0-9]+\.0$ ]] && cand_bases+=("${A}.${B}")
-            [[ -n "${C:-}" ]] && cand_bases+=("${A}.${B}")  # 2.6.2 -> 2.6
-          
+            [[ -n "${C:-}" ]] && cand_bases+=("${A}.${B}")
+
+            echo "::notice::relmap (head)"; sed -n '1,20p' /tmp/relmax.txt || true
+            echo "::notice::exist (head)"; sed -n '1,20p' /tmp/exist.txt || true
+
             rev=""
             patch_base=""
             for b in "${cand_bases[@]}"; do
               r=$(awk -v b="$b" '$1==b{print $2}' /tmp/relmax.txt | head -n1)
-              if [[ -n "$r" ]]; then rev="$r"; patch_base="$b"; break; fi
+              if [[ -n "$r" ]]; then
+                rev="$r"; patch_base="$b"; break
+              fi
             done
 
+            # 릴리스 맵에 없으면 이 태그 스킵
             [[ -z "$rev" ]] && continue
-          
+
+            # 이미 올린 조합인지: 한 줄 정확 일치로만 인정
             if ! grep -Fxq "${base} ${rev}" /tmp/exist.txt; then
               echo "Missing: ${base}-${rev} (patch_base: ${patch_base})"
               echo yes > /tmp/missing.flag
               break
             fi
           done < /tmp/candidates.txt
-          
+
           if [ "$(cat /tmp/missing.flag 2>/dev/null)" = yes ]; then
             echo "missing=true" >> "$GITHUB_OUTPUT"
           else
