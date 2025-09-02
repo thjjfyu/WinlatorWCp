@@ -207,40 +207,40 @@ jobs:
           CLANG_DIR=$(ls -d "$TC/lib/clang/"* | sort -V | tail -n1)
 
           cat > "$SRCDIR/cross.arm64ec.ini" <<EOF
-[binaries]
-c = 'arm64ec-w64-mingw32-clang'
-cpp = 'arm64ec-w64-mingw32-clang++'
-ar = 'llvm-ar'
-strip = 'llvm-strip'
-windres = 'llvm-rc'
-pkg-config = 'pkg-config'
-
-[properties]
-needs_exe_wrapper = true
-
-[built-in options]
-# 컴파일 단계 인자(링커 옵션 금지)
-c_args = ['-target','arm64ec-w64-mingw32',
-          '-D_FILE_OFFSET_BITS=64',
-          '-include','$SRCDIR/arm64ec-preinclude.h',
-          '-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
-cpp_args = ['-target','arm64ec-w64-mingw32',
-            '-D_FILE_OFFSET_BITS=64',
-            '-include','$SRCDIR/arm64ec-preinclude.h',
-            '-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
-
-# 링크 단계 인자만 여기
-c_link_args = ['-target','arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec',
-               '-L' + '$CLANG_DIR' + '/lib/windows','-lclang_rt.builtins-arm64ec']
-cpp_link_args = ['-target','arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec',
-                 '-L' + '$CLANG_DIR' + '/lib/windows','-lclang_rt.builtins-arm64ec']
-
-[host_machine]
-system = 'windows'
-cpu_family = 'aarch64'
-cpu = 'arm64'
-endian = 'little'
-EOF
+          [binaries]
+          c = 'arm64ec-w64-mingw32-clang'
+          cpp = 'arm64ec-w64-mingw32-clang++'
+          ar = 'llvm-ar'
+          strip = 'llvm-strip'
+          windres = 'llvm-rc'
+          pkg-config = 'pkg-config'
+          
+          [properties]
+          needs_exe_wrapper = true
+          
+          [built-in options]
+          # 컴파일 단계 인자(링커 옵션 금지)
+          c_args = ['-target','arm64ec-w64-mingw32',
+                    '-D_FILE_OFFSET_BITS=64',
+                    '-include','$SRCDIR/arm64ec-preinclude.h',
+                    '-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
+          cpp_args = ['-target','arm64ec-w64-mingw32',
+                      '-D_FILE_OFFSET_BITS=64',
+                      '-include','$SRCDIR/arm64ec-preinclude.h',
+                      '-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
+          
+          # 링크 단계 인자만 여기
+          c_link_args = ['-target','arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec',
+                         '-L' + '$CLANG_DIR' + '/lib/windows','-lclang_rt.builtins-arm64ec']
+          cpp_link_args = ['-target','arm64ec-w64-mingw32','-fuse-ld=lld','-Wl,/machine:arm64ec',
+                           '-L' + '$CLANG_DIR' + '/lib/windows','-lclang_rt.builtins-arm64ec']
+          
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'aarch64'
+          cpu = 'arm64'
+          endian = 'little'
+          EOF
 
       - name: Configure & Build (ARM64EC)
         working-directory: src
