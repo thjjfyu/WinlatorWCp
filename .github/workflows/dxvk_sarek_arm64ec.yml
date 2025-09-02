@@ -83,15 +83,22 @@ jobs:
           windres = 'arm64ec-w64-mingw32-windres'
           widl = 'arm64ec-w64-mingw32-widl'
           strip = 'llvm-strip'
-
+          
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
-          EOF
-          echo "== arm64ec.meson =="
-          cat arm64ec.meson
+          
+          [built-in options]
+          c_args = [
+            '-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__=0',
+            '-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0'
+          ]
+          cpp_args = [
+            '-D__SSE__=0','-D__SSE2__=0','-D__SSE3__=0','-D__SSSE3__=0',
+            '-D__SSE4_1__=0','-D__SSE4_2__=0','-D__AVX__=0','-D__AVX2__=0'
+          ]
 
       - name: Preflight macros (diagnostics)
         run: |
@@ -107,9 +114,38 @@ jobs:
         run: |
           set -euo pipefail
           
-          # 1) x86 인트린식 헤더 포함부를 ARM64EC에서 비활성화
-          #    - 패턴이 있는 '정규 텍스트 파일'만 추출(-R: 재귀, -I: 바이너리 제외, -l: 파일명만)
-          mapfile -t HDR_FILES < <(grep -RIl -E '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' src include 2>/dev/null || true)
+          # 0) ARM64EC 프롤로그(매크로 언디파인) 주입 대상
+          ARM64EC_PROLOG='#if defined(__arm64ec__) || defined(_M_ARM64EC)
+            /* SAREK on ARM64EC: disable x86/SSE/AVX paths */
+            #undef __x86_64__
+            #undef _M_X64
+            #undef _M_AMD64
+            #undef __i386__
+            #undef _M_IX86
+            #undef __SSE__
+            #undef __SSE2__
+            #undef __SSE3__
+            #undef __SSSE3__
+            #undef __SSE4_1__
+            #undef __SSE4_2__
+            #undef __AVX__
+            #undef __AVX2__
+          #endif
+          '
+          
+          # A-1) util_vector.h / util_bit.h 상단에 프롤로그 삽입(이미 주입되었으면 건너뜀)
+          for f in dxvk/src/util/util_vector.h dxvk/src/util/util_bit.h; do
+            if [ -f "$f" ] && ! grep -q 'SAREK on ARM64EC: disable x86/SSE/AVX' "$f"; then
+              printf 'Injecting ARM64EC prolog into: %s\n' "$f"
+              tmp=$(mktemp)
+              printf "%s\n" "$ARM64EC_PROLOG" > "$tmp"
+              cat "$f" >> "$tmp"
+              mv "$tmp" "$f"
+            fi
+          done
+          
+          # A-2) (이전대로 유지) x86 인트린식 헤더 포함 차단
+          mapfile -t HDR_FILES < <(grep -RIl -E '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' dxvk/src dxvk/include 2>/dev/null || true)
           for f in "${HDR_FILES[@]}"; do
             echo "Patching includes in: $f"
             sed -i -E \
@@ -117,8 +153,8 @@ jobs:
               "$f"
           done
           
-          # 2) x86 감지 조건에서 ARM64EC 제외
-          mapfile -t COND_FILES < <(grep -RIl -E 'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' src include 2>/dev/null || true)
+          # A-3) (이전대로 유지) x86 감지 조건에서 ARM64EC 제외
+          mapfile -t COND_FILES < <(grep -RIl -E 'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' dxvk/src dxvk/include 2>/dev/null || true)
           for f in "${COND_FILES[@]}"; do
             echo "Patching arch guards in: $f"
             sed -i -E \
@@ -126,12 +162,8 @@ jobs:
               "$f"
           done
           
-          # 3) (선택) 실제로 x86 인트린식이 남아있는 파일이 없는지 최종 점검
-          echo "== Post-patch include scan =="
-          grep -RInE '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' src include || true
-          
-          # 참고용 diff (있으면만 출력)
-          git --no-pager diff -- src/ include/ || true
+          echo "== Post-patch scan =="
+          grep -RInE '#\s*include\s*<(x86intrin|x86gprintrin|immintrin|intrin)\.h>' dxvk/src dxvk/include || true
       # --- SAREK-SPECIFIC PATCH END ---
 
       - name: Wipe build dir
