@@ -91,7 +91,7 @@ jobs:
           fi
           git submodule update --init --recursive --checkout
 
-      - name: Inject ARM64EC preinclude + SSE shim (source patch)
+      - name: Inject ARM64EC preinclude + SSE shim + block x86 intrinsics
         working-directory: src
         run: |
           set -Eeuo pipefail
@@ -101,80 +101,43 @@ jobs:
           #ifndef ARM64EC_PREINCLUDE_GUARD
           #define ARM64EC_PREINCLUDE_GUARD 1
           /* zap x86/x64 id macros */
-          #ifdef __i386__  /* ... 하나씩 개행으로 처리 */
-          #undef __i386__
-          #endif
-          #ifdef __i386
-          #undef __i386
-          #endif
-          #ifdef _M_IX86
-          #undef _M_IX86
-          #endif
-          #ifdef _X86_
-          #undef _X86_
-          #endif
-          #ifdef __x86_64__
-          #undef __x86_64__
-          #endif
-          #ifdef __x86_64
-          #undef __x86_64
-          #endif
-          #ifdef __amd64__
-          #undef __amd64__
-          #endif
-          #ifdef __amd64
-          #undef __amd64
-          #endif
-          #ifdef _M_X64
-          #undef _M_X64
-          #endif
-          #ifdef _M_AMD64
-          #undef _M_AMD64
-          #endif
-          #ifdef _AMD64_
-          #undef _AMD64_
-          #endif
-
+          #ifdef __i386__   #undef __i386__   #endif
+          #ifdef __i386     #undef __i386     #endif
+          #ifdef _M_IX86    #undef _M_IX86    #endif
+          #ifdef _X86_      #undef _X86_      #endif
+          #ifdef __x86_64__ #undef __x86_64__ #endif
+          #ifdef __x86_64   #undef __x86_64   #endif
+          #ifdef __amd64__  #undef __amd64__  #endif
+          #ifdef __amd64    #undef __amd64    #endif
+          #ifdef _M_X64     #undef _M_X64     #endif
+          #ifdef _M_AMD64   #undef _M_AMD64   #endif
+          #ifdef _AMD64_    #undef _AMD64_    #endif
           /* assert ARM/EC */
-          #ifndef __aarch64__
-          #define __aarch64__ 1
-          #endif
-          #ifndef _M_ARM64
-          #define _M_ARM64 1
-          #endif
-          #ifndef __ARM64EC__
-          #define __ARM64EC__ 1
-          #endif
-          #ifndef _M_ARM64EC
-          #define _M_ARM64EC 1
-          #endif
-          #ifndef __CHPE__
-          #define __CHPE__ 1
-          #endif
+          #ifndef __aarch64__  #define __aarch64__ 1  #endif
+          #ifndef _M_ARM64     #define _M_ARM64  1   #endif
+          #ifndef __ARM64EC__  #define __ARM64EC__ 1  #endif
+          #ifndef _M_ARM64EC   #define _M_ARM64EC 1   #endif
+          #ifndef __CHPE__     #define __CHPE__ 1     #endif
           #endif
           H
 
-          # 2) util_bit.h: x86 asm bsf/bsr 경로를 ARM/EC에선 내장함수로 대체
-          if grep -q 'util_bit.h' src/util/util_bit.h 2>/dev/null || true; then :; fi
+          # 2) util_bit.h: bitScanForward/Reverse를 ARM/EC 땐 builtins로
           python3 - <<'PY'
-          import re,sys,io,os
+          import re,os
           p='src/util/util_bit.h'
-          if not os.path.exists(p): sys.exit(0)
-          t=open(p,'r',encoding='utf-8',errors='ignore').read()
-
-          def repl(fn,body):
+          if os.path.exists(p):
+            t=open(p,'r',encoding='utf-8',errors='ignore').read()
+            def wrap(fn,body):
               pat=r'(inline\s+[^;{]*\b%s\s*\([^)]*\)\s*\{)(.*?)(\n\})' % re.escape(fn)
               if re.search(pat,t,flags=re.S):
-                  return re.sub(pat, r'\1\n#if defined(__aarch64__) || defined(__ARM64EC__) || defined(_M_ARM64) || defined(_M_ARM64EC)\n%s\n#else\n\\2\n#endif\3' % body, t, flags=re.S)
+                return re.sub(pat, r'\1\n#if defined(__aarch64__) || defined(__ARM64EC__) || defined(_M_ARM64) || defined(_M_ARM64EC)\n%s\n#else\n\\2\n#endif\3' % body, t, flags=re.S)
               return t
-
-          t=repl('bitScanForward', '  return n ? __builtin_ctz(n) : 32u;')
-          t=repl('bitScanReverse', '  return n ? (31u - __builtin_clz(n)) : 32u;')
-
-          open(p,'w',encoding='utf-8').write(t)
+            t=wrap('bitScanForward','  return n ? __builtin_ctz(n) : 32u;')
+            t=wrap('bitScanReverse','  return n ? (31u - __builtin_clz(n)) : 32u;')
+            open(p,'w',encoding='utf-8').write(t)
           PY
 
-          # 3) util_vector.h: NaN 마스킹에 쓰이는 최소 SSE 셋만 에뮬레이트
+          # 3) util_vector.h: 필요한 최소 SSE 연산만 에뮬
           V=src/util/util_vector.h
           if [ -f "$V" ] && ! grep -q 'DXVK_NO_X86_INTRIN' "$V"; then
             tmp="$(mktemp)"
@@ -184,26 +147,39 @@ jobs:
               echo '#include <string.h>'
               echo 'typedef struct { float m[4]; } __m128;'
               echo 'static inline __m128 _mm_loadu_ps(const float* p){ __m128 r; memcpy(r.m,p,16); return r; }'
-              echo 'static inline __m128 _mm_cmpeq_ps(__m128 a, __m128 b){'
-              echo '  __m128 r;'
-              echo '  for(int i=0;i<4;i++){'
-              echo '    float av=a.m[i], bv=b.m[i];'
-              echo '    unsigned u = (av==bv) ? 0xFFFFFFFFu : 0u;'
-              echo '    memcpy(&r.m[i], &u, 4);'
-              echo '  }'
-              echo '  return r;'
-              echo '}'
-              echo 'static inline __m128 _mm_and_ps(__m128 a, __m128 b){'
-              echo '  __m128 r;'
-              echo '  for(int i=0;i<4;i++){ unsigned ua,ub,ur; memcpy(&ua,&a.m[i],4); memcpy(&ub,&b.m[i],4); ur=ua&ub; memcpy(&r.m[i],&ur,4);}'
-              echo '  return r;'
-              echo '}'
+              echo 'static inline __m128 _mm_cmpeq_ps(__m128 a, __m128 b){ __m128 r; for(int i=0;i<4;i++){ float av=a.m[i],bv=b.m[i]; unsigned u=(av==bv)?0xFFFFFFFFu:0u; memcpy(&r.m[i],&u,4);} return r; }'
+              echo 'static inline __m128 _mm_and_ps(__m128 a, __m128 b){ __m128 r; for(int i=0;i<4;i++){ unsigned ua,ub,ur; memcpy(&ua,&a.m[i],4); memcpy(&ub,&b.m[i],4); ur=ua&ub; memcpy(&r.m[i],&ur,4);} return r; }'
               echo 'static inline void _mm_storeu_ps(float* p, __m128 a){ memcpy(p,a.m,16); }'
               echo '#endif'
               cat "$V"
             } > "$tmp"
             mv "$tmp" "$V"
           fi
+
+          # 4) 모든 헤더/소스에서 x86 인트린식 include를 ARM/EC에선 막기
+          python3 - <<'PY'
+          import os,re,glob
+          guards='(defined(__aarch64__)||defined(__ARM64EC__)||defined(_M_ARM64)||defined(_M_ARM64EC))'
+          incs=['x86intrin.h','immintrin.h','emmintrin.h','xmmintrin.h','tmmintrin.h','smmintrin.h']
+          paths = []
+          for root,_,files in os.walk('src'):
+            for f in files:
+              if f.endswith(('.h','.hpp','.hh','.hxx','.c','.cc','.cpp','.cxx')):
+                paths.append(os.path.join(root,f))
+          for p in paths:
+            t=open(p,'r',encoding='utf-8',errors='ignore').read()
+            changed=False
+            def sub_inc(m):
+              nonlocal changed
+              h=m.group(1)
+              changed=True
+              return f'#if !({guards})\n#include <{h}>\n#endif'
+            for h in incs:
+              t2=re.sub(r'^[ \t]*#\s*include\s*<'+re.escape(h)+r'>[ \t]*$', lambda m: sub_inc(m), t, flags=re.M)
+              t=t2
+            if changed:
+              open(p,'w',encoding='utf-8').write(t)
+          PY
 
       - name: Write Meson cross file (ARM64EC)
         working-directory: src
@@ -213,7 +189,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           PREINC="$(pwd)/arm64ec-preinclude.h"
-          SHIM_DIR="$(pwd)"  # (SSE shim은 파일에 주입했으므로 여기선 소스루트만)
+          SHIM_DIR="$(pwd)"
           cat > cross.arm64ec.ini <<EOF
           [binaries]
           c = ['arm64ec-w64-mingw32-clang','-target','arm64ec-w64-mingw32']
@@ -238,7 +214,6 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           EOF
-          # 변수 치환(한 토큰 보장)
           sed -i "s|\${SHIM_DIR}|${SHIM_DIR}|g; s|\${PREINC}|${PREINC}|g; s|\${ARM_WIN_DIR}|${ARM_WIN_DIR}|g; s|\${HELPER}|${HELPER}|g" cross.arm64ec.ini
           echo "== cross.arm64ec.ini =="; cat cross.arm64ec.ini
 
