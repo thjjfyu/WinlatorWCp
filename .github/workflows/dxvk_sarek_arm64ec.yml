@@ -235,10 +235,20 @@ jobs:
           print(f'patched util_bit.h: replaced {replaced} asm block(s)')
           PY
 
-          # 변경 확인(문맥 출력 + 남은 bsf asm 검사)
+          # 변경 확인(문맥 출력)
           nl -ba src/util/util_bit.h | sed -n '60,160p' || true
-          if grep -RInE '(__asm__|asm)[^;]*bsf' src/util/util_bit.h >/dev/null 2>&1; then
-            echo "::error:: util_bit.h still contains asm bsf block(s)"
+
+          # --- ARM64EC 정의를 넣고 전처리 결과에서만 x86 asm(bsf) 존재 여부를 검사 ---
+          CXX=arm64ec-w64-mingw32-g++
+          BASE="-std=c++17 -DSAREK_ARM64EC=1 -D__CRT__NO_INLINE=1 -D_FILE_OFFSET_BITS=64 -D_WIN32_WINNT=0x0A00 -DDXVK_WSI_WIN32 -I. -Isrc -Iinclude"
+
+          echo '#include "src/util/util_bit.h"' > __pp_probe.cpp
+          $CXX -E -x c++ -P $BASE __pp_probe.cpp > __pp_probe.i || true
+
+          # 전처리 결과에 여전히 asm(...bsf...)가 남아있다면 실패
+          if grep -qE '(^|[^A-Za-z_])(asm|__asm__)\s*\([^;]*bsf' __pp_probe.i; then
+            echo "::error:: Preprocessed output still contains x86 asm bsf under SAREK_ARM64EC"
+            tail -n 200 __pp_probe.i || true
             exit 1
           fi
       
