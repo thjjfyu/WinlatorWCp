@@ -91,112 +91,119 @@ jobs:
           fi
           git submodule update --init --recursive --checkout
 
-      - name: Write ARM64EC pre-include header (in src)
+      - name: Inject ARM64EC preinclude + SSE shim (source patch)
         working-directory: src
         run: |
           set -Eeuo pipefail
-          cat > arm64ec-preinclude.h <<'EOF'
+
+          # 1) pre-include: x86 매크로 제거 + ARM/EC 매크로 고정
+          cat > arm64ec-preinclude.h <<'H'
           #ifndef ARM64EC_PREINCLUDE_GUARD
           #define ARM64EC_PREINCLUDE_GUARD 1
-
-          /* Disable all x86/x64 arch macros (each on its own line; no inline directives) */
-          #ifdef __i386__
+          /* zap x86/x64 id macros */
+          #ifdef __i386__  /* ... 하나씩 개행으로 처리 */
           #undef __i386__
           #endif
-
           #ifdef __i386
           #undef __i386
           #endif
-
           #ifdef _M_IX86
           #undef _M_IX86
           #endif
-
           #ifdef _X86_
           #undef _X86_
           #endif
-
           #ifdef __x86_64__
           #undef __x86_64__
           #endif
-
           #ifdef __x86_64
           #undef __x86_64
           #endif
-
           #ifdef __amd64__
           #undef __amd64__
           #endif
-
           #ifdef __amd64
           #undef __amd64
           #endif
-
           #ifdef _M_X64
           #undef _M_X64
           #endif
-
           #ifdef _M_AMD64
           #undef _M_AMD64
           #endif
-
           #ifdef _AMD64_
           #undef _AMD64_
           #endif
 
-          /* Assert ARM64/ARM64EC */
+          /* assert ARM/EC */
           #ifndef __aarch64__
           #define __aarch64__ 1
           #endif
-
           #ifndef _M_ARM64
           #define _M_ARM64 1
           #endif
-
           #ifndef __ARM64EC__
           #define __ARM64EC__ 1
           #endif
-
           #ifndef _M_ARM64EC
           #define _M_ARM64EC 1
           #endif
-
           #ifndef __CHPE__
           #define __CHPE__ 1
           #endif
-
-          /* Conservative: reduce inline-asm based paths in some headers */
-          #ifndef __NO_INLINE__
-          #define __NO_INLINE__ 1
           #endif
+          H
 
-          #endif /* ARM64EC_PREINCLUDE_GUARD */
-          EOF
-          test -s arm64ec-preinclude.h
+          # 2) util_bit.h: x86 asm bsf/bsr 경로를 ARM/EC에선 내장함수로 대체
+          if grep -q 'util_bit.h' src/util/util_bit.h 2>/dev/null || true; then :; fi
+          python3 - <<'PY'
+          import re,sys,io,os
+          p='src/util/util_bit.h'
+          if not os.path.exists(p): sys.exit(0)
+          t=open(p,'r',encoding='utf-8',errors='ignore').read()
 
-      - name: Write ARM64EC shim headers (mask x86 intrinsics on ARM64EC)
-        working-directory: src
-        run: |
-          set -Eeuo pipefail
-          mkdir -p shim
-          cat > shim/x86intrin.h <<'EOF'
-          /* Shim to avoid pulling x86-only intrinsics on ARM64EC builds */
-          #if !defined(__ARM64EC__) && !defined(_M_ARM64EC)
-          #  include_next <x86intrin.h>
-          #else
-          /* no-op for ARM64EC */
-          #endif
-          EOF
-          cat > shim/immintrin.h <<'EOF'
-          /* Guarded include for x86 SIMD umbrella on ARM64EC */
-          #if !defined(__ARM64EC__) && !defined(_M_ARM64EC)
-          #  include_next <immintrin.h>
-          #else
-          /* no-op for ARM64EC */
-          #endif
-          EOF
-          echo "shim dir: $(pwd)/shim"
-          ls -l shim
+          def repl(fn,body):
+              pat=r'(inline\s+[^;{]*\b%s\s*\([^)]*\)\s*\{)(.*?)(\n\})' % re.escape(fn)
+              if re.search(pat,t,flags=re.S):
+                  return re.sub(pat, r'\1\n#if defined(__aarch64__) || defined(__ARM64EC__) || defined(_M_ARM64) || defined(_M_ARM64EC)\n%s\n#else\n\\2\n#endif\3' % body, t, flags=re.S)
+              return t
+
+          t=repl('bitScanForward', '  return n ? __builtin_ctz(n) : 32u;')
+          t=repl('bitScanReverse', '  return n ? (31u - __builtin_clz(n)) : 32u;')
+
+          open(p,'w',encoding='utf-8').write(t)
+          PY
+
+          # 3) util_vector.h: NaN 마스킹에 쓰이는 최소 SSE 셋만 에뮬레이트
+          V=src/util/util_vector.h
+          if [ -f "$V" ] && ! grep -q 'DXVK_NO_X86_INTRIN' "$V"; then
+            tmp="$(mktemp)"
+            {
+              echo '#if defined(__aarch64__) || defined(__ARM64EC__) || defined(_M_ARM64) || defined(_M_ARM64EC)'
+              echo '#define DXVK_NO_X86_INTRIN 1'
+              echo '#include <string.h>'
+              echo 'typedef struct { float m[4]; } __m128;'
+              echo 'static inline __m128 _mm_loadu_ps(const float* p){ __m128 r; memcpy(r.m,p,16); return r; }'
+              echo 'static inline __m128 _mm_cmpeq_ps(__m128 a, __m128 b){'
+              echo '  __m128 r;'
+              echo '  for(int i=0;i<4;i++){'
+              echo '    float av=a.m[i], bv=b.m[i];'
+              echo '    unsigned u = (av==bv) ? 0xFFFFFFFFu : 0u;'
+              echo '    memcpy(&r.m[i], &u, 4);'
+              echo '  }'
+              echo '  return r;'
+              echo '}'
+              echo 'static inline __m128 _mm_and_ps(__m128 a, __m128 b){'
+              echo '  __m128 r;'
+              echo '  for(int i=0;i<4;i++){ unsigned ua,ub,ur; memcpy(&ua,&a.m[i],4); memcpy(&ub,&b.m[i],4); ur=ua&ub; memcpy(&r.m[i],&ur,4);}'
+              echo '  return r;'
+              echo '}'
+              echo 'static inline void _mm_storeu_ps(float* p, __m128 a){ memcpy(p,a.m,16); }'
+              echo '#endif'
+              cat "$V"
+            } > "$tmp"
+            mv "$tmp" "$V"
+          fi
 
       - name: Write Meson cross file (ARM64EC)
         working-directory: src
@@ -206,22 +213,14 @@ jobs:
         run: |
           set -Eeuo pipefail
           PREINC="$(pwd)/arm64ec-preinclude.h"
-          SHIM_DIR="$(pwd)/shim"
-          [ -f "$PREINC" ] || { echo "::error::missing $PREINC"; exit 1; }
-
-          if command -v arm64ec-w64-mingw32-windres >/dev/null 2>&1; then
-            WINDRES_LINE="'arm64ec-w64-mingw32-windres'"
-          else
-            WINDRES_LINE="'llvm-rc'"
-          fi
-
+          SHIM_DIR="$(pwd)"  # (SSE shim은 파일에 주입했으므로 여기선 소스루트만)
           cat > cross.arm64ec.ini <<EOF
           [binaries]
           c = ['arm64ec-w64-mingw32-clang','-target','arm64ec-w64-mingw32']
           cpp = ['arm64ec-w64-mingw32-clang++','-target','arm64ec-w64-mingw32']
           ar = 'llvm-ar'
           strip = 'llvm-strip'
-          windres = ${WINDRES_LINE}
+          windres = 'llvm-rc'
           pkg-config = 'pkg-config'
 
           [host_machine]
@@ -231,35 +230,29 @@ jobs:
           endian = 'little'
 
           [built-in options]
-          c_args = ['-I','${SHIM_DIR}','-include','${PREINC}','-D__aarch64__=1','-D_M_ARM64=1','-D__ARM64EC__=1','-D_M_ARM64EC=1','-D__CHPE__=1','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
-          cpp_args = ['-I','${SHIM_DIR}','-include','${PREINC}','-D__aarch64__=1','-D_M_ARM64=1','-D__ARM64EC__=1','-D_M_ARM64EC=1','-D__CHPE__=1','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
+          c_args = ['-I${SHIM_DIR}','-include${PREINC}','-D__aarch64__=1','-D_M_ARM64=1','-D__ARM64EC__=1','-D_M_ARM64EC=1','-D__CHPE__=1','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
+          cpp_args = ['-I${SHIM_DIR}','-include${PREINC}','-D__aarch64__=1','-D_M_ARM64=1','-D__ARM64EC__=1','-D_M_ARM64EC=1','-D__CHPE__=1','-Wno-macro-redefined','-Wno-dll-attribute-on-redeclaration','-Wno-nontrivial-memcall']
           c_link_args = ['-fuse-ld=lld','-Wl,/machine:arm64ec','-L','${ARM_WIN_DIR}','-Wl,--whole-archive,${HELPER},--no-whole-archive']
           cpp_link_args = ['-fuse-ld=lld','-Wl,/machine:arm64ec','-L','${ARM_WIN_DIR}','-Wl,--whole-archive,${HELPER},--no-whole-archive']
 
           [properties]
           needs_exe_wrapper = true
           EOF
-
-          echo "== cross.arm64ec.ini =="
-          cat cross.arm64ec.ini
+          # 변수 치환(한 토큰 보장)
+          sed -i "s|\${SHIM_DIR}|${SHIM_DIR}|g; s|\${PREINC}|${PREINC}|g; s|\${ARM_WIN_DIR}|${ARM_WIN_DIR}|g; s|\${HELPER}|${HELPER}|g" cross.arm64ec.ini
+          echo "== cross.arm64ec.ini =="; cat cross.arm64ec.ini
 
       - name: Write Meson cross file (i686)
         working-directory: src
         run: |
           set -Eeuo pipefail
-          if command -v i686-w64-mingw32-windres >/dev/null 2>&1; then
-            WINDRES_LINE="'i686-w64-mingw32-windres'"
-          else
-            WINDRES_LINE="'llvm-rc'"
-          fi
-
-          cat > cross.i686.ini <<EOF
+          cat > cross.i686.ini <<'EOF'
           [binaries]
           c = ['i686-w64-mingw32-clang']
           cpp = ['i686-w64-mingw32-clang++']
           ar = 'llvm-ar'
           strip = 'llvm-strip'
-          windres = ${WINDRES_LINE}
+          windres = 'llvm-rc'
           pkg-config = 'pkg-config'
 
           [host_machine]
@@ -268,29 +261,20 @@ jobs:
           cpu = 'i686'
           endian = 'little'
           EOF
-
-          echo "== cross.i686.ini =="
-          cat cross.i686.ini
+          echo "== cross.i686.ini =="; cat cross.i686.ini
 
       - name: Build (ARM64EC)
         working-directory: src
         env:
           PREFIX: ${{ env.OUT_DIR }}/arm64ec
-          # 안전벨트: shim 경로를 환경변수에도 주입
-          CPLUS_INCLUDE_PATH: ${{ github.workspace }}/src/shim:$CPLUS_INCLUDE_PATH
-          C_INCLUDE_PATH: ${{ github.workspace }}/src/shim:$C_INCLUDE_PATH
         run: |
           set -Eeuo pipefail
           rm -rf build.arm64ec "$PREFIX"
-          if ! meson setup build.arm64ec \
+          meson setup build.arm64ec \
             --cross-file cross.arm64ec.ini \
             --buildtype release \
             --prefix "$PREFIX" \
-            -Dbuild_id=false -Dstrip=true; then
-            echo "==== meson-log.txt (ARM64EC) ===="
-            sed -n '1,200p' build.arm64ec/meson-logs/meson-log.txt || true
-            exit 1
-          fi
+            -Dbuild_id=false -Dstrip=true
           ninja -v -C build.arm64ec -j"$(nproc)"
           meson install --no-rebuild -C build.arm64ec
 
@@ -301,15 +285,11 @@ jobs:
         run: |
           set -Eeuo pipefail
           rm -rf build.i686 "$PREFIX"
-          if ! meson setup build.i686 \
+          meson setup build.i686 \
             --cross-file cross.i686.ini \
             --buildtype release \
             --prefix "$PREFIX" \
-            -Dbuild_id=false -Dstrip=true; then
-            echo "==== meson-log.txt (i686) ===="
-            sed -n '1,200p' build.i686/meson-logs/meson-log.txt || true
-            exit 1
-          fi
+            -Dbuild_id=false -Dstrip=true
           ninja -v -C build.i686 -j"$(nproc)"
           meson install --no-rebuild -C build.i686
 
