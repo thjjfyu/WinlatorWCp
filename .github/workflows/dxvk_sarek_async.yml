@@ -299,7 +299,7 @@ jobs:
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           {
-            echo "🤖 Automated DXVK-Sarek (async branch) builds."
+            echo "🤖 Automated DXVK-Sarek async (1.11.0+) builds."
             echo
             echo "Current: ${BASE_VER} @ [${HEAD_SHORT}](https://github.com/${SAREK_REPO}/commit/${HEAD_SHA})"
           } > "$NOTES"
