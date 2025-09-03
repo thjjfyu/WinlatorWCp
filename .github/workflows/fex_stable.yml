@@ -1,4 +1,4 @@
-name: Build FEX Stable v2
+name: Build FEX Stable v2 (standardized)
 
 on:
   workflow_dispatch:              # Manual trigger (any branch)
@@ -30,7 +30,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -Eeuo pipefail
           API="https://api.github.com"
           OWNER="FEX-Emu"
           REPO="FEX"
@@ -90,7 +89,6 @@ jobs:
           REPO: ${{ github.repository }}
           FILENAME: fex-${{ needs.resolve-latest.outputs.clean_tag }}.wcp
         run: |
-          set -Eeuo pipefail
           API="https://api.github.com"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
@@ -114,10 +112,37 @@ jobs:
       - name: Install build tools
         if: steps.check.outputs.skip != 'true'
         run: |
-          set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
-            jq zstd curl wget git cmake ninja-build build-essential binutils
+            jq zstd curl wget git cmake ninja-build build-essential binutils xz-utils
+
+      - name: Install llvm-mingw toolchain (Linux aarch64 host) and set PATH
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+
+          echo "Fetching latest llvm-mingw release for Linux aarch64 host..."
+          url="$(curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ver[@]}" "$API" \
+                | jq -r '.assets[] | select(.name|test("aarch64.*linux.*(tar\\.xz|tar\\.gz)$"; "i")) | .browser_download_url' | head -n1)"
+          [[ -z "$url" || "$url" == "null" ]] && { echo "::error::llvm-mingw aarch64 linux tarball not found"; exit 1; }
+
+          mkdir -p "$HOME/.toolchains/llvm-mingw"
+          tmpd="$(mktemp -d)"; cd "$tmpd"
+          echo "Downloading: $url"
+          curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors -o toolchain.tar "${url}"
+          tar -xf toolchain.tar -C "$HOME/.toolchains/llvm-mingw" --strip-components=1
+
+          # Prepend to PATH for subsequent cmake detection
+          echo "$HOME/.toolchains/llvm-mingw/bin" >> "$GITHUB_PATH"
+
+          # Sanity check for required triplets
+          ls "$HOME/.toolchains/llvm-mingw/bin" | grep -E '^(arm64ec|aarch64)-w64-mingw32-.*clang$' >/dev/null || {
+            echo "::error::Required llvm-mingw triplet toolchains not present"; exit 1; }
 
       - name: Checkout upstream FEX at tag
         if: steps.check.outputs.skip != 'true'
@@ -129,21 +154,38 @@ jobs:
           path: src
           fetch-depth: 1
 
-      - name: Compile FEXCore (arm64ec + wow64)
+      - name: Compile FEXCore (arm64ec + wow64) with standard flags
         if: steps.check.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
 
+          # Common flags suggested by the standard guide
+          COMMON_FLAGS=(
+            -DCMAKE_BUILD_TYPE=Release
+            -DENABLE_LTO=False
+            -DBUILD_TESTS=False
+            -DENABLE_JEMALLOC_GLIBC_ALLOC=False
+            -DTUNE_CPU=none
+          )
+
           # ARM64EC (Windows ARM64EC)
           mkdir -p src/build/arm64ec && cd src/build/arm64ec
-          ../../Data/nix/cmake_configure_woa64.sh ../../ -G Ninja -DTUNE_CPU=none
-          ninja
+          ../../Data/nix/cmake_configure_woa64.sh ../../ -G Ninja \
+            "${COMMON_FLAGS[@]}" \
+            -DMINGW_TRIPLE=arm64ec-w64-mingw32 \
+            -DCMAKE_INSTALL_PREFIX="$PWD/dist"
+          ninja -v
+          ninja install
           cd ../../..
 
-          # WOW64 (Windows x86-on-ARM; intentionally placed in system32 for your app)
+          # WOW64 (Windows x86-on-ARM; FEX translator side, ARM64 host DLL)
           mkdir -p src/build/wow64 && cd src/build/wow64
-          ../../Data/nix/cmake_configure_woa32.sh ../../ -G Ninja -DTUNE_CPU=none
-          ninja
+          ../../Data/nix/cmake_configure_woa32.sh ../../ -G Ninja \
+            "${COMMON_FLAGS[@]}" \
+            -DMINGW_TRIPLE=aarch64-w64-mingw32 \
+            -DCMAKE_INSTALL_PREFIX="$PWD/dist"
+          ninja -v
+          ninja install
           cd ../../..
 
       - name: Package FEXCore DLLs and WCP (both in system32 by design)
