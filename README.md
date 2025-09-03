@@ -7,7 +7,6 @@
 
 
 <h3 align="center">Automated builds, Always up to date</h3>
-<h4 align="center">All rights and source belong to the original author</h4>
 
 
 
