@@ -1,4 +1,4 @@
-name: Build FEX Nightly v2 (standardized)
+name: Build FEX Nightly
 
 on:
   workflow_dispatch:              # Manual trigger (any branch)
