@@ -1,4 +1,4 @@
-name: Build WOWBox64 Nightly
+name: Build WowBox64 Nightly
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ concurrency:
 
 env:
   TOOLCHAIN_URL: https://github.com/bylaws/llvm-mingw/releases/download/20250305/llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz
-  RELEASE_TAG: WOWBox64-NIGHTLY
+  RELEASE_TAG: WOWBOX64-NIGHTLY
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1) Upstream workflow watcher (GATE)
@@ -133,10 +133,10 @@ jobs:
         run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 3) Build WOWBox64 DLL + package WCP + release
+# 3) Build WowBox64 DLL + package WCP + release
 # ──────────────────────────────────────────────────────────────────────────────
-  build-WOWBox64:
-    name: Build WOWBox64 ${{ needs.resolve-latest.outputs.short }}
+  build-wowbox64:
+    name: Build WowBox64 ${{ needs.resolve-latest.outputs.short }}
     needs: [resolve-latest]
     if: needs.check-upstream-workflow.outputs.changed != 'true'
     runs-on: ubuntu-latest
@@ -176,7 +176,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
-          FILENAME="WOWBox64-nightly-${DATECODE}.wcp"
+          FILENAME="wowbox64-nightly-${DATECODE}.wcp"
           HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' \
                   -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
                   "$API" || true)"
@@ -209,7 +209,7 @@ jobs:
           path: src
           fetch-depth: 1
 
-      - name: Configure WOWBox64 (Windows target, 32-bit)
+      - name: Configure WowBox64 (Windows target, 32-bit)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
@@ -221,18 +221,18 @@ jobs:
             -DCMAKE_CXX_COMPILER=i686-w64-mingw32-clang++ \
             -DCMAKE_RC_COMPILER=llvm-rc
 
-      - name: Build WOWBox64.dll
+      - name: Build WowBox64.dll
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
-          cmake --build build-wow64 --target WOWBox64 -j"$(nproc)"
+          cmake --build build-wow64 --target WowBox64 -j"$(nproc)"
 
       - name: Verify artifact is PE32 i386 DLL
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
-          DLL="$(find build-wow64 -iname 'WOWBox64.dll' -print | head -n1)"
-          [ -f "$DLL" ] || { echo "::error::WOWBox64.dll not found"; exit 1; }
+          DLL="$(find build-wow64 -iname 'WowBox64.dll' -print | head -n1)"
+          [ -f "$DLL" ] || { echo "::error::WowBox64.dll not found"; exit 1; }
           file "$DLL"
           objdump -p "$DLL" | grep -qi 'machine.*I386' || { echo "::error::Not a 32-bit i386 DLL"; exit 1; }
           llvm-strip -s "$DLL" || true
@@ -251,16 +251,16 @@ jobs:
             "type": "WOWBox64",
             "versionName": "nightly-${SHORT}",
             "versionCode": ${DATECODE},
-            "description": "${DATECODE} WOWBox64 Build by Ari",
+            "description": "${DATECODE} WowBox64 Build by Ari",
             "files": [
-              { "source": "WOWBox64.dll", "target": "\${syswow64}/WOWBox64.dll" }
+              { "source": "WowBox64.dll", "target": "\${syswow64}/WowBox64.dll" }
             ],
             "notes": ["32-bit titles only. Place in syswow64 and set DLL override: native,builtin"]
           }
           JSON
-          cp "$DLL" ./WOWBox64.dll
+          cp "$DLL" ./WowBox64.dll
           tar --zstd --format=gnu --owner=0 --group=0 --numeric-owner --sort=name \
-            -cf "out/WOWBox64-nightly-${DATECODE}.wcp" profile.json WOWBox64.dll
+            -cf "out/wowbox64-nightly-${DATECODE}.wcp" profile.json WowBox64.dll
           ls -l out
 
       - name: Create/Update release and upload
@@ -275,7 +275,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           printf -v BODY '%s\n\n%s\n%s\n' \
-            '🧩 Automated WOWBox64 nightly (32-bit DLL bridge for Bionic+Wine)' \
+            '🧩 Automated WowBox64 nightly (32-bit DLL bridge for Bionic+Wine)' \
             "Commit: [${SHORT}](https://github.com/ptitSeb/box64/commit/${SHA})" \
             "Upstream SHA: ${SHA}"
           if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
@@ -283,7 +283,7 @@ jobs:
           else
             gh release edit "$TAG" --repo "$REPO" -t "$TAG" -n "$BODY"
           fi
-          gh release upload "$TAG" "./out/WOWBox64-nightly-${DATECODE}.wcp" --repo "$REPO" --clobber
+          gh release upload "$TAG" "./out/wowbox64-nightly-${DATECODE}.wcp" --repo "$REPO" --clobber
 
       - name: Trim old assets (keep latest 5)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
