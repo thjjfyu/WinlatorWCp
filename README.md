@@ -25,11 +25,18 @@
 | [**DXVK-arm64ec**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-ARM64EC) |   |
 | [**DXVK-gplasync-arm64ec**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) |   |
 
+<details>
+  <summary>⚡DXVK version details</summary>
+
+  
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
 | **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3 |
 | **gplasync** | Rendering frames before shader compilation = less stutter |
 | **arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
+
+Try order: Sarek → 2.3.1-x to 2.4.1-x. → (Glitches = Up, freezes = Down or use vanilla DXVK)
+</details>
 <br>
 
 ## 🌌 VKD3D-Proton
@@ -38,9 +45,15 @@
 | [**VKD3D-proton**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON) |  <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
 | [**VKD3D-proton-arm64ec**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) |   |
 
+<details>
+  <summary>⚡VKD3D-Proton version details</summary>
+
+  
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
 | **arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
+
+</details>
 <br>
 
 ## 📦 Runtime Packages
