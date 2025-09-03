@@ -125,24 +125,38 @@ jobs:
           API="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
-
+      
           echo "Fetching latest llvm-mingw release for Linux aarch64 host..."
-          url="$(curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ver[@]}" "$API" \
-                | jq -r '.assets[] | select(.name|test("aarch64.*linux.*(tar\\.xz|tar\\.gz)$"; "i")) | .browser_download_url' | head -n1)"
-          [[ -z "$url" || "$url" == "null" ]] && { echo "::error::llvm-mingw aarch64 linux tarball not found"; exit 1; }
-
+          url="$(
+            curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ver[@]}" "$API" \
+            | jq -r '
+                (
+                  # 1st try: aarch64 + (ubuntu|linux) + tar.{xz,gz}
+                  [ .assets[]
+                    | select(.name | test("(aarch64|arm64).*(ubuntu|linux).*(tar\\.(xz|gz))$"; "i"))
+                    | .browser_download_url
+                  ]
+                  +
+                  # Fallback: aarch64 tarball, but NOT darwin/apple
+                  [ .assets[]
+                    | select((.name | test("aarch64.*(tar\\.(xz|gz))$"; "i"))
+                             and (.name | test("(darwin|apple)"; "i") | not))
+                    | .browser_download_url
+                  ]
+                )[0]
+              '
+          )"
+          [[ -z "$url" || "$url" == "null" ]] && { echo "::error::llvm-mingw aarch64 tarball not found (linux/ubuntu)"; exit 1; }
+      
           mkdir -p "$HOME/.toolchains/llvm-mingw"
           tmpd="$(mktemp -d)"; cd "$tmpd"
           echo "Downloading: $url"
-          curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors -o toolchain.tar "${url}"
+          curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors -o toolchain.tar "$url"
           tar -xf toolchain.tar -C "$HOME/.toolchains/llvm-mingw" --strip-components=1
-
-          # Prepend to PATH for subsequent cmake detection
+      
           echo "$HOME/.toolchains/llvm-mingw/bin" >> "$GITHUB_PATH"
-
-          # Sanity check for required triplets
-          ls "$HOME/.toolchains/llvm-mingw/bin" | grep -E '^(arm64ec|aarch64)-w64-mingw32-.*clang$' >/dev/null || {
-            echo "::error::Required llvm-mingw triplet toolchains not present"; exit 1; }
+          ls "$HOME/.toolchains/llvm-mingw/bin" | grep -E '^(arm64ec|aarch64)-w64-mingw32-.*clang$' >/dev/null \
+            || { echo "::error::Expected triplet compilers not found in llvm-mingw bin/"; exit 1; }
 
       - name: Checkout upstream FEX at tag
         if: steps.check.outputs.skip != 'true'
