@@ -8,7 +8,7 @@
 
 <h3 align="center">Automated builds, Always up to date</h3>
 
-
+---
 
 
 <br>
@@ -85,8 +85,8 @@ Things out of my hands, special patches & fixes are [**HERE**](https://github.co
 
 <br><br>
 
-
 ---
+
 <h3 align="center">All rights and credit goes to the original creators and those who inspired this work</h3><p align="center">
 <h3 align="center">
   
