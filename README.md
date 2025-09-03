@@ -1,4 +1,4 @@
-# Yet Another Winlator Resources Repo
+<h1 align="center">Yet Another Winlator Resources Repo</h1>
 <br>
 
 - Automated builds
