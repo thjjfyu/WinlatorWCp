@@ -88,7 +88,8 @@ Things out of my hands, special patches & fixes are [**HERE**](https://github.co
 
 ---
 <h3 align="center">All rights and credit goes to the original creators and those who inspired this work</h3><p align="center">
-
+<h3 align="center">
+  
 [bylaws](https://github.com/bylaws)<br>
 [ptitSeb](https://github.com/ptitSeb)  
 [doitsujin](https://github.com/doitsujin)  
@@ -99,4 +100,6 @@ Things out of my hands, special patches & fixes are [**HERE**](https://github.co
 [coffincolors](https://github.com/coffincolors)  
 [Pipetto-crypto](https://github.com/Pipetto-crypto)  
 [K11MCH1](https://github.com/K11MCH1)
+
+</h3><p align="center">
 
