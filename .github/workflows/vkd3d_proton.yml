@@ -254,7 +254,7 @@ jobs:
           BASE: ${{ needs.guard.outputs.base }}
         run: |
           set -Eeuo pipefail
-          BODY=$'🤖 Automated Proton builds. (2.14.1+)\n\nCurrent: '"${BASE}"
+          BODY=$'🤖 Automated Proton builds (2.14.1+)\n\nCurrent: '"${BASE}"
           if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -n "${BODY}"
           else
