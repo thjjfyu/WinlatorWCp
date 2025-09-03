@@ -1,6 +1,11 @@
 <h1 align="center">Yet Another Winlator Resources Repo</h1>
 <br>
 
+<p align="center">
+  <img src="./Logo.png" alt="에뮬레이터" width="320">
+</p>
+
+
 <h3 align="center">Automated builds, Always up to date, Unified format</h3>
 <h4 align="center">All rights and source belong to the original author</h4>
 
