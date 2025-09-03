@@ -2,6 +2,7 @@
 <br>
 
 _Automated builds & unified format_
+_All rights and source belong to the original author_
 
 <br>
 
