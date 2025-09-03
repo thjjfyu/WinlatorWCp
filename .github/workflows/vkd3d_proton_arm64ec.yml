@@ -266,7 +266,7 @@ jobs:
           [[ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/d3d12.dll"     ]] && add_file "syswow64/d3d12.dll"     '${syswow64}/d3d12.dll'
           [[ -f "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64/d3d12core.dll" ]] && add_file "syswow64/d3d12core.dll" '${syswow64}/d3d12core.dll'
 
-          VC=$(date -u +%Y%m%d%H%M)
+          VC=0
           jq -n \
             --arg VN "proton-arm64ec-${BASE}" \
             --argjson VC "$VC" \
