@@ -303,7 +303,6 @@ jobs:
           printf -v BODY '%s\n\n%s\n%s' \
             '🌙 Automated BOX64-BIONIC-NIGHTLY builds (rolling)' \
             "Commit: [${SHORT}](https://github.com/ptitSeb/box64/commit/${SHA})" \
-            "_Based on ptitSeb'\''s release workflow_"
 
           if ! gh release view "BOX64-BIONIC-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "BOX64-BIONIC-NIGHTLY" --repo "$REPO" \
