@@ -86,10 +86,8 @@ Things out of my hands, special patches & fixes are [**HERE**](https://github.co
 <br><br>
 
 
-
-
 ---
-All credit goes to the original creators and those who inspired this work <br>
+<h3 align="center">All rights and credit goes to the original creators and those who inspired this work</h3><p align="center">
 
 [bylaws](https://github.com/bylaws)<br>
 [ptitSeb](https://github.com/ptitSeb)  
