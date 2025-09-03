@@ -18,21 +18,21 @@
 📌 Nightly - YYMMDD
 | Type | Build | 📜 |
 |:------:|:------:|:------:|
-| FEXCore | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/FEX-NIGHTLY) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
-| Box64 Glibc | [**Stable**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-NIGHTLY) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
-| Box64 Bionic | [**Nightly**](https://github.com/Arihany/Winlator-Resources/releases/tag/BOX64-BIONIC-NIGHTLY)| |
+| FEXCore | [**Stable**](https://github.com/Arihany/WinlatorHub/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorHub/releases/tag/FEX-NIGHTLY) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
+| Box64 Glibc | [**Stable**](https://github.com/Arihany/WinlatorHub/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorHub/releases/tag/BOX64-NIGHTLY) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| Box64 Bionic | [**Nightly**](https://github.com/Arihany/WinlatorHub/releases/tag/BOX64-BIONIC-NIGHTLY)| |
 <br>
 
 ## 🧩 DXVK
 📌 No outdated or unusual patched versions here.
 | Build | 📜 |
 |-------|:------:|
-| [**DXVK**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK) |  <a href="https://github.com/doitsujin/dxvk">🔗</a> |
-| [**DXVK-sarek**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK) |  <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
-| [**DXVK-sarek-async**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-SAREK-ASYNC) |   |
-| [**DXVK-gplasync**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC) |  <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
-| [**DXVK-arm64ec**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-ARM64EC) |   |
-| [**DXVK-gplasync-arm64ec**](https://github.com/Arihany/Winlator-Resources/releases/tag/DXVK-GPLASYNC-ARM64EC) |   |
+| [**DXVK**](https://github.com/Arihany/WinlatorHub/releases/tag/DXVK) |  <a href="https://github.com/doitsujin/dxvk">🔗</a> |
+| [**DXVK-sarek**](https://github.com/Arihany/WinlatorHub/releases/tag/DXVK-SAREK) |  <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
+| [**DXVK-sarek-async**](https://github.com/Arihany/WinlatorHub/releases/tag/DXVK-SAREK-ASYNC) |   |
+| [**DXVK-gplasync**](https://github.com/Arihany/WinlatorHub/releases/tag/DXVK-GPLASYNC) |  <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
+| [**DXVK-arm64ec**](https://github.com/Arihany/WinlatorHub/releases/tag/DXVK-ARM64EC) |   |
+| [**DXVK-gplasync-arm64ec**](https://github.com/Arihany/WinlatorHub/releases/tag/DXVK-GPLASYNC-ARM64EC) |   |
 
 <details>
   <summary>⚡DXVK version details</summary>
@@ -51,8 +51,8 @@ Try order: Sarek → 2.3.1-x ~ 2.4.1-x → (Glitches = Up, freezes = Down or use
 ## 🌌 VKD3D-Proton
 | Build | 📜 |
 |-------|:------:|
-| [**VKD3D-proton**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON) |  <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
-| [**VKD3D-proton-arm64ec**](https://github.com/Arihany/Winlator-Resources/releases/tag/VKD3D-PROTON-ARM64EC) |   |
+| [**VKD3D-proton**](https://github.com/Arihany/WinlatorHub/releases/tag/VKD3D-PROTON) |  <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
+| [**VKD3D-proton-arm64ec**](https://github.com/Arihany/WinlatorHub/releases/tag/VKD3D-PROTON-ARM64EC) |   |
 
 <details>
   <summary>⚡VKD3D-Proton version details</summary>
