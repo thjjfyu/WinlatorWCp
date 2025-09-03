@@ -280,7 +280,7 @@ jobs:
           DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
         run: |
           set -Eeuo pipefail
-          BODY=$'🌙 Automated FEX-NIGHTLY builds (rolling)\n\nCommit: ['"${SHORT}"'](https://github.com/FEX-Emu/FEX/commit/'"${SHA}"')'
+          BODY=$'🌙 Automated FEX nightly builds (rolling)\n\nCommit: ['"${SHORT}"'](https://github.com/FEX-Emu/FEX/commit/'"${SHA}"')'
 
           if ! gh release view "FEX-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "FEX-NIGHTLY" --repo "$REPO" -t "FEX-NIGHTLY" -n "${BODY}"
