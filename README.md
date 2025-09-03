@@ -1,4 +1,4 @@
-<h1 align="center">Yet Another Winlator Resources Repo</h1>
+<h1 align="center">Winlator WCP Hub</h1>
 <br>
 
 <p align="center">
