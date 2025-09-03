@@ -443,24 +443,24 @@ jobs:
             fi
 
             ver="${tag#v}"
-
-            # Build using official script + cross files ----------------------------- #
+            
+            # Build using official script + cross files
             PKGDIR="${GITHUB_WORKSPACE}/pkg"
             mkdir -p "$PKGDIR"
-            $1PKG_ROOT="${GITHUB_WORKSPACE}/pkg/dxvk-${tag}"
-
-PREFIX_X64="${PKG_ROOT}/x64"
-PREFIX_X86="${PKG_ROOT}/x32"
-[[ -d "${PREFIX_X64}/bin" ]] && PREFIX_X64="${PREFIX_X64}/bin"
-[[ -d "${PREFIX_X86}/bin" ]] && PREFIX_X86="${PREFIX_X86}/bin"
-
-export PREFIX_X64 PREFIX_X86
-
-
-            # Collect DLLs
+            ./package-release.sh "$tag" "$PKGDIR" --no-package --dev-build
+            
+            # derive install roots from package script output
+            PKG_ROOT="${GITHUB_WORKSPACE}/pkg/dxvk-${tag}"
+            PREFIX_X64="${PKG_ROOT}/x64"
+            PREFIX_X86="${PKG_ROOT}/x32"
+            [[ -d "${PREFIX_X64}/bin" ]] && PREFIX_X64="${PREFIX_X64}/bin"
+            [[ -d "${PREFIX_X86}/bin" ]] && PREFIX_X86="${PREFIX_X86}/bin"
+            export PREFIX_X64 PREFIX_X86
+            
+            # Collect DLLs (no extra /bin here)
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
             cp -v "${PREFIX_X64}/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
-            cp -v "${PREFIX_X86}/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
+            cp -v "${PREFIX_X86}/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
 
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
