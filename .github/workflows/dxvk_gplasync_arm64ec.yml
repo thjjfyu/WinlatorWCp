@@ -50,7 +50,7 @@ jobs:
           if [ "$HTTP" = "200" ]; then
             # rev: 1..9 단일 자리
             jq -r '.assets[].name' /tmp/rel.json \
-              | sed -n -E 's/^dxvk-gplasync-arm64ec-([0-9]+\.[0-9]+(\.[0-9]+)?)\-([1-9])\.wcp$/\1 \3/p' \
+              | sed -n -E 's/^gplasync-arm64ec-([0-9]+\.[0-9]+(\.[0-9]+)?)\-([1-9])\.wcp$/\1 \3/p' \
               | LC_ALL=C sort -V > /tmp/exist.txt
           else
             : > /tmp/exist.txt
@@ -440,7 +440,7 @@ jobs:
             mkdir -p "${GITHUB_WORKSPACE}/out"
             tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
               --sort=name \
-              -cf "${GITHUB_WORKSPACE}/out/dxvk-gplasync-arm64ec-${base}-${rev}.wcp" profile.json system32 syswow64
+              -cf "${GITHUB_WORKSPACE}/out/gplasync-arm64ec-${base}-${rev}.wcp" profile.json system32 syswow64
             echo "::endgroup::"
 
             # cleanup per-tag staging
@@ -452,9 +452,9 @@ jobs:
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           printf '🤖 Automated gplasync arm64ec builds (2.3.1+)\n\n' > "$NOTES"
-          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-gplasync-arm64ec-*.wcp" > /dev/null; then
-            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-gplasync-arm64ec-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
-            cur="${latest#dxvk-gplasync-arm64ec-}"; cur="${cur%.wcp}"
+          if compgen -G "${GITHUB_WORKSPACE}/out/gplasync-arm64ec-*.wcp" > /dev/null; then
+            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/gplasync-arm64ec-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
+            cur="${latest#gplasync-arm64ec-}"; cur="${cur%.wcp}"
             echo "\nCurrent: ${cur}" >> "$NOTES"
           fi
           cat "$NOTES"
