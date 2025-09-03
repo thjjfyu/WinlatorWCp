@@ -214,30 +214,6 @@ jobs:
             fi
           done
 
-      - name: Apply minimal compat patches (local commit)
-        run: |
-          set -Eeuo pipefail
-          cd src
-          hdr="src/d3d9/d3d9_include.h"
-          if [[ -f "$hdr" ]]; then
-            for sym in _D3DDEVINFO_RESOURCEMANAGER _D3DDEVINFO_D3D9PIPELINETIMINGS _D3DDEVINFO_VCACHE _D3DDEVINFO_PRIVATEDATA _D3DDEVINFO_VERTEXSTATS; do
-              if grep -q "typedef struct ${sym}" "$hdr"; then
-                awk -v pat="typedef struct ${sym}" 'BEGIN{drop=0}
-                  index($0, pat){drop=1; next}
-                  drop==1 && /\}[[:space:]]*[^;]*;[[:space:]]*$/ {drop=0; next}
-                  drop==0 {print}' "$hdr" > "$hdr.new" && mv "$hdr.new" "$hdr"
-              fi
-            done
-          fi
-          hdr2="src/d3d11/d3d11_texture.h"
-          if [[ -f "$hdr2" ]] && grep -qE 'constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource' "$hdr2"; then
-            sed -i -E 's/static[[:space:]]+constexpr[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource[[:space:]]*=[[:space:]]*D3D11_MAP\(-1u\);/inline static const D3D11_MAP UnmappedSubresource = (D3D11_MAP)0xFFFFFFFFu;/' "$hdr2" || true
-          fi
-          git config user.name  "ci"
-          git config user.email "ci@local"
-          git add -A
-          git commit -m "local compat patches for async (${BASE_VER} @ ${HEAD_SHORT})" || true
-
       - name: Build (x64 + x86) and stage WCP
         env:
           PREFIX_X64: ${{ env.PREFIX_X64 }}
