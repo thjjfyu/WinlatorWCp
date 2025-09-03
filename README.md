@@ -1,12 +1,11 @@
 <h1 align="center">Yet Another Winlator Resources Repo</h1>
 <br>
 
-- Automated builds
-- Always up to date
-- Unified format
+<h3 align="center">Automated builds, Always up to date, Unified format</h3>
+<h4 align="center">All rights and source belong to the original author</h4>
 
 
-_All rights and source belong to the original author_
+
 
 <br>
 
