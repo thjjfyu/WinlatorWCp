@@ -320,7 +320,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          printf '🤖 Automated DXVK builds (2.3.1+).\n\n' > "$NOTES"
+          printf '🤖 Automated DXVK builds (2.3.1+)\n\n' > "$NOTES"
           if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-*.wcp" > /dev/null; then
             latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
             ver="${latest#dxvk-}"; ver="${ver%.wcp}"
