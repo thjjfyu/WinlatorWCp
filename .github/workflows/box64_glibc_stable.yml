@@ -97,12 +97,10 @@ jobs:
           tag_name: "BOX64-STABLE"
           prerelease: false
           make_latest: true
-          body: |
-            🤖 Automated BOX64-STABLE builds. (0.3.6+)
-            Current: ${{ needs.resolve-latest.outputs.base }}
-
-  build-and-append:
-    name: Build & append ${{ needs.resolve-latest.outputs.base }}
+          body: "🤖 Automated BOX64 Glibc stable builds. (0.3.6+)\n\nCurrent: ${{ needs.resolve-latest.outputs.base }}"
+  
+  build-and-append:      
+    name: "Build & append ${{ needs.resolve-latest.outputs.base }}"
     needs: [resolve-latest, gate, ensure-release]
     if: needs.gate.outputs.build == 'true'
     runs-on: ubuntu-24.04-arm
