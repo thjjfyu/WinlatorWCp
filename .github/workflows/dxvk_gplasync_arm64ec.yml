@@ -1,4 +1,4 @@
-name: Build DXVK gplasync arm64ec rev5
+name: Build DXVK gplasync arm64ec
 
 on:
   workflow_dispatch:
@@ -328,23 +328,27 @@ jobs:
             grep -q "enableAsync" src/dxvk/dxvk_options.h || { echo "::error::Patch not applied cleanly for ${base}-${rev}"; exit 1; }
 
             CHANGED=0
-            # v2.5 UnmappedSubresource constexpr init issue -> safe cast
+            # v2.5 UnmappedSubresource constexpr init issue -> safe cast (d3d11)
             TEX="src/d3d11/d3d11_texture.h"
-            if [[ -f "$TEX" ]] && grep -qE "\\bUnmappedSubresource\\b" "$TEX"; then
+            if [[ -f "$TEX" ]] && grep -q 'UnmappedSubresource' "$TEX"; then
               cp "$TEX" "${TEX}.bak"
               perl -0777 -pe \
-                's/\\bstatic\\s+(?:const|constexpr)\\s+D3D11_MAP\\s+UnmappedSubresource\\s*=\\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
-                -i "$TEX" && CHANGED=1
+                's/\bstatic\s+(?:const|constexpr)\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
+                -i "$TEX"
+              grep -qE 'inline[[:space:]]+static[[:space:]]+const[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource' "$TEX" \
+                || { echo "::error::texture fix not applied"; exit 1; }
+              CHANGED=1
             fi
-
-            # Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate if toolchain has it
+            
+            # Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate (d3d9)
             INC="src/d3d9/d3d9_include.h"
             TOOL_EC="/opt/llvm-mingw/arm64ec-w64-mingw32/include/d3d9types.h"
             TOOL_X86="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
             if [[ -f "$INC" ]] && (grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_EC" || grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X86"); then
               if grep -qE 'typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b' "$INC"; then
                 cp "$INC" "${INC}.bak"
-                perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;//s' -i "$INC" && CHANGED=1
+                perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;//s' -i "$INC"
+                CHANGED=1
               fi
             fi
 
@@ -352,9 +356,10 @@ jobs:
             MEM="src/dxvk/dxvk_memory.h"
             if [[ -f "$MEM" ]] \
                && grep -qE '^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;' "$MEM" \
-               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*\\{' "$MEM"; then
+               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*\{' "$MEM"; then
               cp "$MEM" "${MEM}.bak2"
-              sed -E -i 's/^[[:space:]]*class[[:space:]]]+DxvkMemoryChunk;/struct DxvkMemoryChunk;/' "$MEM" && CHANGED=1
+              sed -E -i 's/^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;/struct DxvkMemoryChunk;/' "$MEM"
+              CHANGED=1
             fi
 
             if [[ "$CHANGED" -eq 1 ]]; then
@@ -362,7 +367,6 @@ jobs:
               git -c user.name="DXVK Builder" -c user.email="builder@noreply" \
                   commit -m "compat: minimal build fixes for ${tag}"
             fi
-
 
             # Clean tag for HUD/traceability (do NOT delete upstream tag)
             HUD_TAG="${tag}-arm64ec"
