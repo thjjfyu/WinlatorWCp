@@ -1,7 +1,11 @@
 # Yet Another Winlator Resources Repo
 <br>
 
-_Automated builds & unified format_<br>
+- Automated builds
+- Always up to date
+- Unified format
+
+
 _All rights and source belong to the original author_
 
 <br>
