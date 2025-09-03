@@ -301,7 +301,7 @@ jobs:
           {
             echo "🤖 Automated DXVK-Sarek (async branch) builds."
             echo
-            echo "Current: sarek-async-${BASE_VER} @ [${HEAD_SHORT}](https://github.com/${SAREK_REPO}/commit/${HEAD_SHA})"
+            echo "Current: ${BASE_VER} @ [${HEAD_SHORT}](https://github.com/${SAREK_REPO}/commit/${HEAD_SHA})"
           } > "$NOTES"
 
           if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
