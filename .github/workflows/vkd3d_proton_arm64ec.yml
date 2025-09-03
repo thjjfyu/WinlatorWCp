@@ -271,43 +271,43 @@ jobs:
             --slurpfile F "$FILES_JSON" \
             '{type:"VKD3D", versionName:$VN, versionCode:$VC, description:$DESC, files:($F[0]//[])}' \
             > "${GITHUB_WORKSPACE}/VKD3D_WCP/profile.json"
-
+          
+          OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
           tar -C "${GITHUB_WORKSPACE}/VKD3D_WCP" --zstd \
               --format=gnu --owner=0 --group=0 --numeric-owner \
               --sort=name \
-              -cf "${GITHUB_WORKSPACE}/vkd3d-proton-arm64ec-${BASE}.wcp" \
+              -cf "${OUT}/vkd3d-proton-arm64ec-${BASE}.wcp" \
               profile.json system32 syswow64
 
-      - name: Build release notes (minimal)
+      - name: Build release notes
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          printf '🤖 Automated VKD3D-Proton arm64ec builds (2.14.1+)
-
-' > "$NOTES"
-          echo "Current: ${BASE}" >> "$NOTES"
+          printf '🤖 Automated VKD3D-Proton arm64ec builds (2.14.1+).\n\n' > "$NOTES"
+          if compgen -G "${GITHUB_WORKSPACE}/out/vkd3d-proton-arm64ec-*.wcp" > /dev/null; then
+            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/vkd3d-proton-arm64ec-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
+            ver="${latest#vkd3d-proton-arm64ec-}"; ver="${ver%.wcp}"
+            echo "Current: ${ver}" >> "$NOTES"
+          fi
           cat "$NOTES"
 
-      - name: Create/Update GitHub Release + upload WCP
+      - name: Create/Update GitHub Release (DXVK) + upload new WCPs
         env:
+          REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-          REPO:     ${{ github.repository }}
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          RELEASE_TAG="VKD3D-PROTON-ARM64EC"
+
           if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           else
             gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           fi
 
-          gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/vkd3d-proton-arm64ec-${BASE}.wcp" \
-            --repo "${REPO}" --clobber
-
-      - name: Upload WCP as artifact (audit)
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: vkd3d-proton-arm64ec-${{ env.BASE }}
-          path: ${{ github.workspace }}/vkd3d-proton-arm64ec-${{ env.BASE }}.wcp
-          if-no-files-found: error
+          if compgen -G "${GITHUB_WORKSPACE}/out/*.wcp" > /dev/null; then
+            gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
+          else
+            echo "No new WCP files to upload."
+          fi
