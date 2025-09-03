@@ -35,7 +35,7 @@
 | **gplasync** | Rendering frames before shader compilation = less stutter |
 | **arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
 
-Try order: Sarek → 2.3.1-x to 2.4.1-x. → (Glitches = Up, freezes = Down or use vanilla DXVK)
+Try order: Sarek → 2.3.1-x ~ 2.4.1-x. → (Glitches = Up, freezes = Down or use vanilla DXVK)
 </details>
 <br>
 
