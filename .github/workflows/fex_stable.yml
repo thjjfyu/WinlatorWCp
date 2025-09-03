@@ -70,7 +70,7 @@ jobs:
           prerelease: false
           make_latest: true
           body: |
-            🤖 Automated FEX-STABLE builds. (2508.1+)
+            🤖 Automated FEX-STABLE builds (2508.1+)
 
             Current: ${{ needs.resolve-latest.outputs.clean_tag }}
 
