@@ -1,4 +1,4 @@
-name: Build VKD3D arm64ec v2
+name: Build VKD3D arm64ec v2 (dxvk-goodness, ubuntu-latest)
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ concurrency:
 jobs:
   guard:
     name: Check Update (VKD3D)
-    runs-on: ubuntu-24.04-arm64
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -54,7 +54,7 @@ jobs:
           fi
           if [[ -z "$tag" ]]; then
             tag="$(git ls-remote --tags https://github.com/${VKD3D_REPO}.git 'refs/tags/v*' \
-                   | awk -F/ '{print $3}' | sed 's/\^{}//' | grep -E '^v[0-9]+' | sort -V | tail -n1)"
+                   | awk -F/ '{print $3}' | sed 's/\^{}//' | grep -E '^v[0-9]+' | LC_ALL=C sort -V | tail -n1)"
           fi
           [[ -z "$tag" ]] && { echo "::notice::No upstream version found; exit clean."; exit 0; }
           base="${tag#v}"
@@ -93,20 +93,19 @@ jobs:
     name: Build & release (arm64ec)
     needs: guard
     if: needs.guard.outputs.build == 'true'
-    runs-on: ubuntu-24.04-arm64
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
       contents: write
     env:
-      VKD3D_REPO:   HansKristian-Work/vkd3d-proton
-      TOOLCHAIN_DIR: ${{ github.workspace }}/.tmp/llvm-mingw
+      VKD3D_REPO:    HansKristian-Work/vkd3d-proton
+      TOOLCHAIN_DIR: /opt/llvm-mingw
       PREFIX_EC:     ${{ github.workspace }}/stage-arm64ec
       PREFIX_X86:    ${{ github.workspace }}/stage-i686
       RELEASE_TAG:   VKD3D-PROTON-ARM64EC
       GH_TOKEN:      ${{ github.token }}
       TAG:           ${{ needs.guard.outputs.tag }}
       BASE:          ${{ needs.guard.outputs.base }}
-      LLVM_MINGW_TAG: ''   # optional pin: set to a specific tag to pin toolchain
 
     steps:
       - name: Install build prerequisites (lean)
@@ -116,8 +115,8 @@ jobs:
           sudo apt-get -yq install --no-install-recommends \
             curl xz-utils jq ca-certificates git \
             build-essential pkg-config ninja-build meson \
-            zstd file rsync libvulkan-dev \
-            wine64-tools glslang-tools gh
+            zstd file rsync \
+            glslang-tools gh
 
       - name: Ensure glslang (--vn)
         run: |
@@ -136,22 +135,13 @@ jobs:
             echo "::error::No glslang/glslangValidator with working --vn"; exit 1
           fi
 
-      - name: Install llvm-mingw (Linux aarch64 asset, ucrt; optional pin)
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Download pinned llvm-mingw (bylaws 20250305, UCRT, Ubuntu 20.04 x86_64)
         run: |
           set -Eeuo pipefail
-          mkdir -p "$TOOLCHAIN_DIR"
-          if [[ -n "$LLVM_MINGW_TAG" ]]; then
-            JSON_URL="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/tags/${LLVM_MINGW_TAG}"
-          else
-            JSON_URL="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest"
-          fi
-          json="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$JSON_URL")"
-          url="$(echo "$json" | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-aarch64\\.tar\\.(xz|gz)$")) .browser_download_url' | head -n1)"
-          [[ -n "$url" ]] || { echo "::error::llvm-mingw aarch64 asset not found (ucrt-ubuntu-*-aarch64.tar.xz|gz)"; exit 1; }
-          curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar
-          tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xf /tmp/llvm-mingw.tar
+          URL="https://github.com/bylaws/llvm-mingw/releases/download/20250305/llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz"
+          sudo mkdir -p "$TOOLCHAIN_DIR"
+          curl -fL --retry 3 --retry-delay 2 "$URL" -o /tmp/llvm-mingw.tar.xz
+          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
           export PATH="$TOOLCHAIN_DIR/bin:$PATH"
 
@@ -292,7 +282,9 @@ jobs:
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          printf '🤖 Automated VKD3D-Proton arm64ec builds (2.14.1+)\n\n' > "$NOTES"
+          printf '🤖 Automated VKD3D-Proton arm64ec builds (2.14.1+)
+
+' > "$NOTES"
           echo "Current: ${BASE}" >> "$NOTES"
           cat "$NOTES"
 
