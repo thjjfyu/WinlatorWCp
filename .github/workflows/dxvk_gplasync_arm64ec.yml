@@ -1,4 +1,4 @@
-name: Build DXVK gplasync arm64ec
+name: Build DXVK gplasync arm64ec rev5
 
 on:
   workflow_dispatch:
@@ -325,15 +325,16 @@ jobs:
             fi
 
             # 안전망: 옵션 플래그 존재 확인(패치 적용 확인)
-            grep -q "enableAsync" src/dxvk/dxvk_options.h || { echo "::error::Patch not applied cleanly for ${base}-${rev}"; exit 1; }
+            grep -qF "enableAsync" src/dxvk/dxvk_options.h || { echo "::error::Patch not applied cleanly for ${base}-${rev}"; exit 1; }
 
             CHANGED=0
+
             # v2.5 UnmappedSubresource constexpr init issue -> safe cast (d3d11)
             TEX="src/d3d11/d3d11_texture.h"
             if [[ -f "$TEX" ]] && grep -q 'UnmappedSubresource' "$TEX"; then
               cp "$TEX" "${TEX}.bak"
               perl -0777 -pe \
-                's/\bstatic\s+(?:const|constexpr)\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
+                's/\b(?:(?:static|constexpr)\s+){1,2}(?:const\s+)?D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
                 -i "$TEX"
               grep -qE 'inline[[:space:]]+static[[:space:]]+const[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource' "$TEX" \
                 || { echo "::error::texture fix not applied"; exit 1; }
@@ -367,6 +368,7 @@ jobs:
               git -c user.name="DXVK Builder" -c user.email="builder@noreply" \
                   commit -m "compat: minimal build fixes for ${tag}"
             fi
+
 
             # Clean tag for HUD/traceability (do NOT delete upstream tag)
             HUD_TAG="${tag}-arm64ec"
@@ -408,8 +410,8 @@ jobs:
               --arg VN "gplasync-arm64ec-${base}" \
               --argjson VC "${rev}" \
               --arg DESC "$DESC" \
-              --arg SYS "\${system32}/" \
-              --arg WOW "\${syswow64}/" \
+              --arg SYS "${system32}/" \
+              --arg WOW "${syswow64}/" \
               --slurpfile x64 /tmp/x64.json \
               --slurpfile x86 /tmp/x86.json \
               '
