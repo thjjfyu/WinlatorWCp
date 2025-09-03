@@ -340,7 +340,7 @@ jobs:
           RELEASE_TAG="${RELEASE_TAG}"
 
           # Rebuild body header and compute "Current" for display
-          printf '🤖 Automated DXVK-Sarek builds (1.11.0+).\n\n' > "$NOTES"
+          printf '🤖 Automated DXVK-Sarek builds (1.11.0+)\n\n' > "$NOTES"
           cur=""
           if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-sarek-*.wcp" > /dev/null; then
             latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-sarek-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
