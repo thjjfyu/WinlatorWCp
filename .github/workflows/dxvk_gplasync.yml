@@ -172,7 +172,7 @@ jobs:
           sudo apt-get -yq install --no-install-recommends \
             curl xz-utils jq ca-certificates \
             git meson ninja-build glslang-tools pkg-config \
-            build-essential zstd gh file
+            build-essential python3 zstd gh file
 
       - name: Ensure glslang (--vn)
         run: |
@@ -346,8 +346,8 @@ jobs:
                 versionCode: $VC,
                 description: $DESC,
                 files: [
-                  ($A[]? | {source: ("system32/"+ . ), target: ($SYS + .)}),
-                  ($B[]? | {source: ("syswow64/"+ . ), target: ($WOW + .)})
+                  ($A[]? | {source: ("system32/"+ .), target: ($SYS + .)}),
+                  ($B[]? | {source: ("syswow64/"+ .), target: ($WOW + .)})
                 ]
               }' > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
 
@@ -365,13 +365,9 @@ jobs:
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           printf '🤖 Automated gplasync builds (2.3.1+)\n\n' > "$NOTES"
           if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-gplasync-*.wcp" > /dev/null; then
-            echo "Added:" >> "$NOTES"
-            (cd "${GITHUB_WORKSPACE}/out" && ls -1 dxvk-gplasync-*.wcp | LC_ALL=C sort -V | sed 's/^/- /') >> "$NOTES"
             latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-gplasync-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
             cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"
             echo "\nCurrent: ${cur}" >> "$NOTES"
-          else
-            echo "No new artifacts" >> "$NOTES"
           fi
           cat "$NOTES"
 
