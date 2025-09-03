@@ -220,6 +220,23 @@ jobs:
             -DCMAKE_C_COMPILER=i686-w64-mingw32-clang \
             -DCMAKE_CXX_COMPILER=i686-w64-mingw32-clang++ \
             -DCMAKE_RC_COMPILER=llvm-rc
+          
+          # 타겟 자동 감지: WowBox64 / wowbox64 / 기타
+          set -Eeuo pipefail
+          tgt="$(cmake --build build-wow64 --target help 2>/dev/null | sed -n 's/^[[:space:]]*\* \([^ ]\+\).*/\1/p' | grep -i '^wowbox64$' || true)"
+          if [[ -n "$tgt" ]]; then
+            echo "Using target: $tgt"
+            cmake --build build-wow64 --target "$tgt" -j"$(nproc)"
+          else
+            echo "Target name unknown; building all"
+            cmake --build build-wow64 -j"$(nproc)"
+          fi
+
+          # 산출물 찾기 + 검증
+          DLL="$(find build-wow64 -iname 'WowBox64.dll' -print | head -n1 || true)"
+          [[ -f "$DLL" ]] || { echo "::error::WowBox64.dll not found after build"; exit 1; }
+          file "$DLL"
+          objdump -p "$DLL" | grep -qi 'machine.*I386' || { echo "::error::Not a 32-bit i386 DLL"; exit 1; }
 
       - name: Build WowBox64.dll
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
