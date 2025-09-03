@@ -63,11 +63,7 @@ jobs:
           GITLAB_PROJECT: ${{ env.GITLAB_PROJECT }}
         run: |
           set -Eeuo pipefail
-          enc="$(python3 - <<'PY'
-import os, urllib.parse
-print(urllib.parse.quote(os.environ["GITLAB_PROJECT"], safe=""))
-PY
-)"
+          enc="$(jq -rn --arg s \"$GITLAB_PROJECT\" '$s|@uri')"
           : > /tmp/names.txt
           page=1
           while :; do
@@ -176,7 +172,7 @@ PY
           sudo apt-get -yq install --no-install-recommends \
             curl xz-utils jq ca-certificates \
             git meson ninja-build glslang-tools pkg-config \
-            build-essential python3 zstd gh file
+            build-essential zstd gh file
 
       - name: Ensure glslang (--vn)
         run: |
