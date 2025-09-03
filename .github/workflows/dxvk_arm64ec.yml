@@ -262,7 +262,7 @@ jobs:
             INC="src/d3d9/d3d9_include.h"
             TOOL_X64="/opt/llvm-mingw/arm64ec-w64-mingw32/include/d3d9types.h"
             TOOL_X86="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
-            if [[ -f "$INC" ]] && (grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_EC" || grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X86"); then
+            if [[ -f "$INC" ]] && (grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X64" || grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X86"); then
               if grep -qE 'typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b' "$INC"; then
                 cp "$INC" "${INC}.bak"
                 perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;//s' -i "$INC" && CHANGED=1
