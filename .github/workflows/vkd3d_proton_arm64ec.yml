@@ -1,4 +1,4 @@
-name: Build VKD3D arm64ec v2 (dxvk-goodness, ubuntu-latest)
+name: Build VKD3D arm64ec v2
 
 on:
   workflow_dispatch:
