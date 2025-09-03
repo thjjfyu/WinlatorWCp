@@ -1,7 +1,9 @@
 # Yet Another Winlator Resources Repo
 <br>
-🤖 Automated builds & unified format
-<br><br>
+
+_Automated builds & unified format_
+
+<br>
 
 
 ## ⚙️ FEXCore & Box64
