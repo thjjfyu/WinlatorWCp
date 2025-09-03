@@ -63,22 +63,64 @@ jobs:
           GITLAB_PROJECT: ${{ env.GITLAB_PROJECT }}
         run: |
           set -Eeuo pipefail
-          enc="$(jq -rn --arg s \"$GITLAB_PROJECT\" '$s|@uri')"
+
+          # URL-encode "Ph42oN/dxvk-gplasync" -> "Ph42oN%2Fdxvk-gplasync"
+          enc="$(jq -rn --arg s "$GITLAB_PROJECT" '$s|@uri')"
+
           : > /tmp/names.txt
-          page=1
-          while :; do
-            curl -fsSL -D /tmp/h \
-              "https://gitlab.com/api/v4/projects/${enc}/repository/tree?path=patches&recursive=true&per_page=100&page=${page}" \
-              -o /tmp/p.json || true
-            jq -r '.[].name // empty' /tmp/p.json >> /tmp/names.txt || true
-            next=$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')
-            [[ -z "${next:-}" || "${next}" == "0" ]] && break
-            page="${next}"
+          : > /tmp/relmap.json
+
+          # 브랜치는 main 우선, 안 되면 master 시도
+          for REF in main master; do
+            page=1
+            got_any=0
+            while :; do
+              # -f 금지: 4xx일 때 바디 안 쓰는 바람에 /tmp/p.json 자체가 없음
+              HTTP="$(curl -sS -L \
+                -D /tmp/h \
+                -w '%{http_code}' \
+                "https://gitlab.com/api/v4/projects/${enc}/repository/tree?ref=${REF}&path=patches&recursive=true&per_page=100&page=${page}" \
+                -o /tmp/p.json || true)"
+
+              if [ "$HTTP" = "200" ]; then
+                got_any=1
+                # 혹시라도 비어 있으면 jq가 터지지 않도록 보정
+                [ -s /tmp/p.json ] || echo "[]" > /tmp/p.json
+                jq -r '.[].name // empty' /tmp/p.json >> /tmp/names.txt || true
+
+                # 페이지네이션: X-Next-Page 헤더 체크
+                next="$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')"
+                [ -z "${next:-}" ] && break
+                page="$next"
+              elif [ "$HTTP" = "404" ]; then
+                # 이 REF로는 경로/프로젝트/브랜치가 없음 → 다음 REF 시도
+                echo "::notice::GitLab tree 404 for ref=${REF}, page=${page}; trying another ref if available"
+                break
+              else
+                echo "::warning::GitLab tree HTTP ${HTTP} for ref=${REF}, page=${page}; stopping this ref"
+                break
+              fi
+            done
+
+            # 한 번이라도 성공했으면 더 이상 다른 REF로 시도할 필요 없음
+            [ "$got_any" = "1" ] && break
           done
-          # 이름 형식: dxvk-gplasync-<base>-<rev>.patch, rev = 1..9
+
+          # names.txt가 비면 그냥 빈 맵으로 종료 (후속 스텝들이 죽지 않게)
+          if [ ! -s /tmp/names.txt ]; then
+            echo "{}" > /tmp/relmap.json
+            echo 'json<<EOF' >> "$GITHUB_OUTPUT"
+            cat /tmp/relmap.json >> "$GITHUB_OUTPUT"
+            echo 'EOF' >> "$GITHUB_OUTPUT"
+            echo "Release map: (empty)"
+            exit 0
+          fi
+
+          # 파일명 → { base: max_rev } 맵 생성
           jq -Rs '
             split("\n") | map(select(length>0)) |
-            map(capture("dxvk-gplasync-(?<base>[0-9]+\\.[0-9]+(?:\\.[0-9]+)?)-(?<rev>[1-9])\\.patch")? ) |
+            # 형식: dxvk-gplasync-<base>-<rev>.patch  (rev = 1..9)
+            map(capture("dxvk-gplasync-(?<base>[0-9]+\\.[0-9]+(?:\\.[0-9]+)?)-(?<rev>[1-9])\\.patch")?) |
             map(select(. != null)) |
             group_by(.base) |
             map({key: .[0].base, value: (map(.rev|tonumber)|max)}) | from_entries
