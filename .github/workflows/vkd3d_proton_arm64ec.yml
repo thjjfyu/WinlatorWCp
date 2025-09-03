@@ -152,11 +152,13 @@ jobs:
           arm64ec-w64-mingw32-clang --version
           which i686-w64-mingw32-clang
           which arm64ec-w64-mingw32-ar
+          which arm64ec-w64-mingw32-widl
+          which i686-w64-mingw32-widl
 
       - name: Create Meson cross files (arm64ec / i686)
         run: |
           set -Eeuo pipefail
-          # arm64ec cross file (clang toolchain, llvm-strip)
+          # arm64ec.cross
           cat > "${{ github.workspace }}/arm64ec.cross" <<'EOF'
           [binaries]
           ar = 'arm64ec-w64-mingw32-ar'
@@ -165,7 +167,7 @@ jobs:
           windres = 'arm64ec-w64-mingw32-windres'
           strip = 'llvm-strip'
           widl = 'arm64ec-w64-mingw32-widl'
-          pkgconfig = 'pkg-config'
+          pkg-config = 'pkg-config'
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
@@ -174,8 +176,8 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           EOF
-
-          # 32-bit i686 cross file (WOW64 side)
+          
+          # i686.cross
           cat > "${{ github.workspace }}/i686.cross" <<'EOF'
           [binaries]
           ar = 'i686-w64-mingw32-ar'
@@ -183,7 +185,8 @@ jobs:
           cpp = 'i686-w64-mingw32-clang++'
           windres = 'i686-w64-mingw32-windres'
           strip = 'llvm-strip'
-          pkgconfig = 'pkg-config'
+          widl = 'i686-w64-mingw32-widl'
+          pkg-config = 'pkg-config'
           [host_machine]
           system = 'windows'
           cpu_family = 'x86'
