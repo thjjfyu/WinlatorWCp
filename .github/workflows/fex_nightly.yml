@@ -1,9 +1,9 @@
 name: Build FEX Nightly
 
 on:
-  workflow_dispatch:              # Manual trigger (any branch)
+  workflow_dispatch:
   schedule:
-    - cron: "0 18 * * 0"         # Weekly (UTC, every Sunday)
+    - cron: "0 18 * * *"
 
 permissions:
   contents: write
