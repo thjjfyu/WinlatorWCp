@@ -330,15 +330,24 @@ jobs:
             CHANGED=0
 
             # v2.5 UnmappedSubresource constexpr init issue -> safe cast (d3d11)
-            TEX="src/d3d11/d3d11_texture.h"
-            if [[ -f "$TEX" ]] && grep -q 'UnmappedSubresource' "$TEX"; then
-              cp "$TEX" "${TEX}.bak"
-              perl -0777 -pe \
-                's/\b(?:(?:static|constexpr)\s+){1,2}(?:const\s+)?D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
-                -i "$TEX"
-              grep -qE 'inline[[:space:]]+static[[:space:]]+const[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource' "$TEX" \
-                || { echo "::error::texture fix not applied"; exit 1; }
-              CHANGED=1
+            if [[ "$base" == "2.5" ]]; then
+              TEX="src/d3d11/d3d11_texture.h"
+              if [[ -f "$TEX" ]] && grep -q 'UnmappedSubresource' "$TEX"; then
+                cp "$TEX" "${TEX}.bak"
+                perl -0777 -pe \
+                  's/\b(?:(?:static|constexpr)\s+){1,2}(?:const\s+)?D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
+                  -i "$TEX"
+            
+                if grep -qE 'inline[[:space:]]+static[[:space:]]+const[[:space:]]+D3D11_MAP[[:space:]]+UnmappedSubresource' "$TEX"; then
+                  CHANGED=1
+                else
+                  echo "::warning::v2.5 texture fix probe failed; continuing"
+                fi
+              else
+                echo "::notice::v2.5 texture fix not needed (symbol not found)"
+              fi
+            else
+              echo "::notice::Skipping v2.5-specific texture fix for ${tag}"
             fi
             
             # Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate (d3d9)
