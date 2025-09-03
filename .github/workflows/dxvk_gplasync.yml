@@ -36,6 +36,8 @@ jobs:
           sudo apt-get -yq update
           sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
 
+# ------------------------------------------------------------------------------ #
+
       - name: Collect already-published (base,rev)
         id: have
         run: |
@@ -46,130 +48,124 @@ jobs:
           HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
                   "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
           if [ "$HTTP" = "200" ]; then
+            # rev: 한 자리 고정이었던 정규식을 다자리([1-9][0-9]*)로 완화
             jq -r '.assets[].name' /tmp/rel.json \
               | sed -n -E 's/^dxvk-gplasync-([0-9]+\.[0-9]+(\.[0-9]+)?)-([1-9][0-9]*)\.wcp$/\1 \3/p' \
               | LC_ALL=C sort -V > /tmp/exist.txt
           else
             : > /tmp/exist.txt
           fi
-          echo "::notice::exist (first 20)"; sed -n '1,20p' /tmp/exist.txt || true
+          echo "Existing base/rev:"; cat /tmp/exist.txt || true
 
-      - name: Build GPLAsync release map (from GitLab Releases)
+      - name: Build GPLAsync release map (prefer repo tree under /patches; fallback to Releases)
         id: relmap
         env:
           GITLAB_PROJECT: ${{ env.GITLAB_PROJECT }}
         run: |
           set -Eeuo pipefail
           enc="$(python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["GITLAB_PROJECT"], safe=""))')"
-          GL_API="https://gitlab.com/api/v4/projects/${enc}"
 
-          : > /tmp/raw_names.txt
+          # 1) 우선 GitLab repository tree에서 패치 파일명을 직접 스캔 (가장 신뢰도 높음)
+          : > /tmp/patchfiles.txt
           page=1
           while :; do
-            curl -fsSL -D /tmp/h "${GL_API}/releases?per_page=100&page=${page}" -o /tmp/p.json || true
-            jq -r '.[] | [.tag_name, .name] | map(select(.!=null)) | .[]' /tmp/p.json >> /tmp/raw_names.txt 2>/dev/null || true
+            curl -fsSL -D /tmp/h "https://gitlab.com/api/v4/projects/${enc}/repository/tree?path=patches&per_page=100&page=${page}" -o /tmp/p.json || true
+            jq -r '.[].name // empty' /tmp/p.json >> /tmp/patchfiles.txt || true
             next=$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')
             [[ -z "${next:-}" || "${next}" == "0" ]] && break
             page="${next}"
           done
 
-          echo "::notice::releases/raw_names (first 30)"; sed -n '1,30p' /tmp/raw_names.txt || true
-
-          : > /tmp/base_rev.txt
-          awk '
+          # 파일명 형식: dxvk-gplasync-<base>-<rev>.patch  (rev = 1..N)
+          : > /tmp/relmax.txt
+          awk -F'-' '
+            BEGIN{OFS=" "}
             {
-              s=$0
-              gsub(/^[Vv]/,"",s)                 # drop leading v
-              gsub(/[[:space:]]+/, " ", s)       # normalize spaces
-              sub(/^ +/,"",s); sub(/ +$/,"",s)   # trim
-              # base + (hyphen or space) + optional rev/r + digits
-              if (match(s, /^([0-9]+\.[0-9]+(\.[0-9]+)?)([- ]?([Rr]([Ee]?[Vv])?)?)[ ]*([0-9]+)$/, m)) {
-                base = m[1]; rev = m[6]+0
-                if (rev>0) print base, rev
+              if ($0 ~ /^dxvk-gplasync-[0-9]+\.[0-9]+(\.[0-9]+)?-[0-9]+\.patch$/) {
+                n=$0
+                sub(/^dxvk-gplasync-/, "", n)
+                gsub(/\.patch$/, "", n)
+                split(n,a,"-")
+                base=a[1]; rev=a[2]+0
+                if (rev>0 && rev>max[base]) max[base]=rev
               }
             }
-          ' /tmp/raw_names.txt \
-          | LC_ALL=C sort -u -V > /tmp/base_rev.txt
-
-          echo "::notice::parsed base/rev (first 30)"; sed -n '1,30p' /tmp/base_rev.txt || true
-
-          awk '{b=$1; r=$2+0; if(r>0 && r>max[b]) max[b]=r} END{for (b in max) print b, max[b]}' /tmp/base_rev.txt \
-            | LC_ALL=C sort -V \
-            > /tmp/relmax.txt
+            END{ for (b in max) print b, max[b] }' /tmp/patchfiles.txt \
+            | LC_ALL=C sort -V > /tmp/relmax.txt
 
           if [[ ! -s /tmp/relmax.txt ]]; then
-            echo "::error::Release map is empty. Parsed 0 base/rev from raw names."
-            sed -n '1,50p' /tmp/raw_names.txt || true
-            exit 1
+            echo "::notice::No patch files found in repo tree; falling back to Releases"
+            : > /tmp/gl_rel.jsonl
+            page=1
+            while :; do
+              curl -fsSL -D /tmp/h "https://gitlab.com/api/v4/projects/${enc}/releases?per_page=100&page=${page}" -o /tmp/p.json || true
+              jq -c '.[]' /tmp/p.json >> /tmp/gl_rel.jsonl || true
+              next=$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')
+              [[ -z "${next:-}" || "${next}" == "0" ]] && break
+              page="${next}"
+            done
+
+            { cat /tmp/gl_rel.jsonl | jq -r '[.tag_name,.name] | map(select(.!=null)) | .[]'; } \
+              | grep -Eio 'v?[0-9]+\.[0-9]+(\.[0-9]+)?([-_ ]?rev|[-_ ]?r|-)[1-9][0-9]*' || true \
+              | sed -E 's/^[Vv]|[ _-]?[Rr][Ee]?[Vv]//g; s/^[Vv]//; s/^[^0-9]*//; s/[[:space:]]+/-/g' \
+              | sed -E 's/([0-9]+\.[0-9]+(\.[0-9]+)?)[^0-9]*([0-9]+)/\1-\3/' \
+              | awk -F- '{print $1" "$2}' \
+              | awk '{b=$1; r=$2+0; if(r>0 && r>max[b]) max[b]=r} END{for(b in max) print b, max[b]}' \
+              | LC_ALL=C sort -V > /tmp/relmax.txt || true
           fi
 
           echo "Release map (base -> max rev):"
-          sed -n '1,50p' /tmp/relmax.txt || true
+          cat /tmp/relmax.txt || true
 
-      - name: Build plan (reuse in main build)
-        id: plan
+      - name: Detect any missing candidate (use release map; prefer exact base, then major.minor)
+        id: detect
         env:
           GH_TOKEN: ${{ env.GH_TOKEN }}
           DXVK_REPO: ${{ env.DXVK_REPO }}
         run: |
           set -Eeuo pipefail
-          PLAN="${GITHUB_WORKSPACE}/build_plan/to_build.txt"
-          mkdir -p "$(dirname "$PLAN")"
-          : > "$PLAN"
-
           API="https://api.github.com"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
+
+          # Fetch DXVK tags and keep semantic v* >= 2.3.1
           curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${DXVK_REPO}/tags?per_page=100" \
             | jq -r '.[].name' \
             | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
             | LC_ALL=C sort -V > /tmp/tags.txt
 
-          tac /tmp/tags.txt \
-            | awk '
-                function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
-                  for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1} return 0}
-                { base=substr($0,2); if (cmp(base,"2.3.1")>=0) print $0 }
-              ' > /tmp/candidates.txt
+          awk '
+            function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
+              for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1} return 0}
+            { base=substr($0,2); if (cmp(base,"2.3.1")>=0) print $0 }
+          ' /tmp/tags.txt > /tmp/candidates.txt
 
-          [[ -f /tmp/exist.txt ]] || : > /tmp/exist.txt
+          : > /tmp/missing.flag
 
           while read -r tag; do
             [ -n "$tag" ] || continue
-            base="${tag#v}"   # exact-only
+            base="${tag#v}"
+            IFS=. read -r A B C <<<"$base"
+            mm=""; [[ -n "${C:-}" ]] && mm="${A}.${B}"
+
+            # Lookup rev from release map
             rev="$(awk -v b="$base" '$1==b{print $2}' /tmp/relmax.txt | head -n1)"
-            [[ -z "$rev" ]] && { echo "::notice::no-exact-release ${base} -> skip"; continue; }
-            if ! grep -Fxq "${base} ${rev}" /tmp/exist.txt; then
-              # tag base rev patch_base (patch_base == base)
-              printf '%s %s %s %s\n' "$tag" "$base" "$rev" "$base" >> "$PLAN"
-            else
-              echo "::notice::already-exists ${base}-${rev}"
+            patch_base=""
+            if [[ -n "$rev" ]]; then
+              patch_base="$base"
+            elif [[ -n "$mm" ]]; then
+              rev="$(awk -v b="$mm" '$1==b{print $2}' /tmp/relmax.txt | head -n1)"
+              [[ -n "$rev" ]] && patch_base="$mm"
+            fi
+
+            if [[ -n "$rev" ]] && ! grep -Fq "${base} ${rev}" /tmp/exist.txt; then
+              echo "Missing: ${base}-${rev} (patch_base: ${patch_base:-$base})"
+              echo yes > /tmp/missing.flag
+              break
             fi
           done < /tmp/candidates.txt
 
-          if [[ -s "$PLAN" ]]; then
-            echo "has=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          echo "::notice::build_plan (first 20)"; sed -n '1,20p' "$PLAN" || true
-
-      - name: Upload build plan artifact
-        if: steps.plan.outputs.has == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-plan
-          path: ${{ github.workspace }}/build_plan
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Detect any missing candidate (from build plan)
-        id: detect
-        run: |
-          set -Eeuo pipefail
-          PLAN="${GITHUB_WORKSPACE}/build_plan/to_build.txt"
-          if [[ -s "$PLAN" ]]; then
+          if [ "$(cat /tmp/missing.flag 2>/dev/null)" = yes ]; then
             echo "missing=true" >> "$GITHUB_OUTPUT"
           else
             echo "missing=false" >> "$GITHUB_OUTPUT"
@@ -184,6 +180,8 @@ jobs:
           else
             echo "build=false" >> "$GITHUB_OUTPUT"
           fi
+
+# ------------------------------------------------------------------------------ #
 
   build-and-release:
     name: Build & release missing versions
@@ -275,24 +273,117 @@ jobs:
           git -C src config user.name "DXVK Builder"
           git -C src config user.email "builder@users.noreply.github.com"
 
-      - name: Download build plan
-        uses: actions/download-artifact@v4
-        with:
-          name: build-plan
-          path: ${{ github.workspace }}/build_plan
-
-      - name: Show plan (sanity)
+      - name: Resolve versions & compute NEW to build (release-aware)
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          GITLAB_PROJECT: ${{ env.GITLAB_PROJECT }}
         run: |
           set -Eeuo pipefail
-          PLAN="${GITHUB_WORKSPACE}/build_plan/to_build.txt"
-          if [[ ! -s "$PLAN" ]]; then
-            echo "::warning::No work items found in build plan."
-            exit 0
-          fi
-          echo "::notice::Plan head"
-          sed -n '1,20p' "$PLAN" || true
+          cd src
+          git tag -l 'v*' \
+            | { grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' || true; } \
+            | LC_ALL=C sort -V \
+            | awk '
+                function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
+                  for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1}return 0}
+                {ver=substr($0,2); if (cmp(ver,"2.3.1")>=0) print $0}
+              ' > "${GITHUB_WORKSPACE}/versions.txt"
 
-      - name: Build NEW versions (exact-match only)
+          : > "${GITHUB_WORKSPACE}/to_build.txt"
+
+          EXIST="/tmp/exist.txt"; : > "$EXIST"
+          if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh api repos/"${REPO}"/releases/tags/"${RELEASE_TAG}" \
+              | jq -r '.assets[].name' \
+              | sed -n -E 's/^dxvk-gplasync-([0-9]+\.[0-9]+(\.[0-9]+)?)\-([1-9][0-9]*)\.wcp$/\1 \3/p' \
+              | LC_ALL=C sort -V > "$EXIST" || true
+          fi
+
+          # Build release map (repo tree first, then Releases fallback)
+          enc="$(python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["GITLAB_PROJECT"], safe=""))')"
+          : > /tmp/relmax.txt
+
+          # Repo tree scan
+          : > /tmp/patchfiles.txt
+          page=1
+          while :; do
+            curl -fsSL -D /tmp/h "https://gitlab.com/api/v4/projects/${enc}/repository/tree?path=patches&per_page=100&page=${page}" -o /tmp/p.json || true
+            jq -r '.[].name // empty' /tmp/p.json >> /tmp/patchfiles.txt || true
+            next=$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')
+            [[ -z "${next:-}" || "${next}" == "0" ]] && break
+            page="${next}"
+          done
+
+          awk -F'-' '
+            BEGIN{OFS=" "}
+            {
+              if ($0 ~ /^dxvk-gplasync-[0-9]+\.[0-9]+(\.[0-9]+)?-[0-9]+\.patch$/) {
+                n=$0
+                sub(/^dxvk-gplasync-/, "", n)
+                gsub(/\.patch$/, "", n)
+                split(n,a,"-")
+                base=a[1]; rev=a[2]+0
+                if (rev>0 && rev>max[base]) max[base]=rev
+              }
+            }
+            END{ for (b in max) print b, max[b] }' /tmp/patchfiles.txt \
+            | LC_ALL=C sort -V > /tmp/relmax.txt
+
+          if [[ ! -s /tmp/relmax.txt ]]; then
+            : > /tmp/gl_rel.jsonl
+            page=1
+            while :; do
+              curl -fsSL -D /tmp/h "https://gitlab.com/api/v4/projects/${enc}/releases?per_page=100&page=${page}" -o /tmp/p.json || true
+              jq -c '.[]' /tmp/p.json >> /tmp/gl_rel.jsonl || true
+              next=$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')
+              [[ -z "${next:-}" || "${next}" == "0" ]] && break
+              page="${next}"
+            done
+
+            { cat /tmp/gl_rel.jsonl | jq -r '[.tag_name,.name] | map(select(.!=null)) | .[]'; } \
+              | grep -Eio 'v?[0-9]+\.[0-9]+(\.[0-9]+)?([-_ ]?rev|[-_ ]?r|-)[1-9][0-9]*' || true \
+              | sed -E 's/^[Vv]|[ _-]?[Rr][Ee]?[Vv]//g; s/^[Vv]//; s/^[^0-9]*//; s/[[:space:]]+/-/g' \
+              | sed -E 's/([0-9]+\.[0-9]+(\.[0-9]+)?)[^0-9]*([0-9]+)/\1-\3/' \
+              | awk -F- '{print $1" "$2}' \
+              | awk '{b=$1; r=$2+0; if(r>0 && r>max[b]) max[b]=r} END{for(b in max) print b, max[b]}' \
+              | LC_ALL=C sort -V > /tmp/relmax.txt || true
+          fi
+
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            base="${tag#v}"
+            IFS=. read -r A B C <<<"$base"
+            mm=""; [[ -n "${C:-}" ]] && mm="${A}.${B}"
+
+            found_rev=""; patch_base=""
+            r=$(awk -v b="$base" '$1==b{print $2}' /tmp/relmax.txt | head -n1)
+            if [[ -n "$r" ]]; then
+              found_rev="$r"; patch_base="$base"
+            elif [[ -n "$mm" ]]; then
+              r=$(awk -v b="$mm" '$1==b{print $2}' /tmp/relmax.txt | head -n1)
+              if [[ -n "$r" ]]; then
+                found_rev="$r"; patch_base="$mm"
+              fi
+            fi
+
+            if [[ -z "$found_rev" ]]; then
+              echo "::notice::No gplasync release for ${base}$( [[ -n "$mm" ]] && printf ' (or %s)' "$mm" ); skipping"
+              continue
+            fi
+
+            if grep -Fq "${base} ${found_rev}" "$EXIST"; then
+              echo "Skip ${base}-${found_rev} (already built)"
+              continue
+            fi
+
+            echo "${tag} ${base} ${found_rev} ${patch_base}" >> "${GITHUB_WORKSPACE}/to_build.txt"
+          done < "${GITHUB_WORKSPACE}/versions.txt"
+
+          echo "To build (tag base rev patch_base):"
+          cat "${GITHUB_WORKSPACE}/to_build.txt" || true
+
+      - name: Build NEW versions
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
@@ -300,11 +391,9 @@ jobs:
           OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
           cd "${GITHUB_WORKSPACE}/src"
 
-          LIST="${GITHUB_WORKSPACE}/build_plan/to_build.txt"
+          LIST="${GITHUB_WORKSPACE}/to_build.txt"
           if [[ ! -f "$LIST" || ! -s "$LIST" ]]; then
-            echo "No new versions to build."
-            exit 0
-          fi
+            echo "No new versions to build."; exit 0; fi
 
           while read -r tag base rev patch_base; do
             echo "::group::Build ${tag} (gplasync rev ${rev}, patch_base ${patch_base})"
@@ -312,53 +401,17 @@ jobs:
             git submodule update --init --recursive --checkout
 
             CHANGED=0
-            # Apply exact-match gplasync patch (robust)
+            # patches --------------------------------------------------------------- #
+            # Apply gplasync patch picked from Releases map
             url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${patch_base}-${rev}.patch"
             curl -fL "$url" -o /tmp/gpl.patch
-            
             git config user.name  ci
             git config user.email ci@local
-            
-            apply_ok=0
-            
-            # 1) 메일 패치인지 판별
-            if grep -qE '^From [0-9a-f]{40} ' /tmp/gpl.patch; then
-              # mbox 형식 → git am로 시도
-              if git am -3 /tmp/gpl.patch; then
-                apply_ok=1
-              else
-                git am --abort || true
-              fi
-            fi
-            
-            # 2) 일반 unified diff면 git apply로 시도. strip -p1, -p0, -p2 순회
-            if [ $apply_ok -eq 0 ]; then
-              for p in 1 0 2; do
-                if git apply --check -p$p /tmp/gpl.patch; then
-                  git apply -p$p --3way --reject /tmp/gpl.patch
-                  apply_ok=1
-                  break
-                fi
-              done
-            fi
-            
-            # 3) 아직도 실패면 명확히 종료
-            if [ $apply_ok -ne 1 ]; then
-              echo "::group::PATCH DEBUG"
-              head -n 20 /tmp/gpl.patch || true
-              echo "::endgroup::"
-              echo "::error::Failed to apply gplasync patch ${patch_base}-${rev} (neither mbox nor clean unified diff with -p0/-p1/-p2)."
-              exit 1
-            fi
-            
-            # 4) 핵심 심볼로 실제 적용 확인
-            if ! grep -q "enableAsync" src/dxvk/dxvk_options.h; then
-              echo "::error::Patch seems applied but 'enableAsync' not found. Failing fast."
-              git status -sb || true
-              exit 1
-            fi
+            if git am -3 /tmp/gpl.patch; then :; else git am --abort || true; git apply -p1 --reject /tmp/gpl.patch; fi
+            grep -q "enableAsync" src/dxvk/dxvk_options.h || { echo "::error::Patch not applied cleanly for ${base} (using ${patch_base}-${rev})"; git status -sb; exit 1; }
 
-            # v2.5 fix: UnmappedSubresource constexpr init issue -> safe cast
+            # patches --------------------------------------------------------------- #
+            # v2.5 UnmappedSubresource constexpr init issue -> safe cast
             TEX="src/d3d11/d3d11_texture.h"
             if [[ -f "$TEX" ]] && grep -qE '\bUnmappedSubresource\b' "$TEX"; then
               cp "$TEX" "${TEX}.bak"
@@ -366,8 +419,9 @@ jobs:
                 's/\bstatic\s+(?:const|constexpr)\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
                 -i "$TEX" && CHANGED=1
             fi
-
-            # Newer mingw headers: drop DXVK duplicate if toolchain has it
+            
+            # patches --------------------------------------------------------------- #
+            # Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate if toolchain has it
             INC="src/d3d9/d3d9_include.h"
             TOOL_X64="/opt/llvm-mingw/x86_64-w64-mingw32/include/d3d9types.h"
             TOOL_X86="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
@@ -377,34 +431,41 @@ jobs:
                 perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;//s' -i "$INC" && CHANGED=1
               fi
             fi
-
-            # Mismatched-tags warning: align forward decl to struct
+            
+            # patches --------------------------------------------------------------- #
+            # Mismatched-tags warning: align forward decl to 'struct' (optional)
             MEM="src/dxvk/dxvk_memory.h"
             if [[ -f "$MEM" ]] \
                && grep -qE '^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;' "$MEM" \
-               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*{' "$MEM"; then
+               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*\{' "$MEM"; then
               cp "$MEM" "${MEM}.bak2"
               sed -E -i 's/^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;/struct DxvkMemoryChunk;/' "$MEM" && CHANGED=1
             fi
 
             ver="${tag#v}"
 
-            # Build using official script + cross files
+            # Build using official script + cross files ----------------------------- #
             PKGDIR="${GITHUB_WORKSPACE}/pkg"
             mkdir -p "$PKGDIR"
-            ./package-release.sh "$tag" "$PKGDIR" --no-package --dev-build
+            $1PKG_ROOT="${GITHUB_WORKSPACE}/pkg/dxvk-${tag}"
+
+PREFIX_X64="${PKG_ROOT}/x64"
+PREFIX_X86="${PKG_ROOT}/x32"
+[[ -d "${PREFIX_X64}/bin" ]] && PREFIX_X64="${PREFIX_X64}/bin"
+[[ -d "${PREFIX_X86}/bin" ]] && PREFIX_X86="${PREFIX_X86}/bin"
+
+export PREFIX_X64 PREFIX_X86
+
 
             # Collect DLLs
             mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
-            cp -v "${PREFIX_X64}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
-            cp -v "${PREFIX_X86}/bin/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
+            cp -v "${PREFIX_X64}/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
+            cp -v "${PREFIX_X86}/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
 
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
             if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
-              echo "::error::No DLLs discovered for ${base}-${rev}"
-              exit 1
-            fi
+              echo "::error::No DLLs discovered for ${base}-${rev}"; exit 1; fi
 
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
@@ -427,8 +488,8 @@ jobs:
                 versionCode: $VC,
                 description: $DESC,
                 files: [
-                  ($A[]? | {source: ("system32/"+.), target: ($SYS + .)}),
-                  ($B[]? | {source: ("syswow64/"+.), target: ($WOW + .)})
+                  ($A[]? | {source: ("system32/"+. ), target: ($SYS + .)}),
+                  ($B[]? | {source: ("syswow64/"+. ), target: ($WOW + .)})
                 ]
               }' > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
 
@@ -438,7 +499,7 @@ jobs:
               --sort=name \
               -cf "${GITHUB_WORKSPACE}/out/dxvk-gplasync-${base}-${rev}.wcp" profile.json system32 syswow64
             echo "::endgroup::"
-          done < "${GITHUB_WORKSPACE}/build_plan/to_build.txt"
+          done < "${GITHUB_WORKSPACE}/to_build.txt"
 
       - name: Build release notes (minimal)
         run: |
