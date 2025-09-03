@@ -202,7 +202,8 @@ jobs:
           ../../Data/nix/cmake_configure_woa64.sh ../../ -G Ninja \
             "${COMMON_FLAGS[@]}" \
             -DMINGW_TRIPLE=arm64ec-w64-mingw32 \
-            -DCMAKE_INSTALL_PREFIX="$PWD/dist"
+            -DCMAKE_INSTALL_PREFIX="$PWD/dist" \
+            -DCMAKE_INSTALL_LIBDIR=lib/wine/aarch64-windows
           ninja -v
           ninja install
           cd ../../..
@@ -212,7 +213,8 @@ jobs:
           ../../Data/nix/cmake_configure_woa32.sh ../../ -G Ninja \
             "${COMMON_FLAGS[@]}" \
             -DMINGW_TRIPLE=aarch64-w64-mingw32 \
-            -DCMAKE_INSTALL_PREFIX="$PWD/dist"
+            -DCMAKE_INSTALL_PREFIX="$PWD/dist" \
+            -DCMAKE_INSTALL_LIBDIR=lib/wine/aarch64-windows
           ninja -v
           ninja install
           cd ../../..
