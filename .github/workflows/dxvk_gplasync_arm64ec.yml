@@ -455,7 +455,7 @@ jobs:
           if compgen -G "${GITHUB_WORKSPACE}/out/gplasync-arm64ec-*.wcp" > /dev/null; then
             latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/gplasync-arm64ec-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
             cur="${latest#gplasync-arm64ec-}"; cur="${cur%.wcp}"
-            echo "\nCurrent: ${cur}" >> "$NOTES"
+            echo "Current: ${cur}" >> "$NOTES"
           fi
           cat "$NOTES"
 
