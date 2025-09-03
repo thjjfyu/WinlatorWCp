@@ -301,7 +301,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           printf -v BODY '%s\n\n%s\n%s' \
-            '🌙 Automated BOX64-BIONIC-NIGHTLY builds (rolling)' \
+            '🌙 Automated BOX64 Bionic nightly builds (rolling)' \
             "Commit: [${SHORT}](https://github.com/ptitSeb/box64/commit/${SHA})" \
 
           if ! gh release view "BOX64-BIONIC-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
