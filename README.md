@@ -81,8 +81,16 @@ Try order: Sarek → 2.3.1-x ~ 2.4.1-x → (Glitches = Up, freezes = Down or use
 <br>
 
 
+## ✨ Turnip drivers.. Wine.. Proton..
+Things out of my hands, and special patches & fixes are [**HERE**](https://github.com/K11MCH1/Winlator101)
+
+<br><br>
+
+
+
+
 ---
-✨ All credit goes to the original creators and those who inspired this work <br>
+All credit goes to the original creators and those who inspired this work <br>
 
 [bylaws](https://github.com/bylaws)<br>
 [ptitSeb](https://github.com/ptitSeb)  
