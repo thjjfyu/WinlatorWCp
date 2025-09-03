@@ -1,4 +1,4 @@
-name: Build FEX Nightly v2
+name: Build FEX Nightly v2 (standardized)
 
 on:
   workflow_dispatch:              # Manual trigger (any branch)
@@ -7,6 +7,10 @@ on:
 
 permissions:
   contents: write
+
+defaults:
+  run:
+    shell: 'bash --noprofile --norc -Eeuo pipefail {0}'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -125,7 +129,49 @@ jobs:
           set -Eeuo pipefail
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
-            jq zstd curl wget git cmake ninja-build build-essential
+            jq zstd curl wget git cmake ninja-build build-essential binutils xz-utils
+
+      - name: Install llvm-mingw toolchain (Linux aarch64 host) and set PATH
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+      
+          echo "Fetching latest llvm-mingw release for Linux aarch64 host..."
+          url="$(
+            curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ver[@]}" "$API" \
+            | jq -r '
+                (
+                  # 1st try: aarch64 + (ubuntu|linux) + tar.{xz,gz}
+                  [ .assets[]
+                    | select(.name | test("(aarch64|arm64).*(ubuntu|linux).*(tar\\.(xz|gz))$"; "i"))
+                    | .browser_download_url
+                  ]
+                  +
+                  # Fallback: aarch64 tarball, but NOT darwin/apple
+                  [ .assets[]
+                    | select((.name | test("aarch64.*(tar\\.(xz|gz))$"; "i"))
+                             and (.name | test("(darwin|apple)"; "i") | not))
+                    | .browser_download_url
+                  ]
+                )[0]
+              '
+          )"
+          [[ -z "$url" || "$url" == "null" ]] && { echo "::error::llvm-mingw aarch64 tarball not found (linux/ubuntu)"; exit 1; }
+      
+          mkdir -p "$HOME/.toolchains/llvm-mingw"
+          tmpd="$(mktemp -d)"; cd "$tmpd"
+          echo "Downloading: $url"
+          curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors -o toolchain.tar "$url"
+          tar -xf toolchain.tar -C "$HOME/.toolchains/llvm-mingw" --strip-components=1
+      
+          echo "$HOME/.toolchains/llvm-mingw/bin" >> "$GITHUB_PATH"
+          ls "$HOME/.toolchains/llvm-mingw/bin" | grep -E '^(arm64ec|aarch64)-w64-mingw32-.*clang$' >/dev/null \
+            || { echo "::error::Expected triplet compilers not found in llvm-mingw bin/"; exit 1; }
 
       - name: Checkout upstream FEX (exact commit)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
@@ -137,21 +183,41 @@ jobs:
           path: src
           fetch-depth: 1
 
-      - name: Compile FEXCore
+      - name: Compile FEXCore with standard flags
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
-          # Build ARM64EC
+
+          # Common flags suggested by the standard guide
+          COMMON_FLAGS=(
+            -DCMAKE_BUILD_TYPE=Release
+            -DENABLE_LTO=False
+            -DBUILD_TESTS=False
+            -DENABLE_JEMALLOC_GLIBC_ALLOC=False
+            -DTUNE_CPU=none
+          )
+
+          # ARM64EC (Windows ARM64EC)
           mkdir -p src/build/arm64ec && cd src/build/arm64ec
-          ../../Data/nix/cmake_configure_woa64.sh ../../ -G Ninja -DTUNE_CPU=none
-          ninja
-          cd ../../..
-          # Build WOW64
-          mkdir -p src/build/wow64 && cd src/build/wow64
-          ../../Data/nix/cmake_configure_woa32.sh ../../ -G Ninja -DTUNE_CPU=none
-          ninja
+          ../../Data/nix/cmake_configure_woa64.sh ../../ -G Ninja \
+            "${COMMON_FLAGS[@]}" \
+            -DMINGW_TRIPLE=arm64ec-w64-mingw32 \
+            -DCMAKE_INSTALL_PREFIX="$PWD/dist"
+          ninja -v
+          ninja install
           cd ../../..
 
+          # WOW64 (Windows x86-on-ARM; FEX translator side, ARM64 host DLL)
+          mkdir -p src/build/wow64 && cd src/build/wow64
+          ../../Data/nix/cmake_configure_woa32.sh ../../ -G Ninja \
+            "${COMMON_FLAGS[@]}" \
+            -DMINGW_TRIPLE=aarch64-w64-mingw32 \
+            -DCMAKE_INSTALL_PREFIX="$PWD/dist"
+          ninja -v
+          ninja install
+          cd ../../..
+
+      # Nightly WCP 패키징은 요청대로 유지
       - name: Package Nightly WCP (lowercase filename)
         if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
