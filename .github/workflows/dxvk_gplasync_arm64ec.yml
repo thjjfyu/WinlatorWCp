@@ -410,8 +410,8 @@ jobs:
               --arg VN "gplasync-arm64ec-${base}" \
               --argjson VC "${rev}" \
               --arg DESC "$DESC" \
-              --arg SYS "${system32}/" \
-              --arg WOW "${syswow64}/" \
+              --arg SYS '${system32}/' \
+              --arg WOW '${syswow64}/' \
               --slurpfile x64 /tmp/x64.json \
               --slurpfile x86 /tmp/x86.json \
               '
