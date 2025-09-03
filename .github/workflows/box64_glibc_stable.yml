@@ -97,7 +97,7 @@ jobs:
           tag_name: "BOX64-STABLE"
           prerelease: false
           make_latest: true
-          body: "🤖 Automated BOX64 Glibc stable builds. (0.3.6+)\n\nCurrent: ${{ needs.resolve-latest.outputs.base }}"
+          body: "🤖 Automated BOX64 Glibc stable builds (0.3.6+)\n\nCurrent: ${{ needs.resolve-latest.outputs.base }}"
   
   build-and-append:      
     name: "Build & append ${{ needs.resolve-latest.outputs.base }}"
