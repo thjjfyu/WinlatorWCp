@@ -2,7 +2,7 @@
 <br>
 
 <p align="center">
-  <img src="./Logo.png" alt="에뮬레이터" width="320">
+  <img src="./Logo.png" alt="logoo" width="260">
 </p>
 
 
