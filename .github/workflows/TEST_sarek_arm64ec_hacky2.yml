@@ -41,9 +41,19 @@ jobs:
           mkdir -p "$HOME/toolchain"
           curl -L "${{ env.TOOLCHAIN_URL }}" -o /tmp/llvm-mingw.tar.xz
           tar -xJf /tmp/llvm-mingw.tar.xz -C "$HOME/toolchain" --strip-components=1
-          # Prepend toolchain to PATH for precedence
+          # toolchain을 PATH 선두로: host ar/ld 오염 방지
           echo "PATH=$HOME/toolchain/bin:$PATH" >> "$GITHUB_ENV"
           echo "$HOME/toolchain/bin" >> "$GITHUB_PATH"
+          # 트리플릿 도구를 명시적으로 export
+          {
+            echo "CC=arm64ec-w64-mingw32-gcc";
+            echo "CXX=arm64ec-w64-mingw32-g++";
+            echo "AR=arm64ec-w64-mingw32-ar";
+            echo "STRIP=llvm-strip";
+            echo "RC=arm64ec-w64-mingw32-windres";
+            echo "WIDL=arm64ec-w64-mingw32-widl";
+            echo "DLLTOOL=arm64ec-w64-mingw32-dlltool";
+          } >> "$GITHUB_ENV"
 
       - name: Show toolchain info + dump macros (baseline)
         run: |
@@ -65,23 +75,23 @@ jobs:
           ar = 'arm64ec-w64-mingw32-ar'
           c = 'arm64ec-w64-mingw32-gcc'
           cpp = 'arm64ec-w64-mingw32-g++'
+          c_ld = 'arm64ec-w64-mingw32-gcc'
+          cpp_ld = 'arm64ec-w64-mingw32-g++'
           ld = 'arm64ec-w64-mingw32-ld'
           windres = 'arm64ec-w64-mingw32-windres'
           widl = 'arm64ec-w64-mingw32-widl'
+          dlltool = 'arm64ec-w64-mingw32-dlltool'
           strip = 'llvm-strip'
-      
+          
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
-      
+          
           [built-in options]
-          # SSE/AVX 매크로는 정의하지 않는다!! + 의미 보존 플래그
           c_args  = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
           cpp_args= ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
-          EOF
-          echo "== arm64ec.meson ==" && nl -ba arm64ec.meson
 
       # --- SAREK-SPECIFIC PATCH (ARM64EC SSE shim v2 + strict gates) ---
       - name: Patch SAREK headers to avoid x86 intrinsics on ARM64EC (shim v2 + strict)
@@ -326,6 +336,31 @@ jobs:
             fi
           fi
 
+      - name: Force d3d10core to cross-build (ARM64EC)
+        working-directory: dxvk
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re
+          root = pathlib.Path('.')
+          patched = 0
+          for p in root.rglob('meson.build'):
+              s = p.read_text(encoding='utf-8', errors='ignore')
+              if 'd3d10core' not in s:
+                  continue
+              def repl(m):
+                  args = m.group(1)
+                  args = re.sub(r'native\\s*:\\s*true', 'native: false', args)
+                  if 'native:' not in args:
+                      args = (args + ', native: false') if args.strip() else 'native: false'
+                  return "library('d3d10core'," + args + ")"
+              ns, n = re.subn(r"library\\(\\s*'d3d10core'\\s*,(.*?)\\)", repl, s, flags=re.DOTALL)
+              if n:
+                  p.write_text(ns, encoding='utf-8')
+                  patched += n
+          print(f'patched d3d10core targets: {patched}')
+          PY
+
       - name: Wipe build dir (idempotent & -e safe)
         working-directory: dxvk
         shell: bash
@@ -378,8 +413,7 @@ jobs:
           set -euo pipefail
           meson install -C build.w64
 
-      # === Trust gates (block artifacts if not meeting criteria) ===
-      - name: Verify ARM64EC machine type (allowlisted exceptions)
+      - name: Verify ARM64EC machine type (strict)
         working-directory: dxvk
         shell: bash
         run: |
@@ -387,42 +421,18 @@ jobs:
           shopt -s nullglob
           files=(install/bin/*.dll)
           [ ${#files[@]} -gt 0 ] || { echo "::error::No DLLs found in install/bin"; exit 1; }
-
-          # allow x64 for specific forwarder-like components that may legitimately build as x64 on some branches
-          allow_x64=("d3d10core.dll")
-          is_allow_x64() {
-            local base=$(basename "$1")
-            for n in "${allow_x64[@]}"; do
-              [[ "$base" == "$n" ]] && return 0
-            done
-            return 1
-          }
-
           for f in "${files[@]}"; do
             echo "== $f =="
-            # e_lfanew at 0x3C (60)
             e_lfanew=$(od -An -tu4 -j 60 -N 4 "$f" | tr -d '[:space:]')
-            # check PE signature "PE\0\0" == 50 45 00 00
             sig=$(dd if="$f" bs=1 skip="$e_lfanew" count=4 2>/dev/null | hexdump -v -e '1/1 "%02X"')
             if [ "$sig" != "50450000" ]; then
               echo "::error::$f: invalid PE signature $sig"; exit 1
             fi
-            # read Machine (2 bytes, little-endian)
             mach=$(od -An -tx2 -j $((e_lfanew+4)) -N 2 "$f" | tr -d '[:space:]')
-            case "${mach,,}" in
-              a641)
-                echo "$f: Machine=0x$mach (ARM64EC) OK" ;;
-              8664)
-                if is_allow_x64 "$f"; then
-                  echo "$f: Machine=0x$mach (x86_64) allowed for this module" ;
-                else
-                  echo "::error::$f: Machine=0x$mach (x86_64), expected 0xA641 (ARM64EC)" ; exit 1
-                fi ;;
-              aa64)
-                echo "::warning::$f: Machine=0x$mach (ARM64), expected ARM64EC; verify toolchain/branch settings" ;;
-              *)
-                echo "::error::$f: Unknown/unsupported Machine=0x$mach" ; exit 1 ;;
-            esac
+            if [ "${mach,,}" != "a641" ]; then
+              echo "::error::$f: Machine=0x$mach, expected 0xA641 (ARM64EC)"; exit 1
+            fi
+            echo "$f: Machine=0x$mach (ARM64EC) OK"
           done
 
       - name: Enforce no x86 SIMD or x86 asm artifacts
