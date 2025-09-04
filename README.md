@@ -22,7 +22,6 @@
 <br>
 
 ## 🧩 DXVK
-📌 No outdated or unusual patched versions here.
 | Build | 📜 |
 |-------|:------:|
 | [**DXVK**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK) |  <a href="https://github.com/doitsujin/dxvk">🔗</a> |
