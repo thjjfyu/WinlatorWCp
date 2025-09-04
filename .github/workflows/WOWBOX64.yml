@@ -1,11 +1,10 @@
-name: Build WowBox64 Nightly
+name: Build WowBox64 Nightly (one-shot)
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,200 +14,71 @@ env:
   TOOLCHAIN_URL: https://github.com/bylaws/llvm-mingw/releases/download/20250305/llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz
   RELEASE_TAG: WOWBOX64-NIGHTLY
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 1) Upstream workflow watcher (GATE)
-# ──────────────────────────────────────────────────────────────────────────────
 jobs:
-  check-upstream-workflow:
-    name: Check upstream workflow changes (gate)
+  build-wowbox64:
+    name: Build WowBox64 from latest upstream HEAD
     runs-on: ubuntu-latest
-    outputs:
-      changed:   ${{ steps.compare.outputs.changed }}
-      new_sha:   ${{ steps.hash.outputs.sha }}
+    env:
+      TZ: Asia/Seoul
     steps:
-      - name: Install tools (jq, curl, gh)
+      - name: Install dependencies
         run: |
           set -Eeuo pipefail
           sudo apt-get -yq update
-          sudo apt-get -yq install --no-install-recommends jq curl gh ca-certificates
+          sudo apt-get -yq install --no-install-recommends \
+            git cmake ninja-build jq curl ca-certificates xz-utils file binutils gh
 
-      - name: Fetch upstream workflow (raw)
-        id: fetch
-        run: |
-          set -Eeuo pipefail
-          RAW_URL="https://raw.githubusercontent.com/ptitSeb/box64/HEAD/.github/workflows/release.yml"
-          curl -fsSL "$RAW_URL" -o /tmp/upstream_release.yml
-
-      - name: Hash upstream workflow (sha256)
-        id: hash
-        run: echo "sha=$(sha256sum /tmp/upstream_release.yml | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout this repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Compare current vs previous hash
-        id: compare
-        env:
-          SHA_UP: ${{ steps.hash.outputs.sha }}
-        run: |
-          set -Eeuo pipefail
-          mkdir -p .github/upstream-cache
-          CACHE=.github/upstream-cache/box64-release-workflow.sha256
-          OLD_SHA="$(cat "$CACHE" 2>/dev/null || true)"
-          if [ "$SHA_UP" != "$OLD_SHA" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create PR when upstream changed (and update cache)
-        if: steps.compare.outputs.changed == 'true'
-        env:
-          SHA_UP:   ${{ steps.hash.outputs.sha }}
-        run: |
-          set -Eeuo pipefail
-          CACHE=.github/upstream-cache/box64-release-workflow.sha256
-          mkdir -p .github/upstream-cache
-          echo "$SHA_UP" > "$CACHE"
-          cp /tmp/upstream_release.yml .github/upstream-cache/box64-release.yml
-          BR="sync/upstream-release-$(date +%Y%m%d%H%M%S)"
-          git switch -c "$BR"
-          git add .github/upstream-cache/box64-release.yml "$CACHE"
-          git -c user.name="github-actions[bot]" \
-              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-              commit -m "chore: update cached upstream release workflow (sha=$SHA_UP)"
-          git push -u origin "$BR"
-          gh pr create --fill \
-            --title "Sync: Upstream release workflow changed" \
-            --body "Auto-detected change in ptitSeb/box64 .github/workflows/release.yml. Review and mirror relevant flags/steps here if needed."
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 2) Resolve upstream commit (only if gate is green)
-# ──────────────────────────────────────────────────────────────────────────────
-  resolve-latest:
-    name: Resolve upstream HEAD (commit)
-    runs-on: ubuntu-latest
-    needs: [check-upstream-workflow]
-    if: needs.check-upstream-workflow.outputs.changed != 'true'
-    outputs:
-      sha:      ${{ steps.upstream.outputs.sha }}
-      short:    ${{ steps.upstream.outputs.short }}
-      datecode: ${{ steps.datecode.outputs.code }}
-    steps:
-      - name: Install tools (jq, curl)
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get -yq update
-          sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
-
-      - name: Resolve upstream Box64 HEAD SHA (robust)
+      - name: Resolve upstream HEAD (ptitSeb/box64)
         id: upstream
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           API="https://api.github.com"
-          OWNER="ptitSeb"
-          REPO="box64"
+          OWNER="ptitSeb"; REPO="box64"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "X-GitHub-Api-Version: 2022-11-28" -H "Accept: application/vnd.github+json")
           fetch() { curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ver[@]}" "$1"; }
-
-          default_branch="$(fetch "$API/repos/$OWNER/$REPO" | jq -r .default_branch)"
-          [ -z "$default_branch" -o "$default_branch" = "null" ] && default_branch="main"
-
-          sha="$(fetch "$API/repos/$OWNER/$REPO/commits/${default_branch}" | jq -r .sha)"
-          [ -z "$sha" -o "$sha" = "null" ] && { echo "::error::Failed to resolve upstream HEAD SHA"; exit 1; }
-
-          echo "sha=${sha}"     >> "$GITHUB_OUTPUT"
+          defb=$(fetch "$API/repos/$OWNER/$REPO" | jq -r .default_branch)
+          [ -z "$defb" -o "$defb" = "null" ] && defb=main
+          sha=$(fetch "$API/repos/$OWNER/$REPO/commits/${defb}" | jq -r .sha)
+          [ -z "$sha" -o "$sha" = "null" ] && { echo "::error::Failed to resolve upstream HEAD"; exit 1; }
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
           echo "short=${sha:0:7}" >> "$GITHUB_OUTPUT"
-          echo "Upstream ${default_branch} @ ${sha:0:7}"
+          echo "branch=${defb}" >> "$GITHUB_OUTPUT"
+          echo "Resolved $defb @ ${sha:0:7}"
 
       - name: Decide date code (YYMMDD, KST)
         id: datecode
-        run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
+        run: echo "code=$(date +%y%m%d)" >> "$GITHUB_OUTPUT"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 3) Build WowBox64 DLL + package WCP + release
-# ──────────────────────────────────────────────────────────────────────────────
-  build-wowbox64:
-    name: Build WowBox64 ${{ needs.resolve-latest.outputs.short }}
-    needs: [resolve-latest]
-    if: needs.check-upstream-workflow.outputs.changed != 'true'
-    runs-on: ubuntu-latest
-    env:
-      DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
-      SHORT:    ${{ needs.resolve-latest.outputs.short }}
-      SHA:      ${{ needs.resolve-latest.outputs.sha }}
-
-    steps:
-      - name: Early skip if same commit already released
-        id: guard_commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO:     ${{ github.repository }}
-          SHA:      ${{ needs.resolve-latest.outputs.sha }}
-          TAG:      ${{ env.RELEASE_TAG }}
+      - name: Download llvm-mingw toolchain
         run: |
           set -Eeuo pipefail
-          API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
-          HTTP="$(curl -s -o /tmp/release.json -w '%{http_code}' \
-                   -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$API" || true)"
-          if [ "$HTTP" = "200" ] && jq -e --arg S "$SHA" '.body | contains($S)' /tmp/release.json >/dev/null; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Same upstream commit already released; skipping."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Early skip if same-date asset exists
-        id: dupe
-        if: steps.guard_commit.outputs.skip != 'true'
-        env:
-          GH_TOKEN:  ${{ github.token }}
-          REPO:      ${{ github.repository }}
-          TAG:       ${{ env.RELEASE_TAG }}
-          DATECODE:  ${{ needs.resolve-latest.outputs.datecode }}
-        run: |
-          set -Eeuo pipefail
-          API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
-          FILENAME="wowbox64-nightly-${DATECODE}.wcp"
-          HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' \
-                  -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
-                  "$API" || true)"
-          if [ "$HTTP" = "200" ] && jq -e --arg N "$FILENAME" '.assets[]?.name == $N' /tmp/nightly.json >/dev/null; then
-            echo "skip=true"  >> "$GITHUB_OUTPUT"
-            echo "Found asset ${FILENAME}; skipping build."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Install deps (cmake, ninja, objtools) + download llvm-mingw
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get -yq update
-          sudo apt-get -yq install --no-install-recommends \
-            git cmake ninja-build jq curl ca-certificates xz-utils file binutils
           mkdir -p /opt/llvm-mingw
           curl -fsSL "$TOOLCHAIN_URL" | tar -C /opt/llvm-mingw --strip-components=1 -xJ
           echo "/opt/llvm-mingw/i686-w64-mingw32/bin" >> $GITHUB_PATH
           echo "/opt/llvm-mingw/bin" >> $GITHUB_PATH
 
-      - name: Checkout upstream Box64 (exact commit)
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+      - name: Preflight: check __int128 support on i686-windows
+        run: |
+          set -Eeuo pipefail
+          printf 'int main(){ __int128 x=0; (void)x; return 0; }\n' > t.c
+          if ! i686-w64-mingw32-clang -c t.c -o /dev/null 2>/dev/null; then
+            echo "::error::__int128 unsupported on i686-windows. Upstream HEAD may not build for 32-bit target right now."
+            exit 1
+          fi
+
+      - name: Checkout upstream sources at resolved commit
         uses: actions/checkout@v4
         with:
           repository: ptitSeb/box64
-          ref: ${{ needs.resolve-latest.outputs.sha }}
+          ref: ${{ steps.upstream.outputs.sha }}
           submodules: recursive
           path: src
           fetch-depth: 1
 
-      - name: Configure WowBox64 (Windows target, 32-bit)
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+      - name: Configure & build (Windows i686 DLL)
         run: |
           set -Eeuo pipefail
           cmake -S src -B build-wow64 -G Ninja \
@@ -218,11 +88,10 @@ jobs:
             -DCMAKE_C_COMPILER=i686-w64-mingw32-clang \
             -DCMAKE_CXX_COMPILER=i686-w64-mingw32-clang++ \
             -DCMAKE_RC_COMPILER=llvm-rc
-          
-          # 타겟 자동 감지: WowBox64 / wowbox64 / 기타
-          set -Eeuo pipefail
-          tgt="$(cmake --build build-wow64 --target help 2>/dev/null | sed -n 's/^[[:space:]]*\* \([^ ]\+\).*/\1/p' | grep -i '^wowbox64$' || true)"
-          if [[ -n "$tgt" ]]; then
+
+          # Try to find an explicit WowBox64 target; else build all
+          tgt=$(cmake --build build-wow64 --target help 2>/dev/null | sed -n 's/^\s*\* \([^ ]\+\).*/\1/p' | grep -i '^wowbox64$' || true)
+          if [ -n "$tgt" ]; then
             echo "Using target: $tgt"
             cmake --build build-wow64 --target "$tgt" -j"$(nproc)"
           else
@@ -230,23 +99,10 @@ jobs:
             cmake --build build-wow64 -j"$(nproc)"
           fi
 
-          # 산출물 찾기 + 검증
-          DLL="$(find build-wow64 -iname 'WowBox64.dll' -print | head -n1 || true)"
-          [[ -f "$DLL" ]] || { echo "::error::WowBox64.dll not found after build"; exit 1; }
-          file "$DLL"
-          objdump -p "$DLL" | grep -qi 'machine.*I386' || { echo "::error::Not a 32-bit i386 DLL"; exit 1; }
-
-      - name: Build WowBox64.dll
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
-        run: |
-          set -Eeuo pipefail
-          cmake --build build-wow64 --target WowBox64 -j"$(nproc)"
-
       - name: Verify artifact is PE32 i386 DLL
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         run: |
           set -Eeuo pipefail
-          DLL="$(find build-wow64 -iname 'WowBox64.dll' -print | head -n1)"
+          DLL=$(find build-wow64 -iname 'WowBox64.dll' -print | head -n1 || true)
           [ -f "$DLL" ] || { echo "::error::WowBox64.dll not found"; exit 1; }
           file "$DLL"
           objdump -p "$DLL" | grep -qi 'machine.*I386' || { echo "::error::Not a 32-bit i386 DLL"; exit 1; }
@@ -254,10 +110,9 @@ jobs:
           echo "DLL=$DLL" >> $GITHUB_ENV
 
       - name: Package WCP (minimal)
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
-          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
-          SHORT:    ${{ needs.resolve-latest.outputs.short }}
+          DATECODE: ${{ steps.datecode.outputs.code }}
+          SHORT:    ${{ steps.upstream.outputs.short }}
         run: |
           set -Eeuo pipefail
           mkdir -p out
@@ -266,9 +121,9 @@ jobs:
             "type": "WOWBox64",
             "versionName": "nightly-${SHORT}",
             "versionCode": ${DATECODE},
-            "description": "${DATECODE} WowBox64 Build by Ari",
+            "description": "${DATECODE} WowBox64 Build",
             "files": [
-              { "source": "WowBox64.dll", "target": "\${syswow64}/WowBox64.dll" }
+              { "source": "WowBox64.dll", "target": "${syswow64}/WowBox64.dll" }
             ],
             "notes": ["32-bit titles only. Place in syswow64 and set DLL override: native,builtin"]
           }
@@ -278,19 +133,18 @@ jobs:
             -cf "out/wowbox64-nightly-${DATECODE}.wcp" profile.json WowBox64.dll
           ls -l out
 
-      - name: Create/Update release and upload
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+      - name: Create or update release and upload asset
         env:
           GH_TOKEN: ${{ github.token }}
           REPO:     ${{ github.repository }}
-          SHORT:    ${{ needs.resolve-latest.outputs.short }}
-          SHA:      ${{ needs.resolve-latest.outputs.sha }}
-          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
+          SHORT:    ${{ steps.upstream.outputs.short }}
+          SHA:      ${{ steps.upstream.outputs.sha }}
+          DATECODE: ${{ steps.datecode.outputs.code }}
           TAG:      ${{ env.RELEASE_TAG }}
         run: |
           set -Eeuo pipefail
           printf -v BODY '%s\n\n%s\n%s\n' \
-            '🧩 Automated WowBox64 nightly (32-bit DLL bridge for Bionic+Wine)' \
+            '🧩 One-shot WowBox64 nightly (32-bit DLL bridge for Bionic+Wine)' \
             "Commit: [${SHORT}](https://github.com/ptitSeb/box64/commit/${SHA})" \
             "Upstream SHA: ${SHA}"
           if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
@@ -301,7 +155,6 @@ jobs:
           gh release upload "$TAG" "./out/wowbox64-nightly-${DATECODE}.wcp" --repo "$REPO" --clobber
 
       - name: Trim old assets (keep latest 5)
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -309,12 +162,12 @@ jobs:
         run: |
           set -Eeuo pipefail
           API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
-          assets="$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API" | jq -c '.assets | sort_by(.created_at)')"
-          count="$(echo "$assets" | jq 'length')"
+          assets=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API" | jq -c '.assets | sort_by(.created_at)')
+          count=$(echo "$assets" | jq 'length')
           if [ "$count" -gt 5 ]; then
             delcount=$((count-5))
             echo "::notice::Found $count assets, will delete $delcount oldest."
-            echo "$assets" | jq -r ".[0:$delcount][] | .id" | while read -r id; do
+            echo "$assets" | jq -r '.[0:$delcount][] | .id' | while read -r id; do
               curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
                    "https://api.github.com/repos/${REPO}/releases/assets/${id}"
               echo "Deleted asset id=$id"
