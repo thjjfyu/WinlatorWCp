@@ -92,6 +92,7 @@ jobs:
           [built-in options]
           c_args  = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
           cpp_args= ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
+          b_linker = 'lld' 
 
       # --- SAREK-SPECIFIC PATCH (ARM64EC SSE shim v2 + strict gates) ---
       - name: Patch SAREK headers to avoid x86 intrinsics on ARM64EC (shim v2 + strict)
@@ -388,7 +389,7 @@ jobs:
         working-directory: dxvk
         run: |
           set -euo pipefail
-          meson setup build.w64 . --cross-file arm64ec.meson --buildtype release --prefix "$PWD/install"
+          meson setup build.w64 . --cross-file arm64ec.meson --buildtype release --prefix "$PWD/install" -Db_linker=lld
           meson configure build.w64
           echo '== Meson build options (excerpt) =='
           meson introspect build.w64 --buildoptions | head -n 120 || true
