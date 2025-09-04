@@ -4,8 +4,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+\ nconcurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   wowbox64:
@@ -89,25 +91,30 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p out
-          cp "${{ steps.out.outputs.dll }}" ./wowbox64.dll
-          cat > profile.json <<'JSON'
+          # 산출물 이름은 그대로 유지 (rename 금지)
+          cp "${{ steps.out.outputs.dll }}" wowbox64.dll
+          # 변수 확장을 위해 unquoted heredoc 사용, syswow64 변수는 이스케이프
+          cat <<JSON > profile.json
           {
             "type": "WOWBox64",
-            "versionName": "nightly-__SHORT__",
-            "versionCode": __DATECODE__,
-            "description": "__DATECODE__ WowBox64 Build",
+            "versionName": "nightly-${SHORT}",
+            "versionCode": ${DATECODE},
+            "description": "${DATECODE} WowBox64 Build by Ari",
             "files": [
-              { "source": "wowbox64.dll", "target": "${syswow64}/wowbox64.dll" }
-            ],
-            "notes": ["32-bit titles only. Place in syswow64 and set DLL override: native,builtin"]
+              { "source": "wowbox64.dll", "target": "\${syswow64}/wowbox64.dll" }
+            ]
           }
           JSON
-          sed -i "s/__SHORT__/${SHORT}/g; s/__DATECODE__/${DATECODE}/g" profile.json
           tar --zstd --format=gnu --owner=0 --group=0 --numeric-owner --sort=name \
             -cf "out/wowbox64-nightly-${DATECODE}.wcp" profile.json wowbox64.dll
           echo "wcp=out/wowbox64-nightly-${DATECODE}.wcp" >> $GITHUB_OUTPUT
 
       - name: Upload WCP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wowbox64-nightly-${{ steps.date.outputs.code }}.wcp
+          path: ${{ steps.wcp.outputs.wcp }}
+          if-no-files-found: error
         uses: actions/upload-artifact@v4
         with:
           name: wowbox64-nightly-${{ steps.date.outputs.code }}.wcp
