@@ -137,7 +137,7 @@ jobs:
           set -Eeuo pipefail
           mkdir -p out
           cp "${{ steps.out.outputs.dll }}" wowbox64.dll
-          cat <<JSON > profile.json
+          cat <<'JSON' > profile.json
           {
             "type": "WOWBox64",
             "versionName": "nightly-${SHORT}",
