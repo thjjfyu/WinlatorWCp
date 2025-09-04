@@ -1,4 +1,4 @@
-name: Build DXVK gplasync arm64ec rev5
+name: gplasync arm64ec
 
 on:
   workflow_dispatch:
