@@ -327,21 +327,21 @@ jobs:
         run: |
           set -euo pipefail
           if [ -f src/d3d10/meson.build ]; then
-            # 1) ARM64EC 더미 심볼 소스 생성
-            cat > src/d3d10/force_arm64ec_dummy.c <<'C'
-            #ifdef __cplusplus
-            extern "C"
-            #endif
-            __attribute__((used)) void __sarek_arm64ec_anchor(void) {}
-            C
-
+            # 1) ARM64EC 더미 심볼 소스 생성 (heredoc 대신 printf로 안전하게)
+            printf '%s\n' \
+              '#ifdef __cplusplus' \
+              'extern "C"' \
+              '#endif' \
+              '__attribute__((used)) void __sarek_arm64ec_anchor(void) {}' \
+              > src/d3d10/force_arm64ec_dummy.c
+      
             # 2) d3d10core 타겟 소스 목록에 더미 추가(중복 방지)
             if ! grep -q "force_arm64ec_dummy.c" src/d3d10/meson.build; then
               awk '
                 BEGIN{t=0}
-                /shared_library\s*\(\s*'"'"'d3d10core'"'"'\s*,/ {t=1}
+                /shared_library\\s*\\(\\s*'\''d3d10core'\''/ {t=1}
                 {print}
-                t==1 && /^\s*\)/ {print "  , 'force_arm64ec_dummy.c'"; t=0}
+                t==1 && /^\\s*\\)/ {print "  , '\''force_arm64ec_dummy.c'\''"; t=0}
               ' src/d3d10/meson.build > src/d3d10/meson.build.new || true
               mv src/d3d10/meson.build.new src/d3d10/meson.build
             fi
