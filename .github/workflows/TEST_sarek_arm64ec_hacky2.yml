@@ -133,7 +133,7 @@ jobs:
               return vreinterpretq_f32_u32(vceqq_f32(a, b));
             }
             static inline __m128 _mm_and_ps(__m128 a, __m128 b){
-              return vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(a), vreinterpretq_u32_f32(b)));
+              return vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(a), vreinterpretq_u32_f32(b));
             }
             static inline __m128i _mm_setzero_si128(){ return vdupq_n_u8(0); }
             static inline __m128i _mm_set1_epi8(int x){ return vdupq_n_u8((uint8_t)x); }
@@ -327,13 +327,13 @@ jobs:
         run: |
           set -euo pipefail
           if [ -f src/d3d10/meson.build ]; then
-            # 2-1) ARM64EC 더미 심볼 소스 생성
-            cat > src/d3d10/force_arm64ec_dummy.c <<'C'
-            #ifdef __cplusplus
-            extern "C"
-            #endif
-            __attribute__((used)) void __sarek_arm64ec_anchor(void) {}
-            C
+            # 2-1) ARM64EC 더미 심볼 소스 생성 — heredoc 대신 printf로 안전하게 생성
+            printf '%s\n' \
+              '#ifdef __cplusplus' \
+              'extern "C"' \
+              '#endif' \
+              '__attribute__((used)) void __sarek_arm64ec_anchor(void) {}' \
+              > src/d3d10/force_arm64ec_dummy.c
       
             # 2) d3d10core 타겟 소스 목록에 더미 추가(중복 방지)
             if ! grep -q "force_arm64ec_dummy.c" src/d3d10/meson.build; then
