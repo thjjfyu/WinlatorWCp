@@ -183,6 +183,7 @@ jobs:
           #undef __AVX__
           #undef __AVX2__
           #include "sarek_arm64ec_sse_shim.h"
+          #include "sarek_bitops_ec.h"
           #endif'
           for f in src/util/util_vector.h src/util/util_bit.h; do
             if [ -f "$f" ] && ! grep -q 'SAREK on ARM64EC: disable x86/SSE/AVX paths' "$f"; then
@@ -227,6 +228,15 @@ jobs:
             else return __builtin_ctzll((unsigned long long)(U)n);
           }
           HDR
+          # 6.1) Ensure util_bit.h includes bitops header (idempotent)
+          if ! grep -q 'sarek_bitops_ec.h' src/util/util_bit.h; then
+            tmp=$(mktemp)
+            { echo '#if defined(SAREK_ARM64EC) || defined(__arm64ec__) || defined(_M_ARM64EC)';
+              echo '#include "sarek_bitops_ec.h"';
+              echo '#endif';
+              cat src/util/util_bit.h; } > "$tmp"
+            mv "$tmp" src/util/util_bit.h
+          fi
           python3 - <<'PY'
           import re, pathlib
           p = pathlib.Path('src/util/util_bit.h')
