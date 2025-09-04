@@ -72,8 +72,8 @@ jobs:
           cat > arm64ec.meson <<'EOF'
           [binaries]
           ar = 'arm64ec-w64-mingw32-ar'
-          c = 'arm64ec-w64-mingw32-gcc'
-          cpp = 'arm64ec-w64-mingw32-g++'
+          c = 'arm64ec-w64-mingw32-clang'
+          cpp = 'arm64ec-w64-mingw32-clang++'
           windres = 'arm64ec-w64-mingw32-windres'
           widl = 'arm64ec-w64-mingw32-widl'
           strip = 'llvm-strip'
@@ -85,10 +85,10 @@ jobs:
           endian = 'little'
 
           [built-in options]
-          c_args  = ['--target=arm64ec-w64-mingw32','-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
-          cpp_args= ['--target=arm64ec-w64-mingw32','-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
-          c_link_args   = ['--target=arm64ec-w64-mingw32','-fuse-ld=lld']
-          cpp_link_args = ['--target=arm64ec-w64-mingw32','-fuse-ld=lld']
+          c_args  = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
+          cpp_args= ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
+          c_link_args   = ['-fuse-ld=lld']
+          cpp_link_args = ['-fuse-ld=lld']
           b_linker = 'lld'
           EOF
           echo "== arm64ec.meson ==" && nl -ba arm64ec.meson
@@ -373,12 +373,16 @@ jobs:
         run: |
           set -Eeuo pipefail
           arm64ec-w64-mingw32-g++ -dumpmachine
-          T="$PWD/__probe.c"; echo 'int main(){return 0;}' > "$T"
-          arm64ec-w64-mingw32-g++ --target=arm64ec-w64-mingw32 -fuse-ld=lld "$T" -o __probe.exe
+          T="$PWD/__probe.cc"; echo 'int main(){return 0;}' > "$T"
+          arm64ec-w64-mingw32-clang++ -v "$T" -o __probe.exe -fuse-ld=lld
           # PE 헤더에서 Machine=0xA641 확인
           e_lfanew=$(od -An -tu4 -j 60 -N 4 __probe.exe | tr -d '[:space:]')
           mach=$(od -An -tx2 -j $((e_lfanew+4)) -N 2 __probe.exe | tr -d '[:space:]' | tr 'A-F' 'a-f')
           [ "$mach" = "a641" ] || { echo "::error::hello world Machine=0x$mach, want 0xA641"; exit 1; }
+          arm64ec-w64-mingw32-clang++ -dM -E - < /dev/null | grep -q '_M_ARM64EC' \
+            || { echo "::error::_M_ARM64EC missing -> not targeting ARM64EC"; exit 1; }
+          arm64ec-w64-mingw32-clang++ -dM -E - < /dev/null | grep -q '__x86_64__' \
+            && { echo "::error::__x86_64__ predefined -> wrong target (x64)"; exit 1; } || true
 
       - name: Macro snapshot after configure (with injected defines)
         working-directory: dxvk
