@@ -1,4 +1,4 @@
-name: Build DXVK rev4
+name: DXVK
 
 on:
   workflow_dispatch:
