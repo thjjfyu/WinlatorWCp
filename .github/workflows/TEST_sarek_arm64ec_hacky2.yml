@@ -41,15 +41,12 @@ jobs:
           mkdir -p "$HOME/toolchain"
           curl -L "${{ env.TOOLCHAIN_URL }}" -o /tmp/llvm-mingw.tar.xz
           tar -xJf /tmp/llvm-mingw.tar.xz -C "$HOME/toolchain" --strip-components=1
-          # toolchain을 PATH 선두로: host ar/ld 오염 방지
           echo "PATH=$HOME/toolchain/bin:$PATH" >> "$GITHUB_ENV"
           echo "$HOME/toolchain/bin" >> "$GITHUB_PATH"
-          # 트리플릿 도구를 명시적으로 export
           {
             echo "CC=arm64ec-w64-mingw32-gcc";
             echo "CXX=arm64ec-w64-mingw32-g++";
             echo "AR=arm64ec-w64-mingw32-ar";
-            echo "STRIP=llvm-strip";
             echo "RC=arm64ec-w64-mingw32-windres";
             echo "WIDL=arm64ec-w64-mingw32-widl";
             echo "DLLTOOL=arm64ec-w64-mingw32-dlltool";
@@ -75,12 +72,13 @@ jobs:
           ar = 'arm64ec-w64-mingw32-ar'
           c = 'arm64ec-w64-mingw32-gcc'
           cpp = 'arm64ec-w64-mingw32-g++'
+          # 링크는 컴파일러 드라이버를 통해 수행
           c_ld = 'arm64ec-w64-mingw32-gcc'
           cpp_ld = 'arm64ec-w64-mingw32-g++'
+          # 굳이 넣어도 되지만, b_linker가 우선이라 이 줄은 있어도/없어도 됨
           ld = 'arm64ec-w64-mingw32-ld'
           windres = 'arm64ec-w64-mingw32-windres'
           widl = 'arm64ec-w64-mingw32-widl'
-          dlltool = 'arm64ec-w64-mingw32-dlltool'
           strip = 'llvm-strip'
           
           [host_machine]
@@ -92,7 +90,7 @@ jobs:
           [built-in options]
           c_args  = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
           cpp_args= ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
-          b_linker = 'lld' 
+          b_linker = 'lld'   # 여기가 핵심. Meson이 -fuse-ld=lld 를 쓰게 고정
 
       # --- SAREK-SPECIFIC PATCH (ARM64EC SSE shim v2 + strict gates) ---
       - name: Patch SAREK headers to avoid x86 intrinsics on ARM64EC (shim v2 + strict)
@@ -343,12 +341,10 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import pathlib, re
-          root = pathlib.Path('.')
           patched = 0
-          for p in root.rglob('meson.build'):
+          for p in pathlib.Path('.').rglob('meson.build'):
               s = p.read_text(encoding='utf-8', errors='ignore')
-              if 'd3d10core' not in s:
-                  continue
+              if 'd3d10core' not in s: continue
               def repl(m):
                   args = m.group(1)
                   args = re.sub(r'native\\s*:\\s*true', 'native: false', args)
@@ -357,8 +353,7 @@ jobs:
                   return "library('d3d10core'," + args + ")"
               ns, n = re.subn(r"library\\(\\s*'d3d10core'\\s*,(.*?)\\)", repl, s, flags=re.DOTALL)
               if n:
-                  p.write_text(ns, encoding='utf-8')
-                  patched += n
+                  p.write_text(ns, encoding='utf-8'); patched += n
           print(f'patched d3d10core targets: {patched}')
           PY
 
@@ -388,7 +383,6 @@ jobs:
       - name: Sanitize link env
         run: |
           set -euo pipefail
-          # 혹시 남아있을지 모르는 잘못된 설정 제거
           unset LD || true
           unset LDFLAGS || true
           unset CC_LD || true
