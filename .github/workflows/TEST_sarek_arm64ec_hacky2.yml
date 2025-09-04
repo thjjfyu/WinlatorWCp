@@ -96,9 +96,12 @@ jobs:
           endian = 'little'
       
           [built-in options]
-          # SSE/AVX 매크로는 정의하지 않는다!! + 의미 보존 플래그
-          c_args  = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
-          cpp_args= ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
+          # SSE/AVX 매크로는 정의하지 않는다!! + 의미 보존 플래그 + 링크 타겟 머신 강제
+          c_args  = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-D_WIN32_WINNT=0x0A00','-fno-fast-math','-ffp-contract=off']
+          cpp_args= ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-D_WIN32_WINNT=0x0A00','-fno-fast-math','-ffp-contract=off']
+          c_link_args   = ['-Wl,/machine:arm64ec']
+          cpp_link_args = ['-Wl,/machine:arm64ec']
+          cpp_std = 'c++17'
           EOF
           echo "== arm64ec.meson ==" && nl -ba arm64ec.meson
 
@@ -318,31 +321,32 @@ jobs:
           echo "== Head of src/util/util_bit.h (after patch) =="
           head -n 60 src/util/util_bit.h || true
 
-          # 9) D3D9 타입 호환 레이어 삽입(중복 방지)
-          cat > include/sarek_d3d9_compat.h <<'HDR'
-          #pragma once
-          #if defined(__has_include)
-          # if __has_include(<d3d9.h>)
-          #  include <d3d9.h>
-          # endif
-          #endif
-          #ifndef D3DDEVINFO_RESOURCEMANAGER
-          #define D3DDEVINFO_RESOURCEMANAGER D3DDEVINFO_D3DRESOURCEMANAGER
-          #endif
-          #ifndef D3DDEVINFO_VERTEXSTATS
-          #define D3DDEVINFO_VERTEXSTATS D3DDEVINFO_D3DVERTEXSTATS
-          #endif
-          HDR
-          
-          if [ -f src/d3d9/d3d9_include.h ]; then
-            if ! grep -q 'sarek_d3d9_compat.h' src/d3d9/d3d9_include.h; then
-              echo "Prepending D3D9 compat include to src/d3d9/d3d9_include.h"
-              tmp=$(mktemp)
-              { echo '#include "sarek_d3d9_compat.h"'; cat src/d3d9/d3d9_include.h; } > "$tmp"
-              mv "$tmp" src/d3d9/d3d9_include.h
-            else
-              sed -i '1,16{s|#include <sarek_d3d9_compat.h>|#include "sarek_d3d9_compat.h"|}' src/d3d9/d3d9_include.h || true
+      - name: Force ARM64EC for def-only forwarders (d3d10core)
+        working-directory: dxvk
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f src/d3d10/meson.build ]; then
+            # 1) ARM64EC 더미 심볼 소스 생성
+            cat > src/d3d10/force_arm64ec_dummy.c <<'C'
+            #ifdef __cplusplus
+            extern "C"
+            #endif
+            __attribute__((used)) void __sarek_arm64ec_anchor(void) {}
+            C
+
+            # 2) d3d10core 타겟 소스 목록에 더미 추가(중복 방지)
+            if ! grep -q "force_arm64ec_dummy.c" src/d3d10/meson.build; then
+              awk '
+                BEGIN{t=0}
+                /shared_library\s*\(\s*'"'"'d3d10core'"'"'\s*,/ {t=1}
+                {print}
+                t==1 && /^\s*\)/ {print "  , 'force_arm64ec_dummy.c'"; t=0}
+              ' src/d3d10/meson.build > src/d3d10/meson.build.new || true
+              mv src/d3d10/meson.build.new src/d3d10/meson.build
             fi
+          else
+            echo "note: src/d3d10/meson.build not found; skipping dummy injection"
           fi
 
       - name: Wipe build dir (idempotent & -e safe)
@@ -390,6 +394,18 @@ jobs:
         run: |
           set -euo pipefail
           meson compile -C build.w64 -v
+
+      - name: Quick machine probe (pre-install)
+        working-directory: dxvk/build.w64
+        if: always()
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in src/*/*.dll; do
+            e_lfanew=$(od -An -tu4 -j 60 -N 4 "$f" | tr -d '[:space:]')
+            mach=$(od -An -tx2 -j $((e_lfanew+4)) -N 2 "$f" | tr -d '[:space:]')
+            echo "$(basename "$f"): 0x${mach,,}"
+          done
 
       - name: Install into staging dir
         working-directory: dxvk
