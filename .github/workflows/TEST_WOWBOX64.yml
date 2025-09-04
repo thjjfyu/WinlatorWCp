@@ -1,4 +1,4 @@
-name: _wowbox64 test
+name: Build wowbox64.dll only (one-shot)
 
 on:
   workflow_dispatch:
@@ -43,7 +43,7 @@ jobs:
           BIN="$MINGW_COMPILER_PATH"
           for t in aarch64-w64-mingw32-clang aarch64-w64-mingw32-clang++ aarch64-w64-mingw32-gcc aarch64-w64-mingw32-g++ \
                    aarch64-w64-mingw32-as aarch64-w64-mingw32-ar aarch64-w64-mingw32-ranlib \
-                   aarch64-w64-mingw32-ld aarch64-w64-mingw32-windres aarch64-w64-mingw32-dlltool llvm-rc; do
+                   aarch64-w64-mingw32-ld aarch64-w64-mingw32-windres aarch64-w64-mingw32-dlltool llvm-rc clang clang++; do
             src="$BIN/$t"
             if [ -x "$src" ]; then
               sudo ln -sf "$src" "/usr/bin/$t"
@@ -57,16 +57,12 @@ jobs:
           set -x
           : "${MINGW_COMPILER_PATH:?MINGW_COMPILER_PATH not set}"
           test -d "$MINGW_COMPILER_PATH" || { echo "::error::MINGW_COMPILER_PATH not a directory"; exit 1; }
-          ls -la "$MINGW_COMPILER_PATH" | sed -n '1,50p'
+          ls -la "$MINGW_COMPILER_PATH" | sed -n '1,120p'
           echo "PATH=$PATH"
-          for t in aarch64-w64-mingw32-clang aarch64-w64-mingw32-clang++ aarch64-w64-mingw32-gcc aarch64-w64-mingw32-g++ \
-                   aarch64-w64-mingw32-as aarch64-w64-mingw32-ar aarch64-w64-mingw32-ranlib \
-                   aarch64-w64-mingw32-ld aarch64-w64-mingw32-windres aarch64-w64-mingw32-dlltool llvm-rc; do
-            if ! command -v "$t" >/dev/null 2>&1; then
-              echo "::error::$t not found in PATH"; missing=1
-            fi
-          done
-          if [ "${missing:-0}" = "1" ]; then exit 1; fi
+          # We accept either wrapper-style triplet drivers or plain clang in PATH
+          if ! command -v aarch64-w64-mingw32-clang >/dev/null 2>&1 && ! command -v clang >/dev/null 2>&1; then
+            echo "::error::Neither aarch64-w64-mingw32-clang nor clang found"; exit 1;
+          fi
 
       - name: Checkout upstream Box64 (HEAD)
         uses: actions/checkout@v4
@@ -92,40 +88,48 @@ jobs:
           : "${MINGW_COMPILER_PATH:?MINGW_COMPILER_PATH not set}"
           export PATH="$MINGW_COMPILER_PATH:$PATH"
 
-          # 각 커맨드 탐색은 실패해도 쉘 종료 금지
-          CC_CLANG="$(command -v aarch64-w64-mingw32-clang || true)"
-          CXX_CLANG="$(command -v aarch64-w64-mingw32-clang++ || true)"
-          CC_GCC="$(command -v aarch64-w64-mingw32-gcc || true)"
-          CXX_GCC="$(command -v aarch64-w64-mingw32-g++ || true)"
+          WRAP_CC="$(command -v aarch64-w64-mingw32-clang || true)"
+          WRAP_CXX="$(command -v aarch64-w64-mingw32-clang++ || true)"
+          CLANG_BIN="$(command -v clang || true)"
+          CLANGXX_BIN="$(command -v clang++ || true)"
           AS_BIN="$(command -v aarch64-w64-mingw32-as || true)"
           RC_BIN="$(command -v llvm-rc || command -v aarch64-w64-mingw32-windres || true)"
 
-          # 최종 선택 및 존재 검사
-          CC="${CC_CLANG:-$CC_GCC}"; CXX="${CXX_CLANG:-$CXX_GCC}"
-          [ -n "${CC:-}" ]   || { echo "::error::No aarch64-w64-mingw32 C compiler found"; exit 1; }
-          [ -n "${CXX:-}" ]  || { echo "::error::No aarch64-w64-mingw32 C++ compiler found"; exit 1; }
-          [ -n "${AS_BIN:-}" ] || { echo "::error::aarch64-w64-mingw32-as not found"; exit 1; }
-          [ -n "${RC_BIN:-}" ] || { echo "::error::llvm-rc or windres not found"; exit 1; }
+          TARGET="aarch64-w64-mingw32"
+          if [ -n "$WRAP_CC" ] && [ -n "$WRAP_CXX" ]; then
+            CC="$WRAP_CC"; CXX="$WRAP_CXX";
+            ASM_COMPILER="${WRAP_CC}"
+            CMAKE_EXTRA=""
+          else
+            [ -n "${CLANG_BIN}" ] || { echo "::error::clang not found in PATH"; exit 1; }
+            [ -n "${CLANGXX_BIN}" ] || { echo "::error::clang++ not found in PATH"; exit 1; }
+            CC="$CLANG_BIN"; CXX="$CLANGXX_BIN";
+            ASM_COMPILER="$CLANG_BIN"
+            CMAKE_EXTRA="-DCMAKE_C_COMPILER_TARGET=${TARGET} -DCMAKE_CXX_COMPILER_TARGET=${TARGET} -DCMAKE_ASM_COMPILER_TARGET=${TARGET} -DCMAKE_ASM_FLAGS='-x assembler'"
+          fi
+
+          [ -n "${RC_BIN}" ] || { echo "::error::No resource compiler (llvm-rc or windres) found"; exit 1; }
 
           mkdir -p build
           cd build
 
-          # CMake가 try-run에서 실행 파일 요구하지 않도록
-          export CMAKE_TRY_COMPILE_TARGET_TYPE="STATIC_LIBRARY"
-          # 교차 타겟 명시
           cmake .. \
             -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
             -DCMAKE_C_COMPILER="${CC}" \
             -DCMAKE_CXX_COMPILER="${CXX}" \
-            -DCMAKE_ASM_COMPILER="${AS_BIN}" \
+            -DCMAKE_ASM_COMPILER="${ASM_COMPILER}" \
             -DCMAKE_RC_COMPILER="${RC_BIN}" \
             ${BOX64_PLATFORM_MACRO} \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
+            -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON \
+            ${CMAKE_EXTRA}
 
           which aarch64-w64-mingw32-clang || true
           which aarch64-w64-mingw32-gcc || true
           which aarch64-w64-mingw32-as || true
+          which clang || true
+          which clang++ || true
 
           make -j"$(nproc)"
 
