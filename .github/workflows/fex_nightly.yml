@@ -132,7 +132,7 @@ jobs:
             jq zstd curl wget git cmake ninja-build build-essential binutils xz-utils
 
       - name: Install llvm-mingw toolchain (Linux aarch64 host) and set PATH
-        if: steps.check.outputs.skip != 'true'
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
