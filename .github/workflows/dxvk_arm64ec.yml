@@ -1,4 +1,4 @@
-name: arm64ec
+name: D-arm64ec
 #pinned. no fallback toolchain for now
 
 on:
