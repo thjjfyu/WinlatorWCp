@@ -1,4 +1,4 @@
-name: gplasync
+name: D-gplasync
 
 on:
   workflow_dispatch:
