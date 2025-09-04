@@ -1,4 +1,4 @@
-name: wowbox64 test
+name: _wowbox64 test
 
 on:
   workflow_dispatch:
