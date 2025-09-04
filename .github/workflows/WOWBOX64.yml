@@ -1,4 +1,4 @@
-name: Build wowbox64.dll only (one‑shot)
+name: Build wowbox64.dll only (one-shot)
 
 on:
   workflow_dispatch:
@@ -7,9 +7,13 @@ permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   wowbox64:
-    name: Build upstream wowbox64.dll (latest HEAD) + WCP package
+    name: Build upstream wowbox64.dll (latest) and pack WCP
     runs-on: ubuntu-22.04-arm
     timeout-minutes: 60
     env:
@@ -28,17 +32,30 @@ jobs:
           set -Eeuo pipefail
           url="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64.tar.xz"
           curl -fsSL "$url" -o llvm-mingw.tar.xz
-          tar -C "$GITHUB_WORKSPACE" -xf llvm-mingw.tar.xz
-          echo "MINGW_COMPILER_PATH=$GITHUB_WORKSPACE/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64/bin" >> $GITHUB_ENV
-          echo "$GITHUB_WORKSPACE/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64/bin" >> $GITHUB_PATH
+          tar -xf llvm-mingw.tar.xz
+          echo "$PWD/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64/bin" >> $GITHUB_PATH
+          echo "MINGW_COMPILER_PATH=$PWD/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64/bin" >> $GITHUB_ENV
           echo "BOX64_COMPILER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           echo "BOX64_PLATFORM_MACRO=-DWOW64=1 -DARM_DYNAREC=1" >> $GITHUB_ENV
 
-      - name: Checkout upstream Box64 (default branch HEAD)
+      - name: Expose MinGW (aarch64) tools globally
+        run: |
+          set -Eeuo pipefail
+          BIN="$MINGW_COMPILER_PATH"
+          for t in aarch64-w64-mingw32-clang aarch64-w64-mingw32-clang++ aarch64-w64-mingw32-gcc aarch64-w64-mingw32-g++ \
+                   aarch64-w64-mingw32-as aarch64-w64-mingw32-ar aarch64-w64-mingw32-ranlib \
+                   aarch64-w64-mingw32-ld aarch64-w64-mingw32-windres aarch64-w64-mingw32-dlltool llvm-rc; do
+            src="$BIN/$t"
+            if [ -x "$src" ]; then
+              sudo ln -sf "$src" "/usr/local/bin/$t"
+            fi
+          done
+
+      - name: Checkout upstream Box64 (HEAD)
         uses: actions/checkout@v4
         with:
           repository: ptitSeb/box64
-          fetch-depth: 0
+          fetch-depth: 1
           submodules: recursive
 
       - name: Record commit info
@@ -46,40 +63,57 @@ jobs:
         run: |
           set -Eeuo pipefail
           SHA=$(git rev-parse HEAD)
-          SHORT=${SHA:0:7}
-          echo "sha=$SHA"   >> $GITHUB_OUTPUT
-          echo "short=$SHORT" >> $GITHUB_OUTPUT
-          echo "Upstream HEAD @ $SHORT"
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "short=${SHA:0:7}" >> $GITHUB_OUTPUT
 
       - name: Configure and build (WOW64 external project)
         run: |
           set -Eeuo pipefail
-          export PATH="$PATH:${MINGW_COMPILER_PATH}"
-          mkdir -p build && cd build
+          export PATH="$PATH:$MINGW_COMPILER_PATH"
+          mkdir -p build
+          cd build
           cmake .. \
             -DCMAKE_C_COMPILER=${BOX64_COMPILER} \
             ${BOX64_PLATFORM_MACRO} \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
+
+          # Provide full paths for the external wowbox64 CMake
+          if command -v aarch64-w64-mingw32-clang >/dev/null 2>&1; then
+            export CC=$(command -v aarch64-w64-mingw32-clang)
+          else
+            export CC=$(command -v aarch64-w64-mingw32-gcc)
+          fi
+          export CMAKE_C_COMPILER="$CC"
+          export ASM=$(command -v aarch64-w64-mingw32-as)
+          export CMAKE_ASM_COMPILER="$ASM"
+          if command -v llvm-rc >/dev/null 2>&1; then
+            export RC=$(command -v llvm-rc)
+          else
+            export RC=$(command -v aarch64-w64-mingw32-windres)
+          fi
+          export CMAKE_RC_COMPILER="$RC"
+          export CMAKE_SYSTEM_NAME=Windows
+
+          # Debug prints
+          which aarch64-w64-mingw32-clang aarch64-w64-mingw32-gcc aarch64-w64-mingw32-as || true
           make -j"$(nproc)"
 
-      - name: Find and verify wowbox64.dll
+      - name: Locate and verify wowbox64.dll
         id: out
         run: |
           set -Eeuo pipefail
           DLL=$(find build -type f -iname 'wowbox64.dll' | head -n1 || true)
-          if [[ -z "$DLL" ]]; then
-            echo "::error::wowbox64.dll not produced by build"; exit 1
+          if [ -z "$DLL" ]; then
+            echo "::error::wowbox64.dll not produced"; exit 1
           fi
           file "$DLL"
-          if ! objdump -p "$DLL" | grep -qi 'machine.*ARM64'; then
-            echo "::error::Expected ARM64 PE DLL, signature mismatch"; exit 1
-          fi
+          objdump -p "$DLL" | grep -qi 'machine.*ARM64' || { echo "::error::Expected ARM64 PE"; exit 1; }
           echo "dll=$DLL" >> $GITHUB_OUTPUT
 
       - name: Decide date code (YYMMDD, KST)
         id: date
-        run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
+        run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> $GITHUB_OUTPUT
 
       - name: Package WCP (WowBox64)
         id: wcp
@@ -89,9 +123,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p out
-          # 산출물 이름은 그대로 유지 (rename 금지)
           cp "${{ steps.out.outputs.dll }}" wowbox64.dll
-          # 변수 확장을 위해 unquoted heredoc 사용, syswow64 변수는 이스케이프
           cat <<JSON > profile.json
           {
             "type": "WOWBox64",
