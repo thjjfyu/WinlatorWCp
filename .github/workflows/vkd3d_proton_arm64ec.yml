@@ -145,6 +145,27 @@ jobs:
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
           export PATH="$TOOLCHAIN_DIR/bin:$PATH"
 
+      - name: Sanity check toolchain triplets (no x64 fallback)
+        run: |
+          set -Eeuo pipefail
+          export PATH="$TOOLCHAIN_DIR/bin:$PATH"
+      
+          must=(arm64ec-w64-mingw32-clang i686-w64-mingw32-clang arm64ec-w64-mingw32-ar arm64ec-w64-mingw32-windres)
+          for b in "${must[@]}"; do command -v "$b" >/dev/null || { echo "::error::$b not found"; exit 1; }; done
+      
+          arm64ec_target="$(arm64ec-w64-mingw32-clang -dumpmachine 2>/dev/null || true)"
+          [[ -n "$arm64ec_target" ]] || arm64ec_target="$(arm64ec-w64-mingw32-clang -v 2>&1 | sed -nE 's/^Target:\s*([[:alnum:]_-]+)$/\1/p' | head -n1)"
+          i686_target="$(i686-w64-mingw32-clang -dumpmachine 2>/dev/null || true)"
+          [[ -n "$i686_target" ]] || i686_target="$(i686-w64-mingw32-clang -v 2>&1 | sed -nE 's/^Target:\s*([[:alnum:]_-]+)$/\1/p' | head -n1)"
+      
+          case "$arm64ec_target" in arm64ec-w64-mingw32|arm64ec-w64-windows-gnu) : ;; *) echo "::error::arm64ec CC target mismatch: ${arm64ec_target:-<empty>}"; exit 1 ;; esac
+          case "$i686_target"   in i686-w64-mingw32|i686-w64-windows-gnu)     : ;; *) echo "::error::i686 CC target mismatch: ${i686_target:-<empty>}";     exit 1 ;; esac
+      
+          case ":$PATH:" in *":$TOOLCHAIN_DIR/bin:"*) : ;; *) echo "::error::toolchain bin is not prefixed in PATH"; exit 1 ;; esac
+      
+          echo "TRIP_EC=$arm64ec_target" >> "$GITHUB_ENV"
+          echo "TRIP_X86=$i686_target"   >> "$GITHUB_ENV"
+
       - name: Verify toolchain in PATH
         run: |
           set -Eeuo pipefail
@@ -175,6 +196,11 @@ jobs:
           endian = 'little'
           [properties]
           needs_exe_wrapper = true
+          [built-in options]
+          c_args = ['--target=arm64ec-w64-mingw32']
+          cpp_args = ['--target=arm64ec-w64-mingw32']
+          c_link_args = ['--target=arm64ec-w64-mingw32','-fuse-ld=lld']
+          cpp_link_args = ['--target=arm64ec-w64-mingw32','-fuse-ld=lld']
           EOF
           
           # i686.cross
@@ -194,6 +220,11 @@ jobs:
           endian = 'little'
           [properties]
           needs_exe_wrapper = true
+          [built-in options]
+          c_args = ['--target=i686-w64-mingw32']
+          cpp_args = ['--target=i686-w64-mingw32']
+          c_link_args = ['--target=i686-w64-mingw32','-fuse-ld=lld']
+          cpp_link_args = ['--target=i686-w64-mingw32','-fuse-ld=lld']
           EOF
 
           # Fallbacks if some binaries are missing
@@ -221,6 +252,9 @@ jobs:
           mkdir -p "${PREFIX_EC}" "${PREFIX_X86}"
 
           test -f meson.build || { echo "::error::Not in repository root (meson.build missing)"; exit 1; }
+          printf 'int main(void){return 0;}\n' > /tmp/t.c
+          arm64ec-w64-mingw32-clang -v --target=arm64ec-w64-mingw32 /tmp/t.c -o /tmp/t-ec.exe -fuse-ld=lld
+          i686-w64-mingw32-clang    -v --target=i686-w64-mingw32    /tmp/t.c -o /tmp/t-x86.exe -fuse-ld=lld
 
           meson setup build.ec \
             --cross-file "${GITHUB_WORKSPACE}/arm64ec.cross" \
@@ -237,6 +271,10 @@ jobs:
             --prefix "${PREFIX_X86}"
           ninja -C build.x86 -j"$(nproc)"
           meson install -C build.x86
+          meson introspect build.ec  --machine > /tmp/m_ec.json
+          meson introspect build.x86 --machine > /tmp/m_x86.json
+          jq -e '.host.system=="windows" and .host.cpu=="aarch64"' /tmp/m_ec.json  >/dev/null || { echo "::error::build.ec host must be windows/aarch64"; cat /tmp/m_ec.json; exit 1; }
+          jq -e '.host.system=="windows" and (.host.cpu=="x86" or .host.cpu=="i686")' /tmp/m_x86.json >/dev/null || { echo "::error::build.x86 host must be windows/i686"; cat /tmp/m_x86.json; exit 1; }
 
           mkdir -p "${GITHUB_WORKSPACE}/VKD3D_WCP/system32" "${GITHUB_WORKSPACE}/VKD3D_WCP/syswow64"
 
