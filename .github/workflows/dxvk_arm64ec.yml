@@ -148,18 +148,17 @@ jobs:
           arm64ec_target="$(arm64ec-w64-mingw32-clang -v 2>&1 | sed -nE 's/^Target:\s*([[:alnum:]_-]+)$/\1/p' | head -n1)"
           i686_target="$(i686-w64-mingw32-clang -v 2>&1       | sed -nE 's/^Target:\s*([[:alnum:]_-]+)$/\1/p' | head -n1)"
           case "$arm64ec_target" in
-  arm64ec-w64-mingw32|arm64ec-w64-windows-gnu) : ;;
-  *) echo "::error::arm64ec CC target mismatch: $arm64ec_target"; exit 1 ;;
-
-esac
+            arm64ec-w64-mingw32|arm64ec-w64-windows-gnu) : ;;
+            *) echo "::error::arm64ec CC target mismatch: $arm64ec_target"; exit 1 ;;
+          esac
           case "$i686_target" in
-  i686-w64-mingw32|i686-w64-windows-gnu) : ;;
-  *) echo "::error::i686 CC target mismatch: $i686_target"; exit 1 ;;
-esac
+            i686-w64-mingw32|i686-w64-windows-gnu) : ;;
+            *) echo "::error::i686 CC target mismatch: $i686_target"; exit 1 ;;
+          esac
 
-# expose for cross-file generation
-echo "TRIP_EC=$arm64ec_target" >> "$GITHUB_ENV"
-echo "TRIP_X86=$i686_target" >> "$GITHUB_ENV"
+          # expose for cross-file generation
+          echo "TRIP_EC=$arm64ec_target" >> "$GITHUB_ENV"
+          echo "TRIP_X86=$i686_target" >> "$GITHUB_ENV"
           case ":$PATH:" in
             *":$TOOLCHAIN_DIR/bin:"*) : ;;
             *) echo "::error::toolchain bin is not prefixed in PATH"; exit 1 ;;
