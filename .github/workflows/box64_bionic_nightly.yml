@@ -1,4 +1,4 @@
-name: Build Box64 Bionic Nightly v2
+name: Box64 Bionic Nightly
 
 on:
   workflow_dispatch:        # Manual trigger (works on any branch)
