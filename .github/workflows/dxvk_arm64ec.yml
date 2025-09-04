@@ -147,8 +147,19 @@ jobs:
           done
           arm64ec_target="$(arm64ec-w64-mingw32-clang -v 2>&1 | sed -nE 's/^Target:\s*([[:alnum:]_-]+)$/\1/p' | head -n1)"
           i686_target="$(i686-w64-mingw32-clang -v 2>&1       | sed -nE 's/^Target:\s*([[:alnum:]_-]+)$/\1/p' | head -n1)"
-          [[ "$arm64ec_target" == "arm64ec-w64-mingw32" ]] || { echo "::error::arm64ec CC target mismatch: $arm64ec_target"; exit 1; }
-          [[ "$i686_target"     == "i686-w64-mingw32"    ]] || { echo "::error::i686 CC target mismatch: $i686_target"; exit 1; }
+          case "$arm64ec_target" in
+  arm64ec-w64-mingw32|arm64ec-w64-windows-gnu) : ;;
+  *) echo "::error::arm64ec CC target mismatch: $arm64ec_target"; exit 1 ;;
+
+esac
+          case "$i686_target" in
+  i686-w64-mingw32|i686-w64-windows-gnu) : ;;
+  *) echo "::error::i686 CC target mismatch: $i686_target"; exit 1 ;;
+esac
+
+# expose for cross-file generation
+echo "TRIP_EC=$arm64ec_target" >> "$GITHUB_ENV"
+echo "TRIP_X86=$i686_target" >> "$GITHUB_ENV"
           case ":$PATH:" in
             *":$TOOLCHAIN_DIR/bin:"*) : ;;
             *) echo "::error::toolchain bin is not prefixed in PATH"; exit 1 ;;
@@ -176,10 +187,10 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args = ['-target=arm64ec-w64-mingw32']
-          cpp_args = ['-target=arm64ec-w64-mingw32']
-          c_link_args = ['-target=arm64ec-w64-mingw32']
-          cpp_link_args = ['-target=arm64ec-w64-mingw32']
+          c_args = ['-target', '${TRIP_EC}']
+          cpp_args = ['-target', '${TRIP_EC}']
+          c_link_args = ['-target', '${TRIP_EC}']
+          cpp_link_args = ['-target', '${TRIP_EC}']
           EOF
 
           # 32-bit i686 cross file (WOW64 side)
@@ -199,10 +210,10 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args = ['-target=i686-w64-mingw32']
-          cpp_args = ['-target=i686-w64-mingw32']
-          c_link_args = ['-target=i686-w64-mingw32']
-          cpp_link_args = ['-target=i686-w64-mingw32']
+          c_args = ['-target', '${TRIP_X86}']
+          cpp_args = ['-target', '${TRIP_X86}']
+          c_link_args = ['-target', '${TRIP_X86}']
+          cpp_link_args = ['-target', '${TRIP_X86}']
           EOF
 
       - name: Clone DXVK
