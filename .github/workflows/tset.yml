@@ -468,7 +468,7 @@ jobs:
             else return __builtin_ctzll((unsigned long long)(U)n);
           }
           int main(){
-            std::mt19937_64 rng(0xB17OPS);
+            std::mt19937_64 rng(0xB17B05ULL);
             for(int i=0;i<200000;i++){
               uint64_t x = (rng()<<1) ^ 1ull;
               int r64 = sarek_ctz_or_width(x);
