@@ -301,9 +301,17 @@ jobs:
             if [[ -f "$TEX" ]] && grep -qE '\\bUnmappedSubresource\\b' "$TEX"; then
               cp "$TEX" "${TEX}.bak"
               perl -0777 -pe \
-                's/\bstatic\s+(?:const|constexpr)\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
-                -i "$TEX" && PATCH_A=1 && CHANGED=1
-            fi
+                's/\b(?:(?:inline\s+)?static\s+)((?:(?:const|constexpr)\s+)+)(?:D3D11_MAP|auto)\s+UnmappedSubresource\s*=\s*(?:D3D11_MAP\(\s*-?1u?\s*\)|static_cast\s*<\s*D3D11_MAP\s*>\s*\(\s*-?1\s*\)|\(\s*D3D11_MAP\s*\)\s*-?1)\s*;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/g' \
+                -i "$TEX"
+              
+              # 패치가 실제 적용됐는지 확인(미적용이면 즉시 실패해 러닝타임 세이브)
+              if grep -q 'inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);' "$TEX"; then
+                PATCH_A=1; CHANGED=1
+              else
+                echo "::error::Failed to apply UnmappedSubresource patch to $TEX"
+                sed -n '1,140p' "$TEX" || true
+                exit 1
+              fi
             
             # patches --------------------------------------------------------------- #
             # Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate if toolchain has it
