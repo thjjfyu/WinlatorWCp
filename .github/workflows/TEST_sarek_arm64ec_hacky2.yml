@@ -21,7 +21,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build meson python3 \
+            ninja-build meson python3 perl \
             glslang-tools ca-certificates curl xz-utils \
             pkgconf jq git
 
@@ -327,7 +327,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -f src/d3d10/meson.build ]; then
-            # 2-1) ARM64EC 더미 심볼 소스 생성 — heredoc 대신 printf로 안전하게 생성
+            # 2-1) ARM64EC 더미 심볼 소스 생성 — heredoc 없이 printf로 안전하게 생성
             printf '%s\n' \
               '#ifdef __cplusplus' \
               'extern "C"' \
@@ -335,41 +335,23 @@ jobs:
               '__attribute__((used)) void __sarek_arm64ec_anchor(void) {}' \
               > src/d3d10/force_arm64ec_dummy.c
 
-            # 2) d3d10core shared_library(...) 인자 리스트 닫기 전에 안전하게 소스 추가 (중복 방지)
-            python3 - <<'PY'
-            import re, sys, pathlib
-            p = pathlib.Path("src/d3d10/meson.build")
-            s = p.read_text(encoding="utf-8", errors="ignore")
-            tgt = "shared_library('d3d10core'"
-            i = s.find(tgt)
-            if i < 0:
-                print("note: d3d10core shared_library not found; skipping")
-                sys.exit(0)
-            j = s.find("(", i)
-            depth = 0
-            end = None
-            for idx, ch in enumerate(s[j:], start=j):
-                if ch == "(":
-                    depth += 1
-                elif ch == ")":
-                    depth -= 1
-                    if depth == 0:
-                        end = idx
-                        break
-            if end is None:
-                print("::error:: could not find closing ')' for d3d10core shared_library")
-                sys.exit(1)
-            segment = s[i:end]
-            if "force_arm64ec_dummy.c" in segment:
-                print("d3d10core already includes force_arm64ec_dummy.c (ok)")
-            else:
-                line_start = s.rfind("\n", 0, end) + 1
-                indent = re.match(r"[ \t]*", s[line_start:end]).group(0)
-                insertion = "\n" + indent + "'force_arm64ec_dummy.c',"
-                s = s[:end] + insertion + s[end:]
-                p.write_text(s, encoding="utf-8")
-                print("injected force_arm64ec_dummy.c into d3d10core sources")
-            PY
+            # 2) d3d10core shared_library(...) 인자 리스트 닫기 직전에 항목 주입 (idempotent)
+            if ! grep -q "force_arm64ec_dummy.c" src/d3d10/meson.build; then
+              ins="  'force_arm64ec_dummy.c',"
+              awk -v INS="$ins" '
+                /shared_library[[:space:]]*\(/ && $0 ~ /d3d10core/ { in_t=1 }
+                {
+                  if (in_t && $0 ~ /^[[:space:]]*\)/) {
+                    print INS
+                    in_t=0
+                  }
+                  print
+                }
+              ' src/d3d10/meson.build > src/d3d10/meson.build.new && mv src/d3d10/meson.build.new src/d3d10/meson.build
+              echo "injected force_arm64ec_dummy.c into d3d10core sources"
+            else
+              echo "d3d10core already includes force_arm64ec_dummy.c (ok)"
+            fi
           else
             echo "note: src/d3d10/meson.build not found; skipping dummy injection"
           fi
