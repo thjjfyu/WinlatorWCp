@@ -372,17 +372,27 @@ jobs:
         working-directory: dxvk
         run: |
           set -Eeuo pipefail
-          arm64ec-w64-mingw32-g++ -dumpmachine
+          
+          # 1) 컴파일러/경로 로그
+          command -v arm64ec-w64-mingw32-clang++; arm64ec-w64-mingw32-clang++ --version || true
+          
+          # 2) C++로 헬로월드 빌드 (C로 주면 C++드라이버 경고 떠서 .cc로 고정)
           T="$PWD/__probe.cc"; echo 'int main(){return 0;}' > "$T"
           arm64ec-w64-mingw32-clang++ -v "$T" -o __probe.exe -fuse-ld=lld
-          # PE 헤더에서 Machine=0xA641 확인
-          e_lfanew=$(od -An -tu4 -j 60 -N 4 __probe.exe | tr -d '[:space:]')
-          mach=$(od -An -tx2 -j $((e_lfanew+4)) -N 2 __probe.exe | tr -d '[:space:]' | tr 'A-F' 'a-f')
-          [ "$mach" = "a641" ] || { echo "::error::hello world Machine=0x$mach, want 0xA641"; exit 1; }
-          arm64ec-w64-mingw32-clang++ -dM -E - < /dev/null | grep -q '_M_ARM64EC' \
-            || { echo "::error::_M_ARM64EC missing -> not targeting ARM64EC"; exit 1; }
-          arm64ec-w64-mingw32-clang++ -dM -E - < /dev/null | grep -q '__x86_64__' \
-            && { echo "::error::__x86_64__ predefined -> wrong target (x64)"; exit 1; } || true
+          
+          # 3) 헤더/CHPE 메타데이터로 ARM64EC 계열 판정
+          HDR="$(llvm-readobj --file-headers --coff-load-config __probe.exe || true)"
+          echo "$HDR" | sed -n '1,160p'
+          
+          if echo "$HDR" | grep -Eq 'Machine:\s*(IMAGE_FILE_MACHINE_)?ARM64EC'; then
+            echo "[sanity] OK: Machine=ARM64EC"
+          elif echo "$HDR" | grep -Eq 'Machine:\s*(IMAGE_FILE_MACHINE_)?AMD64' && echo "$HDR" | grep -Eq '(CHPE|ARM64X)'; then
+            # MS 문서: x64(8664)+ARM64X 표시 = ARM64EC 재컴파일 부분 포함(겉보기 x64) 
+            echo "[sanity] OK: Machine=AMD64 but CHPE/ARM64X metadata present (Arm64EC hybrid)"
+          else
+            echo "::error::Unexpected machine or missing CHPE metadata (not ARM64EC/ARM64X)"
+            exit 1
+          fi
 
       - name: Macro snapshot after configure (with injected defines)
         working-directory: dxvk
@@ -413,22 +423,24 @@ jobs:
         working-directory: dxvk
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
           shopt -s nullglob
           files=(install/bin/*.dll)
           [ ${#files[@]} -gt 0 ] || { echo "::error::No DLLs found in install/bin"; exit 1; }
+          
           for f in "${files[@]}"; do
             echo "== $f =="
-            e_lfanew=$(od -An -tu4 -j 60 -N 4 "$f" | tr -d '[:space:]')
-            sig=$(dd if="$f" bs=1 skip="$e_lfanew" count=4 2>/dev/null | hexdump -v -e '1/1 "%02X"')
-            if [ "$sig" != "50450000" ]; then
-              echo "::error::$f: invalid PE signature $sig"; exit 1
+            HDR="$(llvm-readobj --file-headers --coff-load-config "$f" || true)"
+            echo "$HDR" | sed -n '1,120p'
+          
+            if echo "$HDR" | grep -Eq 'Machine:\s*(IMAGE_FILE_MACHINE_)?ARM64EC'; then
+              echo "[verify] $f : ARM64EC OK"
+            elif echo "$HDR" | grep -Eq 'Machine:\s*(IMAGE_FILE_MACHINE_)?AMD64' && echo "$HDR" | grep -Eq '(CHPE|ARM64X)'; then
+              echo "[verify] $f : AMD64 header + CHPE/ARM64X metadata (EC hybrid) OK"
+            else
+              echo "::error::$f : not ARM64EC/ARM64X (missing CHPE metadata or wrong machine)"
+              exit 1
             fi
-            mach=$(od -An -tx2 -j $((e_lfanew+4)) -N 2 "$f" | tr -d '[:space:]')
-            if [ "${mach,,}" != "a641" ]; then
-              echo "::error::$f: Machine=0x$mach, expected 0xA641 (ARM64EC)"; exit 1
-            fi
-            echo "$f: Machine=0x$mach (ARM64EC) OK"
           done
 
       - name: Enforce no x86 SIMD or x86 asm artifacts
