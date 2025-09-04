@@ -1,4 +1,4 @@
-name: Build VKD3D
+name: VKD3D
 
 on:
   workflow_dispatch:
