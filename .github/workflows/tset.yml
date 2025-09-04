@@ -315,7 +315,7 @@ jobs:
           meson compile -C build.w64 -v
           meson install -C build.w64
 
-      - name: Verify artifacts: machine type + no x86 SIMD residue
+      - name: Verify artifacts machine type + no x86 SIMD residue
         working-directory: dxvk
         run: |
           set -euo pipefail
