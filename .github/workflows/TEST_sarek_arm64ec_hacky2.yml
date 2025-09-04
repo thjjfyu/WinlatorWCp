@@ -41,8 +41,10 @@ jobs:
           mkdir -p "$HOME/toolchain"
           curl -L "${{ env.TOOLCHAIN_URL }}" -o /tmp/llvm-mingw.tar.xz
           tar -xJf /tmp/llvm-mingw.tar.xz -C "$HOME/toolchain" --strip-components=1
+          # Prepend toolchain to PATH for precedence
           echo "PATH=$HOME/toolchain/bin:$PATH" >> "$GITHUB_ENV"
           echo "$HOME/toolchain/bin" >> "$GITHUB_PATH"
+          # Export triplet tools to avoid host leakage
           {
             echo "CC=arm64ec-w64-mingw32-gcc";
             echo "CXX=arm64ec-w64-mingw32-g++";
@@ -72,25 +74,22 @@ jobs:
           ar = 'arm64ec-w64-mingw32-ar'
           c = 'arm64ec-w64-mingw32-gcc'
           cpp = 'arm64ec-w64-mingw32-g++'
-          # 링크는 컴파일러 드라이버를 통해 수행
-          c_ld = 'arm64ec-w64-mingw32-gcc'
-          cpp_ld = 'arm64ec-w64-mingw32-g++'
-          # 굳이 넣어도 되지만, b_linker가 우선이라 이 줄은 있어도/없어도 됨
-          ld = 'arm64ec-w64-mingw32-ld'
           windres = 'arm64ec-w64-mingw32-windres'
           widl = 'arm64ec-w64-mingw32-widl'
           strip = 'llvm-strip'
-          
+
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
-          
+
           [built-in options]
           c_args  = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
           cpp_args= ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off']
-          b_linker = 'lld'   # 여기가 핵심. Meson이 -fuse-ld=lld 를 쓰게 고정
+          b_linker = 'lld'
+          EOF
+          echo "== arm64ec.meson ==" && nl -ba arm64ec.meson
 
       # --- SAREK-SPECIFIC PATCH (ARM64EC SSE shim v2 + strict gates) ---
       - name: Patch SAREK headers to avoid x86 intrinsics on ARM64EC (shim v2 + strict)
@@ -335,28 +334,6 @@ jobs:
             fi
           fi
 
-      - name: Force d3d10core to cross-build (ARM64EC)
-        working-directory: dxvk
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import pathlib, re
-          patched = 0
-          for p in pathlib.Path('.').rglob('meson.build'):
-              s = p.read_text(encoding='utf-8', errors='ignore')
-              if 'd3d10core' not in s: continue
-              def repl(m):
-                  args = m.group(1)
-                  args = re.sub(r'native\\s*:\\s*true', 'native: false', args)
-                  if 'native:' not in args:
-                      args = (args + ', native: false') if args.strip() else 'native: false'
-                  return "library('d3d10core'," + args + ")"
-              ns, n = re.subn(r"library\\(\\s*'d3d10core'\\s*,(.*?)\\)", repl, s, flags=re.DOTALL)
-              if n:
-                  p.write_text(ns, encoding='utf-8'); patched += n
-          print(f'patched d3d10core targets: {patched}')
-          PY
-
       - name: Wipe build dir (idempotent & -e safe)
         working-directory: dxvk
         shell: bash
@@ -379,15 +356,6 @@ jobs:
         run: |
           set -euo pipefail
           test -f meson.build || { echo "::error::meson.build not found in $PWD"; ls -la; exit 1; }
-
-      - name: Sanitize link env
-        run: |
-          set -euo pipefail
-          unset LD || true
-          unset LDFLAGS || true
-          unset CC_LD || true
-          unset CXX_LD || true
-          command -v ld.lld && ld.lld --version || true
 
       - name: Configure (Meson)
         working-directory: dxvk
@@ -418,6 +386,7 @@ jobs:
           set -euo pipefail
           meson install -C build.w64
 
+      # === Trust gates (block artifacts if not meeting criteria) ===
       - name: Verify ARM64EC machine type (strict)
         working-directory: dxvk
         shell: bash
@@ -430,9 +399,13 @@ jobs:
             echo "== $f =="
             e_lfanew=$(od -An -tu4 -j 60 -N 4 "$f" | tr -d '[:space:]')
             sig=$(dd if="$f" bs=1 skip="$e_lfanew" count=4 2>/dev/null | hexdump -v -e '1/1 "%02X"')
-            [ "$sig" = "50450000" ] || { echo "::error::$f: invalid PE signature $sig"; exit 1; }
+            if [ "$sig" != "50450000" ]; then
+              echo "::error::$f: invalid PE signature $sig"; exit 1
+            fi
             mach=$(od -An -tx2 -j $((e_lfanew+4)) -N 2 "$f" | tr -d '[:space:]')
-            [ "${mach,,}" = "a641" ] || { echo "::error::$f: Machine=0x$mach, expected 0xA641 (ARM64EC)"; exit 1; }
+            if [ "${mach,,}" != "a641" ]; then
+              echo "::error::$f: Machine=0x$mach, expected 0xA641 (ARM64EC)"; exit 1
+            fi
             echo "$f: Machine=0x$mach (ARM64EC) OK"
           done
 
