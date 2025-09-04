@@ -96,14 +96,24 @@ jobs:
           endian = 'little'
       
           [built-in options]
-          # SSE/AVX 매크로는 정의하지 않는다!! + 의미 보존 플래그 + 링크 타겟 머신 강제
-          c_args  = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-D_WIN32_WINNT=0x0A00','-fno-fast-math','-ffp-contract=off']
-          cpp_args= ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-D_WIN32_WINNT=0x0A00','-fno-fast-math','-ffp-contract=off']
+          # 의미 보존 플래그 + 링크 타겟 머신 강제 + D3D9 호환 alias
+          c_args  = [
+            '-DSAREK_ARM64EC=1',
+            '-D__CRT__NO_INLINE=1',
+            '-fno-fast-math','-ffp-contract=off',
+            '-DD3DDEVINFO_RESOURCEMANAGER=D3DDEVINFO_D3DRESOURCEMANAGER',
+            '-DD3DDEVINFO_VERTEXSTATS=D3DDEVINFO_D3DVERTEXSTATS'
+          ]
+          cpp_args = [
+            '-DSAREK_ARM64EC=1',
+            '-D__CRT__NO_INLINE=1',
+            '-fno-fast-math','-ffp-contract=off',
+            '-DD3DDEVINFO_RESOURCEMANAGER=D3DDEVINFO_D3DRESOURCEMANAGER',
+            '-DD3DDEVINFO_VERTEXSTATS=D3DDEVINFO_D3DVERTEXSTATS'
+          ]
           c_link_args   = ['-Wl,/machine:arm64ec']
           cpp_link_args = ['-Wl,/machine:arm64ec']
           cpp_std = 'c++17'
-          EOF
-          echo "== arm64ec.meson ==" && nl -ba arm64ec.meson
 
       # --- SAREK-SPECIFIC PATCH (ARM64EC SSE shim v2 + strict gates) ---
       - name: Patch SAREK headers to avoid x86 intrinsics on ARM64EC (shim v2 + strict)
