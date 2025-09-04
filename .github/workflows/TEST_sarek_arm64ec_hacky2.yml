@@ -327,7 +327,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -f src/d3d10/meson.build ]; then
-            # ARM64EC 앵커 심볼(컴파일 강제) — heredoc 대신 printf 유지
+            # ARM64EC 앵커 심볼(컴파일 강제)
             printf '%s\n' \
               '#ifdef __cplusplus' \
               'extern "C"' \
@@ -338,17 +338,17 @@ jobs:
             if grep -q "force_arm64ec_dummy.c" src/d3d10/meson.build; then
               echo "d3d10core already includes force_arm64ec_dummy.c (ok)"
             else
-              # 1차: 기존 sources: [...] kwarg가 있으면 그 배열 안에 항목 추가
+              # 케이스 1: 기존 sources: [...]가 있으면 닫는 ']' 직전에 추가
               awk '
                 /shared_library[[:space:]]*\(/ && $0 ~ /d3d10core/ { in_t=1 }
                 in_t && /sources[[:space:]]*:/ { in_s=1 }
                 {
                   if (in_t && in_s && /\]/) {
-                    print "    '\''force_arm64ec_dummy.c''',"    # 배열 닫기 직전에 한 줄 삽입
+                    print "    \"force_arm64ec_dummy.c\","  
                     in_s=0
                   }
                   print
-                  if (in_t && /^\s*\)/) in_t=0
+                  if (in_t && /^[[:space:]]*\)/) in_t=0
                 }
               ' src/d3d10/meson.build > src/d3d10/meson.build.new || true
       
@@ -356,12 +356,12 @@ jobs:
                 mv src/d3d10/meson.build.new src/d3d10/meson.build
                 echo "appended to existing sources array"
               else
-                # 2차: sources kwarg가 없으면, 키워드 인자 형태로 새로 추가
+                # 케이스 2: sources kwarg가 없으면 닫는 ')' 직전에 신설
                 awk '
                   /shared_library[[:space:]]*\(/ && $0 ~ /d3d10core/ { in_t=1 }
                   {
                     if (in_t && /^\s*\)/) {
-                      print "  sources : ['\''force_arm64ec_dummy.c'''],"
+                      print "  sources : [ \"force_arm64ec_dummy.c\" ],"
                       in_t=0
                     }
                     print
