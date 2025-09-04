@@ -1,4 +1,4 @@
-name: Build DXVK gplasync rev4
+name: gplasync
 
 on:
   workflow_dispatch:
