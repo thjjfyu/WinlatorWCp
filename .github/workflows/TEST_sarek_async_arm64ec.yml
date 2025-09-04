@@ -1,4 +1,4 @@
-name: sarek_arm64ec_hardcore_verify
+name: sarek async arm64ec test
 
 on:
   workflow_dispatch:
