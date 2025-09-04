@@ -1,4 +1,4 @@
-name: VKD3D arm64ec
+name: VKD3D-arm64ec
 
 on:
   workflow_dispatch:
