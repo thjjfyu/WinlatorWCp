@@ -1,4 +1,4 @@
-name: Build DXVK arm64ec rev4
+name: arm64ec
 #pinned. no fallback toolchain for now
 
 on:
