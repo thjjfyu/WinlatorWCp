@@ -1,4 +1,4 @@
-name: Build wowbox64.dll only (one-shot)
+name: wowbox64 test
 
 on:
   workflow_dispatch:
