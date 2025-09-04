@@ -4,10 +4,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-\ nconcurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  contents: write
+  pull-requests: write
 
 jobs:
   wowbox64:
