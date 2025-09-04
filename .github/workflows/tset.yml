@@ -206,15 +206,42 @@ jobs:
               "$f"
           done
 
-          # 5) Patch x86 arch guards to exclude EC (macro-wise, no backrefs)
-          mapfile -t COND_FILES < <(xargs -a __filelist.txt grep -RIl -E 'defined\((__x86_64__|_M_X64|_M_AMD64|__i386__|_M_IX86)\)' 2>/dev/null)
-          for f in "${COND_FILES[@]:-}"; do
-            for m in '__x86_64__' '_M_X64' '_M_AMD64' '__i386__' '_M_IX86'; do
-              sed -i -E \
-                "/defined\(${m}\)/{ /SAREK_ARM64EC|__arm64ec__|_M_ARM64EC/! s@defined\(${m}\)@defined(${m}) && !defined(SAREK_ARM64EC) && !defined(__arm64ec__) && !defined(_M_ARM64EC)@g }" \
-                "$f"
-            done
-          done
+          # 5) Patch x86 arch guards to exclude EC (wrap entire expr once; no duplicated 'defined')
+          python3 - <<'PY'
+          import pathlib, re
+          targets = [pathlib.Path(l.strip()) for l in open('__filelist.txt') if l.strip()]
+          
+          x86 = ('__x86_64__','_M_X64','_M_AMD64','__i386__','_M_IX86')
+          ec  = ('SAREK_ARM64EC','__arm64ec__','_M_ARM64EC')
+          
+          changed = 0
+          pat = re.compile(r'^(\s*#\s*(?:if|elif)\s+)(.*)$', re.M)
+          
+          for p in targets:
+              try:
+                  s = p.read_text(encoding='utf-8', errors='ignore')
+              except Exception:
+                  continue
+          
+              def repl(m):
+                  head, expr = m.group(1), m.group(2)
+                  if any(k in expr for k in x86) and not any(k in expr for k in ec):
+                      return f"{head}({expr}) && !defined(SAREK_ARM64EC) && !defined(__arm64ec__) && !defined(_M_ARM64EC)"
+                  return m.group(0)
+          
+              ns, n = pat.subn(repl, s)
+              if n:
+                  p.write_text(ns, encoding='utf-8')
+                  changed += n
+          
+          print(f"guard-patched {changed} place(s)")
+          PY
+          
+          # 5.1) Preflight: detect malformed #if with adjacent defined(...) tokens
+          if grep -RInE '^[[:space:]]*#(if|elif)[[:space:]].*defined\([^)]*\)[[:space:]]+defined\(' src include; then
+            echo '::error:: malformed preprocessor condition (missing operator between defined(...))'
+            exit 1
+          fi
 
           # 6) Safer bitops helper and replacement (bsf/cmovz)
           cat > include/sarek_bitops_ec.h <<'HDR'
@@ -249,7 +276,7 @@ jobs:
                 '#if defined(SAREK_ARM64EC) || defined(__arm64ec__) || defined(_M_ARM64EC)\n'
                 '      /* ARM64EC: replace x86 asm (bsf/cmovz) with width-preserving builtin */\n'
                 '      res = sarek_ctz_or_width(n);\n'
-                '      tmp = (n==0) ? 1 : 0;\n'
+                '      tmp = (n==0) ? 1 : 0; (void)tmp;\n'
                 '#else\n' + block + '\n#endif\n'
               )
             return block
