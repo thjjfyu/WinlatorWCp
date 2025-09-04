@@ -1,4 +1,4 @@
-name: Sarek async
+name: D-Sarek async
 
 on:
   workflow_dispatch:              # Manual trigger (any branch)
