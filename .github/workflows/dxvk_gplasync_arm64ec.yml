@@ -454,7 +454,7 @@ jobs:
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
 
-            DESC="DXVK gplasync arm64ec build by CI"
+            DESC="DXVK gplasync arm64ec build by Ari"
             jq -n \
               --arg VN "gplasync-arm64ec-${base}" \
               --argjson VC "${rev}" \
