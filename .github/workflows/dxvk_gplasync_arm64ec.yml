@@ -1,4 +1,4 @@
-name: gplasync arm64ec
+name: D-gplasync-arm64ec
 
 on:
   workflow_dispatch:
