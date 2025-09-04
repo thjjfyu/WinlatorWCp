@@ -63,7 +63,7 @@ Try order: Sarek → 2.3.1-x ~ 2.4.1-x → (Glitches = Up, freezes = Down or use
 </details>
 <br>
 
-## 📦 Runtime Packages
+## 📦 Runtime Packages (official)
 📌 If older VC++ is needed, try an AIO package. <br>
 📌 May require the official .NET Framework instead of Mono.
 | Package | Description |
