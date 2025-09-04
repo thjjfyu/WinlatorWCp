@@ -385,6 +385,16 @@ jobs:
           set -euo pipefail
           test -f meson.build || { echo "::error::meson.build not found in $PWD"; ls -la; exit 1; }
 
+      - name: Sanitize link env
+        run: |
+          set -euo pipefail
+          # 혹시 남아있을지 모르는 잘못된 설정 제거
+          unset LD || true
+          unset LDFLAGS || true
+          unset CC_LD || true
+          unset CXX_LD || true
+          command -v ld.lld && ld.lld --version || true
+
       - name: Configure (Meson)
         working-directory: dxvk
         run: |
@@ -426,13 +436,9 @@ jobs:
             echo "== $f =="
             e_lfanew=$(od -An -tu4 -j 60 -N 4 "$f" | tr -d '[:space:]')
             sig=$(dd if="$f" bs=1 skip="$e_lfanew" count=4 2>/dev/null | hexdump -v -e '1/1 "%02X"')
-            if [ "$sig" != "50450000" ]; then
-              echo "::error::$f: invalid PE signature $sig"; exit 1
-            fi
+            [ "$sig" = "50450000" ] || { echo "::error::$f: invalid PE signature $sig"; exit 1; }
             mach=$(od -An -tx2 -j $((e_lfanew+4)) -N 2 "$f" | tr -d '[:space:]')
-            if [ "${mach,,}" != "a641" ]; then
-              echo "::error::$f: Machine=0x$mach, expected 0xA641 (ARM64EC)"; exit 1
-            fi
+            [ "${mach,,}" = "a641" ] || { echo "::error::$f: Machine=0x$mach, expected 0xA641 (ARM64EC)"; exit 1; }
             echo "$f: Machine=0x$mach (ARM64EC) OK"
           done
 
