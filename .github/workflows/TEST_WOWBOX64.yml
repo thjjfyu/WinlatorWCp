@@ -43,7 +43,8 @@ jobs:
           BIN="$MINGW_COMPILER_PATH"
           for t in aarch64-w64-mingw32-clang aarch64-w64-mingw32-clang++ aarch64-w64-mingw32-gcc aarch64-w64-mingw32-g++ \
                    aarch64-w64-mingw32-as aarch64-w64-mingw32-ar aarch64-w64-mingw32-ranlib \
-                   aarch64-w64-mingw32-ld aarch64-w64-mingw32-windres aarch64-w64-mingw32-dlltool llvm-rc clang clang++; do
+                   aarch64-w64-mingw32-ld aarch64-w64-mingw32-windres aarch64-w64-mingw32-dlltool \
+                   llvm-rc llvm-ar llvm-ranlib clang clang++; do
             src="$BIN/$t"
             if [ -x "$src" ]; then
               sudo ln -sf "$src" "/usr/bin/$t"
@@ -56,12 +57,28 @@ jobs:
           set -Eeuo pipefail
           set -x
           : "${MINGW_COMPILER_PATH:?MINGW_COMPILER_PATH not set}"
+          export PATH="$MINGW_COMPILER_PATH:$PATH"
           test -d "$MINGW_COMPILER_PATH" || { echo "::error::MINGW_COMPILER_PATH not a directory"; exit 1; }
-          ls -la "$MINGW_COMPILER_PATH" | sed -n '1,120p'
-          echo "PATH=$PATH"
-          # We accept either wrapper-style triplet drivers or plain clang in PATH
-          if ! command -v aarch64-w64-mingw32-clang >/dev/null 2>&1 && ! command -v clang >/dev/null 2>&1; then
-            echo "::error::Neither aarch64-w64-mingw32-clang nor clang found"; exit 1;
+          ls -la "$MINGW_COMPILER_PATH" | sed -n '1,200p'
+
+          # Resolve absolute binaries without relying on PATH lookups
+          BIN="$MINGW_COMPILER_PATH"
+          CLANG_BIN=""; CLANGXX_BIN=""; WRAP_CC=""; WRAP_CXX=""; AS_BIN=""; RC_BIN=""; AR_BIN=""; RANLIB_BIN=""
+
+          [ -x "$BIN/aarch64-w64-mingw32-clang" ]  && WRAP_CC="$BIN/aarch64-w64-mingw32-clang"
+          [ -x "$BIN/aarch64-w64-mingw32-clang++" ] && WRAP_CXX="$BIN/aarch64-w64-mingw32-clang++"
+          [ -x "$BIN/aarch64-w64-mingw32-as" ]      && AS_BIN="$BIN/aarch64-w64-mingw32-as"
+          [ -x "$BIN/clang" ]                        && CLANG_BIN="$BIN/clang"
+          [ -x "$BIN/clang++" ]                      && CLANGXX_BIN="$BIN/clang++"
+          comp=$(compgen -G "$BIN/clang-[0-9]*" | head -n1 || true); [ -n "$comp" ] && CLANG_BIN="${CLANG_BIN:-$comp}"
+          compxx=$(compgen -G "$BIN/clang\+\+-[0-9]*" | head -n1 || true); [ -n "$compxx" ] && CLANGXX_BIN="${CLANGXX_BIN:-$compxx}"
+
+          [ -x "$BIN/llvm-rc" ]      && RC_BIN="$BIN/llvm-rc" || [ -x "$BIN/aarch64-w64-mingw32-windres" ] && RC_BIN="$BIN/aarch64-w64-mingw32-windres"
+          [ -x "$BIN/llvm-ar" ]      && AR_BIN="$BIN/llvm-ar"
+          [ -x "$BIN/llvm-ranlib" ]  && RANLIB_BIN="$BIN/llvm-ranlib"
+
+          if [ -z "$WRAP_CC$CLANG_BIN" ]; then
+            echo "::error::No clang driver found in $BIN"; exit 1;
           fi
 
       - name: Checkout upstream Box64 (HEAD)
@@ -87,28 +104,31 @@ jobs:
 
           : "${MINGW_COMPILER_PATH:?MINGW_COMPILER_PATH not set}"
           export PATH="$MINGW_COMPILER_PATH:$PATH"
+          BIN="$MINGW_COMPILER_PATH"
 
-          WRAP_CC="$(command -v aarch64-w64-mingw32-clang || true)"
-          WRAP_CXX="$(command -v aarch64-w64-mingw32-clang++ || true)"
-          CLANG_BIN="$(command -v clang || true)"
-          CLANGXX_BIN="$(command -v clang++ || true)"
-          AS_BIN="$(command -v aarch64-w64-mingw32-as || true)"
-          RC_BIN="$(command -v llvm-rc || command -v aarch64-w64-mingw32-windres || true)"
-
-          TARGET="aarch64-w64-mingw32"
-          if [ -n "$WRAP_CC" ] && [ -n "$WRAP_CXX" ]; then
-            CC="$WRAP_CC"; CXX="$WRAP_CXX";
-            ASM_COMPILER="${WRAP_CC}"
-            CMAKE_EXTRA=""
+          # Prefer wrappers; else use bundled clang with explicit target
+          if [ -x "$BIN/aarch64-w64-mingw32-clang" ] && [ -x "$BIN/aarch64-w64-mingw32-clang++" ]; then
+            CC="$BIN/aarch64-w64-mingw32-clang"; CXX="$BIN/aarch64-w64-mingw32-clang++"; ASM_COMP="$BIN/aarch64-w64-mingw32-clang";
+            CC_TARGET=""; CXX_TARGET=""; ASM_TARGET=""; ASM_FLAGS=""
           else
-            [ -n "${CLANG_BIN}" ] || { echo "::error::clang not found in PATH"; exit 1; }
-            [ -n "${CLANGXX_BIN}" ] || { echo "::error::clang++ not found in PATH"; exit 1; }
-            CC="$CLANG_BIN"; CXX="$CLANGXX_BIN";
-            ASM_COMPILER="$CLANG_BIN"
-            CMAKE_EXTRA="-DCMAKE_C_COMPILER_TARGET=${TARGET} -DCMAKE_CXX_COMPILER_TARGET=${TARGET} -DCMAKE_ASM_COMPILER_TARGET=${TARGET} -DCMAKE_ASM_FLAGS='-x assembler'"
+            # Find bundled clang/clang++ (possibly version-suffixed)
+            if [ -x "$BIN/clang" ]; then CLANG_BIN="$BIN/clang"; else CLANG_BIN=$(compgen -G "$BIN/clang-[0-9]*" | head -n1 || true); fi
+            if [ -x "$BIN/clang++" ]; then CLANGXX_BIN="$BIN/clang++"; else CLANGXX_BIN=$(compgen -G "$BIN/clang++-[0-9]*" | head -n1 || true); fi
+            [ -n "${CLANG_BIN:-}" ] || { echo "::error::clang not present in $BIN"; exit 1; }
+            [ -n "${CLANGXX_BIN:-}" ] || { echo "::error::clang++ not present in $BIN"; exit 1; }
+            CC="$CLANG_BIN"; CXX="$CLANGXX_BIN"; ASM_COMP="$CLANG_BIN"
+            CC_TARGET="-DCMAKE_C_COMPILER_TARGET=aarch64-w64-mingw32"
+            CXX_TARGET="-DCMAKE_CXX_COMPILER_TARGET=aarch64-w64-mingw32"
+            ASM_TARGET="-DCMAKE_ASM_COMPILER_TARGET=aarch64-w64-mingw32"
+            ASM_FLAGS="-DCMAKE_ASM_FLAGS=-x\ assembler\ --target=aarch64-w64-mingw32"
           fi
 
-          [ -n "${RC_BIN}" ] || { echo "::error::No resource compiler (llvm-rc or windres) found"; exit 1; }
+          # Tools
+          if [ -x "$BIN/llvm-rc" ]; then RC_BIN="$BIN/llvm-rc"; else RC_BIN="${BIN}/aarch64-w64-mingw32-windres"; fi
+          [ -x "$RC_BIN" ] || { echo "::error::No resource compiler (llvm-rc or windres) in $BIN"; exit 1; }
+          AR_OPT=""; RANLIB_OPT=""
+          [ -x "$BIN/llvm-ar" ] && AR_OPT="-DCMAKE_AR=$BIN/llvm-ar"
+          [ -x "$BIN/llvm-ranlib" ] && RANLIB_OPT="-DCMAKE_RANLIB=$BIN/llvm-ranlib"
 
           mkdir -p build
           cd build
@@ -118,18 +138,17 @@ jobs:
             -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
             -DCMAKE_C_COMPILER="${CC}" \
             -DCMAKE_CXX_COMPILER="${CXX}" \
-            -DCMAKE_ASM_COMPILER="${ASM_COMPILER}" \
+            -DCMAKE_ASM_COMPILER="${ASM_COMP}" \
             -DCMAKE_RC_COMPILER="${RC_BIN}" \
+            ${CC_TARGET} ${CXX_TARGET} ${ASM_TARGET} ${ASM_FLAGS} \
             ${BOX64_PLATFORM_MACRO} \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON \
-            ${CMAKE_EXTRA}
+            ${AR_OPT} ${RANLIB_OPT}
 
-          which aarch64-w64-mingw32-clang || true
-          which aarch64-w64-mingw32-gcc || true
-          which aarch64-w64-mingw32-as || true
-          which clang || true
-          which clang++ || true
+          # Diagnostics
+          "$CC" --version || true
+          "$CXX" --version || true
 
           make -j"$(nproc)"
 
