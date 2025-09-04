@@ -88,32 +88,22 @@ jobs:
           windres = 'arm64ec-w64-mingw32-windres'
           widl = 'arm64ec-w64-mingw32-widl'
           strip = 'llvm-strip'
-      
+          
           [host_machine]
           system = 'windows'
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
-      
+          
           [built-in options]
-          # 의미 보존 플래그 + 링크 타겟 머신 강제 + D3D9 호환 alias
-          c_args  = [
-            '-DSAREK_ARM64EC=1',
-            '-D__CRT__NO_INLINE=1',
-            '-fno-fast-math','-ffp-contract=off',
-            '-DD3DDEVINFO_RESOURCEMANAGER=D3DDEVINFO_D3DRESOURCEMANAGER',
-            '-DD3DDEVINFO_VERTEXSTATS=D3DDEVINFO_D3DVERTEXSTATS'
-          ]
-          cpp_args = [
-            '-DSAREK_ARM64EC=1',
-            '-D__CRT__NO_INLINE=1',
-            '-fno-fast-math','-ffp-contract=off',
-            '-DD3DDEVINFO_RESOURCEMANAGER=D3DDEVINFO_D3DRESOURCEMANAGER',
-            '-DD3DDEVINFO_VERTEXSTATS=D3DDEVINFO_D3DVERTEXSTATS'
-          ]
-          c_link_args   = ['-Wl,/machine:arm64ec']
+          # 의미 보존 플래그 + 타겟 머신을 링크 단계에 강제
+          c_args = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off','-DD3DDEVINFO_RESOURCEMANAGER=D3DDEVINFO_D3DRESOURCEMANAGER','-DD3DDEVINFO_VERTEXSTATS=D3DDEVINFO_D3DVERTEXSTATS']
+          cpp_args = ['-DSAREK_ARM64EC=1','-D__CRT__NO_INLINE=1','-fno-fast-math','-ffp-contract=off','-DD3DDEVINFO_RESOURCEMANAGER=D3DDEVINFO_D3DRESOURCEMANAGER','-DD3DDEVINFO_VERTEXSTATS=D3DDEVINFO_D3DVERTEXSTATS']
+          c_link_args = ['-Wl,/machine:arm64ec']
           cpp_link_args = ['-Wl,/machine:arm64ec']
           cpp_std = 'c++17'
+          EOF
+          echo "== arm64ec.meson ==" && nl -ba arm64ec.meson
 
       # --- SAREK-SPECIFIC PATCH (ARM64EC SSE shim v2 + strict gates) ---
       - name: Patch SAREK headers to avoid x86 intrinsics on ARM64EC (shim v2 + strict)
@@ -337,21 +327,21 @@ jobs:
         run: |
           set -euo pipefail
           if [ -f src/d3d10/meson.build ]; then
-            # 1) ARM64EC 더미 심볼 소스 생성 (heredoc 대신 printf로 안전하게)
-            printf '%s\n' \
-              '#ifdef __cplusplus' \
-              'extern "C"' \
-              '#endif' \
-              '__attribute__((used)) void __sarek_arm64ec_anchor(void) {}' \
-              > src/d3d10/force_arm64ec_dummy.c
+            # 2-1) ARM64EC 더미 심볼 소스 생성
+            cat > src/d3d10/force_arm64ec_dummy.c <<'C'
+            #ifdef __cplusplus
+            extern "C"
+            #endif
+            __attribute__((used)) void __sarek_arm64ec_anchor(void) {}
+            C
       
             # 2) d3d10core 타겟 소스 목록에 더미 추가(중복 방지)
             if ! grep -q "force_arm64ec_dummy.c" src/d3d10/meson.build; then
               awk '
                 BEGIN{t=0}
-                /shared_library\\s*\\(\\s*'\''d3d10core'\''/ {t=1}
+                /shared_library\s*\(\s*'\''d3d10core'\''/ {t=1}
                 {print}
-                t==1 && /^\\s*\\)/ {print "  , '\''force_arm64ec_dummy.c'\''"; t=0}
+                t==1 && /^\s*\)/ {print " , 'force_arm64ec_dummy.c'"; t=0}
               ' src/d3d10/meson.build > src/d3d10/meson.build.new || true
               mv src/d3d10/meson.build.new src/d3d10/meson.build
             fi
