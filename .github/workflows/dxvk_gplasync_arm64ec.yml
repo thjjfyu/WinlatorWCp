@@ -239,6 +239,24 @@ jobs:
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
           export PATH="$TOOLCHAIN_DIR/bin:$PATH"   # ensure toolchain comes first
 
+      - name: Sanity check toolchain triplets (no x64 fallback)
+        run: |
+          set -Eeuo pipefail
+          export PATH="$TOOLCHAIN_DIR/bin:$PATH"
+      
+          must=(arm64ec-w64-mingw32-clang i686-w64-mingw32-clang arm64ec-w64-mingw32-ar arm64ec-w64-mingw32-windres)
+          for b in "${must[@]}"; do command -v "$b" >/dev/null || { echo "::error::$b not found"; exit 1; }; done
+      
+          ec="$(arm64ec-w64-mingw32-clang -dumpmachine 2>/dev/null || true)"
+          [[ -n "$ec" ]] || ec="$(arm64ec-w64-mingw32-clang -v 2>&1 | sed -nE 's/^Target:\s*([[:alnum:]_.-]+)$/\1/p' | head -n1)"
+          x86="$(i686-w64-mingw32-clang -dumpmachine 2>/dev/null || true)"
+          [[ -n "$x86" ]] || x86="$(i686-w64-mingw32-clang -v 2>&1 | sed -nE 's/^Target:\s*([[:alnum:]_.-]+)$/\1/p' | head -n1)"
+      
+          case "$ec"  in arm64ec-w64-mingw32|arm64ec-w64-windows-gnu) : ;; *) echo "::error::arm64ec CC target mismatch: ${ec:-<empty>}";  exit 1 ;; esac
+          case "$x86" in i686-w64-mingw32|i686-w64-windows-gnu)       : ;; *) echo "::error::i686 CC target mismatch:    ${x86:-<empty>}"; exit 1 ;; esac
+      
+          case ":$PATH:" in *":$TOOLCHAIN_DIR/bin:"*) : ;; *) echo "::error::toolchain bin is not prefixed in PATH"; exit 1 ;; esac
+
       - name: Create Meson cross files (arm64ec + i686 WOW64)
         run: |
           set -Eeuo pipefail
@@ -260,6 +278,11 @@ jobs:
           endian = 'little'
           [properties]
           needs_exe_wrapper = true
+          [built-in options]
+          c_args = ['--target=arm64ec-w64-mingw32']
+          cpp_args = ['--target=arm64ec-w64-mingw32']
+          c_link_args = ['--target=arm64ec-w64-mingw32','-fuse-ld=lld']
+          cpp_link_args = ['--target=arm64ec-w64-mingw32','-fuse-ld=lld']
           EOF
 
           # 32-bit i686 cross file (WOW64 side)
@@ -278,6 +301,11 @@ jobs:
           endian = 'little'
           [properties]
           needs_exe_wrapper = true
+          [built-in options]
+          c_args = ['--target=i686-w64-mingw32']
+          cpp_args = ['--target=i686-w64-mingw32']
+          c_link_args = ['--target=i686-w64-mingw32','-fuse-ld=lld']
+          cpp_link_args = ['--target=i686-w64-mingw32','-fuse-ld=lld']
           EOF
 
       - name: Clone DXVK
@@ -384,18 +412,30 @@ jobs:
             git tag -f "${HUD_TAG}" -m "HUD tag for arm64ec: ${HUD_TAG}"
             # Configure & build (64-bit arm64ec)
             rm -rf "${GITHUB_WORKSPACE}/build.ec" "${GITHUB_WORKSPACE}/build.x86"
+            # Preflight: cross compilers can actually link
+            printf 'int main(void){return 0;}\n' > /tmp/t.c
+            arm64ec-w64-mingw32-clang -v --target=arm64ec-w64-mingw32 /tmp/t.c -o /tmp/t-ec.exe -fuse-ld=lld
+            i686-w64-mingw32-clang    -v --target=i686-w64-mingw32    /tmp/t.c -o /tmp/t-x86.exe -fuse-ld=lld
+
             meson setup "${GITHUB_WORKSPACE}/build.ec" --cross-file "${GITHUB_WORKSPACE}/arm64ec.cross" \
               --buildtype release --prefix "${PREFIX_EC}" \
-              -Dbuild_id=false -Dstrip=true
+              -Dbuild_id=false -Dstrip=true \
+              || { cat "${GITHUB_WORKSPACE}/build.ec/meson-logs/meson-log.txt" || true; exit 1; }
+
             ninja -C "${GITHUB_WORKSPACE}/build.ec" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.ec"
 
             # Configure & build (32-bit x86)
             meson setup "${GITHUB_WORKSPACE}/build.x86" --cross-file "${GITHUB_WORKSPACE}/i686.cross" \
               --buildtype release --prefix "${PREFIX_X86}" \
-              -Dbuild_id=false -Dstrip=true
+              -Dbuild_id=false -Dstrip=true \
+              || { cat "${GITHUB_WORKSPACE}/build.x86/meson-logs/meson-log.txt" || true; exit 1; }
             ninja -C "${GITHUB_WORKSPACE}/build.x86" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x86"
+            meson introspect "${GITHUB_WORKSPACE}/build.ec"  --machine > /tmp/m_ec.json
+            meson introspect "${GITHUB_WORKSPACE}/build.x86" --machine > /tmp/m_x86.json
+            jq -e '.host.system=="windows" and .host.cpu=="aarch64"' /tmp/m_ec.json  >/dev/null || { echo "::error::build.ec host must be windows/aarch64"; cat /tmp/m_ec.json; exit 1; }
+            jq -e '.host.system=="windows" and (.host.cpu=="x86" or .host.cpu=="i686")' /tmp/m_x86.json >/dev/null || { echo "::error::build.x86 host must be windows/i686"; cat /tmp/m_x86.json; exit 1; }
 
             # Package WCP
             COMMIT_TS="$(git log -1 --format=%ct HEAD)"
