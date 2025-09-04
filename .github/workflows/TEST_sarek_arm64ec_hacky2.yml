@@ -321,36 +321,55 @@ jobs:
           echo "== Head of src/util/util_bit.h (after patch) =="
           head -n 60 src/util/util_bit.h || true
 
-      - name: Force ARM64EC for def-only forwarders (d3d10core)
+      - name: Force ARM64EC for def-only forwarders (d3d10)
         working-directory: dxvk
         shell: bash
         run: |
           set -euo pipefail
           if [ -f src/d3d10/meson.build ]; then
-            # 2-1) ARM64EC 더미 심볼 소스 생성 — heredoc 없이 printf로 안전하게 생성
+            # ARM64EC 앵커 심볼(컴파일 강제) — heredoc 대신 printf 유지
             printf '%s\n' \
               '#ifdef __cplusplus' \
               'extern "C"' \
               '#endif' \
               '__attribute__((used)) void __sarek_arm64ec_anchor(void) {}' \
               > src/d3d10/force_arm64ec_dummy.c
-
-            # 2) d3d10core shared_library(...) 인자 리스트 닫기 직전에 항목 주입 (idempotent)
-            if ! grep -q "force_arm64ec_dummy.c" src/d3d10/meson.build; then
-              ins="  'force_arm64ec_dummy.c',"
-              awk -v INS="$ins" '
+      
+            if grep -q "force_arm64ec_dummy.c" src/d3d10/meson.build; then
+              echo "d3d10core already includes force_arm64ec_dummy.c (ok)"
+            else
+              # 1차: 기존 sources: [...] kwarg가 있으면 그 배열 안에 항목 추가
+              awk '
                 /shared_library[[:space:]]*\(/ && $0 ~ /d3d10core/ { in_t=1 }
+                in_t && /sources[[:space:]]*:/ { in_s=1 }
                 {
-                  if (in_t && $0 ~ /^[[:space:]]*\)/) {
-                    print INS
-                    in_t=0
+                  if (in_t && in_s && /\]/) {
+                    print "    '\''force_arm64ec_dummy.c''',"    # 배열 닫기 직전에 한 줄 삽입
+                    in_s=0
                   }
                   print
+                  if (in_t && /^\s*\)/) in_t=0
                 }
-              ' src/d3d10/meson.build > src/d3d10/meson.build.new && mv src/d3d10/meson.build.new src/d3d10/meson.build
-              echo "injected force_arm64ec_dummy.c into d3d10core sources"
-            else
-              echo "d3d10core already includes force_arm64ec_dummy.c (ok)"
+              ' src/d3d10/meson.build > src/d3d10/meson.build.new || true
+      
+              if grep -q "force_arm64ec_dummy.c" src/d3d10/meson.build.new; then
+                mv src/d3d10/meson.build.new src/d3d10/meson.build
+                echo "appended to existing sources array"
+              else
+                # 2차: sources kwarg가 없으면, 키워드 인자 형태로 새로 추가
+                awk '
+                  /shared_library[[:space:]]*\(/ && $0 ~ /d3d10core/ { in_t=1 }
+                  {
+                    if (in_t && /^\s*\)/) {
+                      print "  sources : ['\''force_arm64ec_dummy.c'''],"
+                      in_t=0
+                    }
+                    print
+                  }
+                ' src/d3d10/meson.build > src/d3d10/meson.build.new
+                mv src/d3d10/meson.build.new src/d3d10/meson.build
+                echo "injected new sources kwarg"
+              fi
             fi
           else
             echo "note: src/d3d10/meson.build not found; skipping dummy injection"
