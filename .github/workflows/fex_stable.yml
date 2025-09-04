@@ -1,4 +1,4 @@
-name: Build FEX Stable
+name: FEX Stable
 
 on:
   workflow_dispatch:              # Manual trigger (any branch)
