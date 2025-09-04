@@ -1,4 +1,4 @@
-name: Build DXVK-Sarek v2
+name: Sarek
 
 on:
   workflow_dispatch:              # Manual trigger (any branch)
