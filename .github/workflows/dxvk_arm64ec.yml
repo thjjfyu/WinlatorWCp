@@ -378,8 +378,8 @@ jobs:
               local files=( "$@" )
               [ ${#files[@]} -gt 0 ] || { echo "::error::no files to check for $want"; exit 1; }
               for f in "${files[@]}"; do
-                llvm-readobj -file-headers "$f" | grep -Ei "Machine:\s*$want" >/dev/null \
-                  || { echo "::error::Unexpected machine for $f (want=$want)"; llvm-readobj -file-headers "$f" | sed -n '1,20p'; exit 1; }
+                llvm-readobj --file-headers "$f" | grep -Ei "Machine:\s*$want" >/dev/null \
+                  || { echo "::error::Unexpected machine for $f (want=$want)"; llvm-readobj --file-headers "$f" | sed -n '1,40p'; exit 1; }
               done
             }
             check_machine ARM64EC "${PREFIX_EC}/bin/"*.dll
@@ -405,11 +405,11 @@ jobs:
 
             # Verify packaged layout (system32=ARM64EC, syswow64=I386) -------------- #
             for f in "${GITHUB_WORKSPACE}/DXVK_WCP/system32/"*.dll; do
-              llvm-readobj -file-headers "$f" | grep -qi "Machine:\s*ARM64EC" \
+              llvm-readobj --file-headers "$f" | grep -qi "Machine:\s*ARM64EC" \
                 || { echo "::error::system32 contains non-ARM64EC: $f"; exit 1; }
             done
             for f in "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/"*.dll; do
-              llvm-readobj -file-headers "$f" | grep -qi "Machine:\s*I386" \
+              llvm-readobj --file-headers "$f" | grep -qi "Machine:\s*I386" \
                 || { echo "::error::syswow64 contains non-I386: $f"; exit 1; }
             done
 
