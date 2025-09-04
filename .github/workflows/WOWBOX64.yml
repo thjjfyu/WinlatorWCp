@@ -1,177 +1,115 @@
-name: Build WowBox64 Nightly (one-shot)
+name: Build wowbox64.dll only (one‑shot)
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: write
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  TOOLCHAIN_URL: https://github.com/bylaws/llvm-mingw/releases/download/20250305/llvm-mingw-20250305-ucrt-ubuntu-20.04-x86_64.tar.xz
-  RELEASE_TAG: WOWBOX64-NIGHTLY
+  pull-requests: write
 
 jobs:
-  build-wowbox64:
-    name: Build WowBox64 from latest upstream HEAD
-    runs-on: ubuntu-latest
+  wowbox64:
+    name: Build upstream wowbox64.dll (latest HEAD) + WCP package
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 60
     env:
-      TZ: Asia/Seoul
+      LLVM_MINGW_VERSION: 20250430
     steps:
       - name: Install dependencies
         run: |
           set -Eeuo pipefail
-          sudo apt-get -yq update
-          sudo apt-get -yq install --no-install-recommends \
-            git cmake ninja-build jq curl ca-certificates xz-utils file binutils gh
+          sudo apt-get update -yq
+          sudo apt-get install -yq --no-install-recommends \
+            git gcc-aarch64-linux-gnu cmake make python3 \
+            curl ca-certificates xz-utils file binutils
 
-      - name: Resolve upstream HEAD (ptitSeb/box64)
-        id: upstream
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Download llvm-mingw (aarch64 host)
         run: |
           set -Eeuo pipefail
-          API="https://api.github.com"
-          OWNER="ptitSeb"; REPO="box64"
-          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-          ver=(-H "X-GitHub-Api-Version: 2022-11-28" -H "Accept: application/vnd.github+json")
-          fetch() { curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ver[@]}" "$1"; }
-          defb=$(fetch "$API/repos/$OWNER/$REPO" | jq -r .default_branch)
-          [ -z "$defb" -o "$defb" = "null" ] && defb=main
-          sha=$(fetch "$API/repos/$OWNER/$REPO/commits/${defb}" | jq -r .sha)
-          [ -z "$sha" -o "$sha" = "null" ] && { echo "::error::Failed to resolve upstream HEAD"; exit 1; }
-          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
-          echo "short=${sha:0:7}" >> "$GITHUB_OUTPUT"
-          echo "branch=${defb}" >> "$GITHUB_OUTPUT"
-          echo "Resolved $defb @ ${sha:0:7}"
+          url="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64.tar.xz"
+          curl -fsSL "$url" -o llvm-mingw.tar.xz
+          tar -C "$GITHUB_WORKSPACE" -xf llvm-mingw.tar.xz
+          echo "MINGW_COMPILER_PATH=$GITHUB_WORKSPACE/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64/bin" >> $GITHUB_ENV
+          echo "$GITHUB_WORKSPACE/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64/bin" >> $GITHUB_PATH
+          echo "BOX64_COMPILER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "BOX64_PLATFORM_MACRO=-DWOW64=1 -DARM_DYNAREC=1" >> $GITHUB_ENV
 
-      - name: Decide date code (YYMMDD, KST)
-        id: datecode
-        run: echo "code=$(date +%y%m%d)" >> "$GITHUB_OUTPUT"
-
-      - name: Download llvm-mingw toolchain
-        run: |
-          set -Eeuo pipefail
-          mkdir -p /opt/llvm-mingw
-          curl -fsSL "$TOOLCHAIN_URL" | tar -C /opt/llvm-mingw --strip-components=1 -xJ
-          echo "/opt/llvm-mingw/i686-w64-mingw32/bin" >> $GITHUB_PATH
-          echo "/opt/llvm-mingw/bin" >> $GITHUB_PATH
-
-      - name: Preflight check __int128 support on i686-windows
-        run: |
-          set -Eeuo pipefail
-          printf 'int main(){ __int128 x=0; (void)x; return 0; }\n' > t.c
-          if ! i686-w64-mingw32-clang -c t.c -o /dev/null 2>/dev/null; then
-            echo "::error::__int128 unsupported on i686-windows. Upstream HEAD may not build for 32-bit target right now."
-            exit 1
-          fi
-
-      - name: Checkout upstream sources at resolved commit
+      - name: Checkout upstream Box64 (default branch HEAD)
         uses: actions/checkout@v4
         with:
           repository: ptitSeb/box64
-          ref: ${{ steps.upstream.outputs.sha }}
+          fetch-depth: 0
           submodules: recursive
-          path: src
-          fetch-depth: 1
 
-      - name: Configure & build (Windows i686 DLL)
+      - name: Record commit info
+        id: git
         run: |
           set -Eeuo pipefail
-          cmake -S src -B build-wow64 -G Ninja \
-            -DWOW64=ON \
-            -DCMAKE_SYSTEM_NAME=Windows \
+          SHA=$(git rev-parse HEAD)
+          SHORT=${SHA:0:7}
+          echo "sha=$SHA"   >> $GITHUB_OUTPUT
+          echo "short=$SHORT" >> $GITHUB_OUTPUT
+          echo "Upstream HEAD @ $SHORT"
+
+      - name: Configure and build (WOW64 external project)
+        run: |
+          set -Eeuo pipefail
+          export PATH="$PATH:${MINGW_COMPILER_PATH}"
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_C_COMPILER=${BOX64_COMPILER} \
+            ${BOX64_PLATFORM_MACRO} \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=i686-w64-mingw32-clang \
-            -DCMAKE_CXX_COMPILER=i686-w64-mingw32-clang++ \
-            -DCMAKE_RC_COMPILER=llvm-rc
+            -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
+          make -j"$(nproc)"
 
-          # Try to find an explicit WowBox64 target; else build all
-          tgt=$(cmake --build build-wow64 --target help 2>/dev/null | sed -n 's/^\s*\* \([^ ]\+\).*/\1/p' | grep -i '^wowbox64$' || true)
-          if [ -n "$tgt" ]; then
-            echo "Using target: $tgt"
-            cmake --build build-wow64 --target "$tgt" -j"$(nproc)"
-          else
-            echo "Target name unknown; building all"
-            cmake --build build-wow64 -j"$(nproc)"
-          fi
-
-      - name: Verify artifact is PE32 i386 DLL
+      - name: Find and verify wowbox64.dll
+        id: out
         run: |
           set -Eeuo pipefail
-          DLL=$(find build-wow64 -iname 'WowBox64.dll' -print | head -n1 || true)
-          [ -f "$DLL" ] || { echo "::error::WowBox64.dll not found"; exit 1; }
+          DLL=$(find build -type f -iname 'wowbox64.dll' | head -n1 || true)
+          if [[ -z "$DLL" ]]; then
+            echo "::error::wowbox64.dll not produced by build"; exit 1
+          fi
           file "$DLL"
-          objdump -p "$DLL" | grep -qi 'machine.*I386' || { echo "::error::Not a 32-bit i386 DLL"; exit 1; }
-          llvm-strip -s "$DLL" || true
-          echo "DLL=$DLL" >> $GITHUB_ENV
+          if ! objdump -p "$DLL" | grep -qi 'machine.*ARM64'; then
+            echo "::error::Expected ARM64 PE DLL, signature mismatch"; exit 1
+          fi
+          echo "dll=$DLL" >> $GITHUB_OUTPUT
 
-      - name: Package WCP (minimal)
+      - name: Decide date code (YYMMDD, KST)
+        id: date
+        run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Package WCP (WowBox64)
+        id: wcp
         env:
-          DATECODE: ${{ steps.datecode.outputs.code }}
-          SHORT:    ${{ steps.upstream.outputs.short }}
+          DATECODE: ${{ steps.date.outputs.code }}
+          SHORT:    ${{ steps.git.outputs.short }}
         run: |
           set -Eeuo pipefail
           mkdir -p out
-          cat > profile.json <<JSON
+          cp "${{ steps.out.outputs.dll }}" WowBox64.dll
+          cat > profile.json <<'JSON'
           {
             "type": "WOWBox64",
-            "versionName": "nightly-${SHORT}",
-            "versionCode": ${DATECODE},
-            "description": "${DATECODE} WowBox64 Build",
+            "versionName": "nightly-__SHORT__",
+            "versionCode": __DATECODE__,
+            "description": "__DATECODE__ WowBox64 Build",
             "files": [
               { "source": "WowBox64.dll", "target": "${syswow64}/WowBox64.dll" }
             ],
             "notes": ["32-bit titles only. Place in syswow64 and set DLL override: native,builtin"]
           }
           JSON
-          cp "$DLL" ./WowBox64.dll
+          sed -i "s/__SHORT__/${SHORT}/g; s/__DATECODE__/${DATECODE}/g" profile.json
           tar --zstd --format=gnu --owner=0 --group=0 --numeric-owner --sort=name \
             -cf "out/wowbox64-nightly-${DATECODE}.wcp" profile.json WowBox64.dll
-          ls -l out
+          echo "wcp=out/wowbox64-nightly-${DATECODE}.wcp" >> $GITHUB_OUTPUT
 
-      - name: Create or update release and upload asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO:     ${{ github.repository }}
-          SHORT:    ${{ steps.upstream.outputs.short }}
-          SHA:      ${{ steps.upstream.outputs.sha }}
-          DATECODE: ${{ steps.datecode.outputs.code }}
-          TAG:      ${{ env.RELEASE_TAG }}
-        run: |
-          set -Eeuo pipefail
-          printf -v BODY '%s\n\n%s\n%s\n' \
-            '🧩 One-shot WowBox64 nightly (32-bit DLL bridge for Bionic+Wine)' \
-            "Commit: [${SHORT}](https://github.com/ptitSeb/box64/commit/${SHA})" \
-            "Upstream SHA: ${SHA}"
-          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$REPO" -t "$TAG" -n "$BODY"
-          else
-            gh release edit "$TAG" --repo "$REPO" -t "$TAG" -n "$BODY"
-          fi
-          gh release upload "$TAG" "./out/wowbox64-nightly-${DATECODE}.wcp" --repo "$REPO" --clobber
-
-      - name: Trim old assets (keep latest 5)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          TAG:  ${{ env.RELEASE_TAG }}
-        run: |
-          set -Eeuo pipefail
-          API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
-          assets=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API" | jq -c '.assets | sort_by(.created_at)')
-          count=$(echo "$assets" | jq 'length')
-          if [ "$count" -gt 5 ]; then
-            delcount=$((count-5))
-            echo "::notice::Found $count assets, will delete $delcount oldest."
-            echo "$assets" | jq -r '.[0:$delcount][] | .id' | while read -r id; do
-              curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                   "https://api.github.com/repos/${REPO}/releases/assets/${id}"
-              echo "Deleted asset id=$id"
-            done
-          else
-            echo "::notice::Asset count $count (≤5), nothing to delete."
-          fi
+      - name: Upload WCP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wowbox64-nightly-${{ steps.date.outputs.code }}.wcp
+          path: ${{ steps.wcp.outputs.wcp }}
+          if-no-files-found: error
