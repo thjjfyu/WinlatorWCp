@@ -35,7 +35,6 @@ jobs:
           tar -xf llvm-mingw.tar.xz
           echo "$PWD/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64/bin" >> $GITHUB_PATH
           echo "MINGW_COMPILER_PATH=$PWD/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64/bin" >> $GITHUB_ENV
-          echo "BOX64_COMPILER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           echo "BOX64_PLATFORM_MACRO=-DWOW64=1 -DARM_DYNAREC=1" >> $GITHUB_ENV
 
       - name: Expose MinGW (aarch64) tools globally
@@ -47,7 +46,7 @@ jobs:
                    aarch64-w64-mingw32-ld aarch64-w64-mingw32-windres aarch64-w64-mingw32-dlltool llvm-rc; do
             src="$BIN/$t"
             if [ -x "$src" ]; then
-              sudo ln -sf "$src" "/usr/local/bin/$t"
+              sudo ln -sf "$src" "/usr/bin/$t"
             fi
           done
 
@@ -69,34 +68,48 @@ jobs:
       - name: Configure and build (WOW64 external project)
         run: |
           set -Eeuo pipefail
-          export PATH="$PATH:$MINGW_COMPILER_PATH"
+          # Ensure toolchain is discoverable everywhere
+          export PATH="$MINGW_COMPILER_PATH:$PATH"
+
+          # Resolve absolute paths for the MinGW-w64 AArch64 toolchain
+          CC=$(command -v aarch64-w64-mingw32-clang || true)
+          CXX=$(command -v aarch64-w64-mingw32-clang++ || true)
+          if [ -z "$CC" ] || [ -z "$CXX" ]; then
+            CC=$(command -v aarch64-w64-mingw32-gcc)
+            CXX=$(command -v aarch64-w64-mingw32-g++)
+          fi
+          AS=$(command -v aarch64-w64-mingw32-as)
+          RC=$(command -v llvm-rc || command -v aarch64-w64-mingw32-windres)
+
+          for v in CC CXX AS RC; do
+            eval "val=\${$v}"
+            if [ -z "$val" ]; then echo "::error::$v not found in PATH"; exit 1; fi
+          done
+
           mkdir -p build
           cd build
+
+          # Pin cross context for CMake and ExternalProject
+          export CC="$CC"
+          export CXX="$CXX"
+          export ASM="$AS"
+          export RC="$RC"
+          export CMAKE_C_COMPILER="$CC"
+          export CMAKE_CXX_COMPILER="$CXX"
+          export CMAKE_ASM_COMPILER="$AS"
+          export CMAKE_RC_COMPILER="$RC"
+          export CMAKE_SYSTEM_NAME="Windows"
+          export CMAKE_TRY_COMPILE_TARGET_TYPE="STATIC_LIBRARY"
+
           cmake .. \
-            -DCMAKE_C_COMPILER=${BOX64_COMPILER} \
             ${BOX64_PLATFORM_MACRO} \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
 
-          # Provide full paths for the external wowbox64 CMake
-          if command -v aarch64-w64-mingw32-clang >/dev/null 2>&1; then
-            export CC=$(command -v aarch64-w64-mingw32-clang)
-          else
-            export CC=$(command -v aarch64-w64-mingw32-gcc)
-          fi
-          export CMAKE_C_COMPILER="$CC"
-          export ASM=$(command -v aarch64-w64-mingw32-as)
-          export CMAKE_ASM_COMPILER="$ASM"
-          if command -v llvm-rc >/dev/null 2>&1; then
-            export RC=$(command -v llvm-rc)
-          else
-            export RC=$(command -v aarch64-w64-mingw32-windres)
-          fi
-          export CMAKE_RC_COMPILER="$RC"
-          export CMAKE_SYSTEM_NAME=Windows
-
           # Debug prints
-          which aarch64-w64-mingw32-clang aarch64-w64-mingw32-gcc aarch64-w64-mingw32-as || true
+          which aarch64-w64-mingw32-clang || true
+          which aarch64-w64-mingw32-gcc || true
+          which aarch64-w64-mingw32-as || true
           make -j"$(nproc)"
 
       - name: Locate and verify wowbox64.dll
@@ -131,7 +144,7 @@ jobs:
             "versionCode": ${DATECODE},
             "description": "${DATECODE} WowBox64 Build by Ari",
             "files": [
-              { "source": "wowbox64.dll", "target": "\${syswow64}/wowbox64.dll" }
+              { "source": "wowbox64.dll", "target": "${syswow64}/wowbox64.dll" }
             ]
           }
           JSON
