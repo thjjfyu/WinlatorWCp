@@ -186,10 +186,10 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args = ['-target=arm64ec-w64-mingw32']
-          cpp_args = ['-target=arm64ec-w64-mingw32']
-          c_link_args = ['-target=arm64ec-w64-mingw32','-fuse-ld=lld']
-          cpp_link_args = ['-target=arm64ec-w64-mingw32','-fuse-ld=lld']
+          c_args = ['--target=arm64ec-w64-mingw32']
+          cpp_args = ['--target=arm64ec-w64-mingw32']
+          c_link_args = ['--target=arm64ec-w64-mingw32','-fuse-ld=lld']
+          cpp_link_args = ['--target=arm64ec-w64-mingw32','-fuse-ld=lld']
           EOF
 
           # 32-bit i686 cross file (WOW64 side)
@@ -209,10 +209,10 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args = ['-target=i686-w64-mingw32']
-          cpp_args = ['-target=i686-w64-mingw32']
-          c_link_args = ['-target=i686-w64-mingw32','-fuse-ld=lld']
-          cpp_link_args = ['-target=i686-w64-mingw32','-fuse-ld=lld']
+          c_args = ['--target=i686-w64-mingw32']
+          cpp_args = ['--target=i686-w64-mingw32']
+          c_link_args = ['--target=i686-w64-mingw32','-fuse-ld=lld']
+          cpp_link_args = ['--target=i686-w64-mingw32','-fuse-ld=lld']
           EOF
 
       - name: Clone DXVK
@@ -268,8 +268,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           printf 'int main(void){return 0;}\n' > /tmp/t.c
-          arm64ec-w64-mingw32-clang -v -target arm64ec-w64-mingw32 /tmp/t.c -o /tmp/t-ec.exe -fuse-ld=lld
-          i686-w64-mingw32-clang    -v -target i686-w64-mingw32    /tmp/t.c -o /tmp/t-x86.exe -fuse-ld=lld
+          arm64ec-w64-mingw32-clang -v --target=arm64ec-w64-mingw32 /tmp/t.c -o /tmp/t-ec.exe -fuse-ld=lld
+          i686-w64-mingw32-clang    -v --target=i686-w64-mingw32    /tmp/t.c -o /tmp/t-x86.exe -fuse-ld=lld
           file /tmp/t-ec.exe /tmp/t-x86.exe || true
 
       - name: Build NEW versions (arm64ec + i686)
