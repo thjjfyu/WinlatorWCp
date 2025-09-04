@@ -2,8 +2,6 @@ name: Build WowBox64 Nightly
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 18 * * *"   # daily 03:00 KST
 
 permissions:
   contents: write
