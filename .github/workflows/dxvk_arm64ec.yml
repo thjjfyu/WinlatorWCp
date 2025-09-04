@@ -186,10 +186,10 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args = ['-target', '${TRIP_EC}']
-          cpp_args = ['-target', '${TRIP_EC}']
-          c_link_args = ['-target', '${TRIP_EC}']
-          cpp_link_args = ['-target', '${TRIP_EC}']
+          c_args = ['-target=arm64ec-w64-mingw32']
+          cpp_args = ['-target=arm64ec-w64-mingw32']
+          c_link_args = ['-target=arm64ec-w64-mingw32','-fuse-ld=lld']
+          cpp_link_args = ['-target=arm64ec-w64-mingw32','-fuse-ld=lld']
           EOF
 
           # 32-bit i686 cross file (WOW64 side)
@@ -209,10 +209,10 @@ jobs:
           [properties]
           needs_exe_wrapper = true
           [built-in options]
-          c_args = ['-target', '${TRIP_X86}']
-          cpp_args = ['-target', '${TRIP_X86}']
-          c_link_args = ['-target', '${TRIP_X86}']
-          cpp_link_args = ['-target', '${TRIP_X86}']
+          c_args = ['-target=i686-w64-mingw32']
+          cpp_args = ['-target=i686-w64-mingw32']
+          c_link_args = ['-target=i686-w64-mingw32','-fuse-ld=lld']
+          cpp_link_args = ['-target=i686-w64-mingw32','-fuse-ld=lld']
           EOF
 
       - name: Clone DXVK
@@ -263,6 +263,14 @@ jobs:
           echo "Candidates:";       cat "${GITHUB_WORKSPACE}/versions.txt" || true
           echo "Already uploaded:"; cat "$EXIST" || true
           echo "To build:";         cat "${GITHUB_WORKSPACE}/to_build.txt" || true
+
+      - name: Preflight
+        run: |
+          set -Eeuo pipefail
+          printf 'int main(void){return 0;}\n' > /tmp/t.c
+          arm64ec-w64-mingw32-clang -v -target arm64ec-w64-mingw32 /tmp/t.c -o /tmp/t-ec.exe -fuse-ld=lld
+          i686-w64-mingw32-clang    -v -target i686-w64-mingw32    /tmp/t.c -o /tmp/t-x86.exe -fuse-ld=lld
+          file /tmp/t-ec.exe /tmp/t-x86.exe || true
 
       - name: Build NEW versions (arm64ec + i686)
         env:
@@ -337,14 +345,16 @@ jobs:
             # Configure & build (64-bit arm64ec)
             meson setup "${GITHUB_WORKSPACE}/build.ec" --cross-file "${GITHUB_WORKSPACE}/arm64ec.cross" \
               --buildtype release --prefix "${PREFIX_EC}" \
-              -Dbuild_id=false -Dstrip=true
+              -Dbuild_id=false -Dstrip=true \
+              || { cat "${GITHUB_WORKSPACE}/build.ec/meson-logs/meson-log.txt" || true; exit 1; }
             ninja -C "${GITHUB_WORKSPACE}/build.ec" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.ec"
 
             # Configure & build (32-bit x86)
             meson setup "${GITHUB_WORKSPACE}/build.x86" --cross-file "${GITHUB_WORKSPACE}/i686.cross" \
               --buildtype release --prefix "${PREFIX_X86}" \
-              -Dbuild_id=false -Dstrip=true
+              -Dbuild_id=false -Dstrip=true \
+              || { cat "${GITHUB_WORKSPACE}/build.x86/meson-logs/meson-log.txt" || true; exit 1; }
             ninja -C "${GITHUB_WORKSPACE}/build.x86" -j"$(nproc)"
             meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.x86"
 
