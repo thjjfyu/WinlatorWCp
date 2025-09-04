@@ -1,4 +1,4 @@
-name: _sarek hacky arm64ec 1
+name: sarek_arm64ec_hacky
 
 on:
   workflow_dispatch:
