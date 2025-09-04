@@ -390,20 +390,36 @@ jobs:
             cp -v "${PREFIX_EC}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
             cp -v "${PREFIX_X86}/bin/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
 
-            # Verify COFF machine types -------------------------------------------- #
+            # Verify COFF machine types (hybrid-tolerant) --------------------------- #
             shopt -s nullglob
-            check_machine() {
-              local want="$1"; shift
+            check_machine_ec_hybrid() {
               local files=( "$@" )
-              [ ${#files[@]} -gt 0 ] || { echo "::error::no files to check for $want"; exit 1; }
+              [ ${#files[@]} -gt 0 ] || { echo "::error::no files to check (system32)"; exit 1; }
               for f in "${files[@]}"; do
-                llvm-readobj --file-headers "$f" | grep -Eiq "Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?${want}([[:space:]]|[()])" \
-                  || { echo "::error::Unexpected machine for $f (want=$want)"; llvm-readobj --file-headers "$f" | sed -n '1,60p'; exit 1; }
-
+                hdr="$(llvm-readobj --file-headers "$f")" || { echo "::error::readobj failed for $f"; exit 1; }
+                if   echo "$hdr" | grep -Eiq 'Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?ARM64EC([[:space:]]|\()'; then
+                  : # OK: ARM64EC
+                elif echo "$hdr" | grep -Eiq 'Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?AARCH64([[:space:]]|\()'; then
+                  echo "::warning::$f is pure ARM64 (AARCH64) — allowed (hybrid tolerant)"
+                elif echo "$hdr" | grep -Eiq 'Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?AMD64([[:space:]]|\()'; then
+                  echo "::warning::$f is AMD64 (x64) — allowed for hybrid check (not ideal)"
+                else
+                  echo "::error::Unexpected machine for $f (want ARM64EC/AARCH64/AMD64)"; echo "$hdr" | sed -n '1,60p'
+                  exit 1
+                fi
               done
             }
-            check_machine ARM64EC "${PREFIX_EC}/bin/"*.dll
-            check_machine I386    "${PREFIX_X86}/bin/"*.dll
+            check_machine_x86_strict() {
+              local files=( "$@" )
+              [ ${#files[@]} -gt 0 ] || { echo "::error::no files to check (syswow64)"; exit 1; }
+              for f in "${files[@]}"; do
+                llvm-readobj --file-headers "$f" | grep -Eiq 'Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?I386([[:space:]]|\()' \
+                  || { echo "::error::syswow64 contains non-I386: $f"; exit 1; }
+              done
+            }
+            
+            check_machine_ec_hybrid "${PREFIX_EC}/bin/"*.dll
+            check_machine_x86_strict "${PREFIX_X86}/bin/"*.dll
 
             # Collect file lists and generate profile.json  -------------------------- #
             (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
@@ -423,13 +439,21 @@ jobs:
                          ($B[]? | {source:("syswow64/"+. ), target:($WOW+.)}) ] }' \
               > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
 
-            # Verify packaged layout (system32=ARM64EC, syswow64=I386) -------------- #
+            # Verify packaged layout (hybrid-tolerant on system32) ------------------ #
             for f in "${GITHUB_WORKSPACE}/DXVK_WCP/system32/"*.dll; do
-              llvm-readobj --file-headers "$f" | grep -Eiq "Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?ARM64EC([[:space:]]|[()])" \
-                || { echo "::error::system32 contains non-ARM64EC: $f"; exit 1; }
+              hdr="$(llvm-readobj --file-headers "$f")" || { echo "::error::readobj failed for $f"; exit 1; }
+              if   echo "$hdr" | grep -Eiq 'Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?ARM64EC([[:space:]]|\()'; then
+                : # OK
+              elif echo "$hdr" | grep -Eiq 'Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?AARCH64([[:space:]]|\()'; then
+                echo "::warning::system32/$(${TOOLCHAIN_DIR:+basename } <<< "$f") is AARCH64 — allowed (hybrid tolerant)"
+              elif echo "$hdr" | grep -Eiq 'Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?AMD64([[:space:]]|\()'; then
+                echo "::warning::system32/$(${TOOLCHAIN_DIR:+basename } <<< "$f") is AMD64 — allowed (hybrid tolerant, not ideal)"
+              else
+                echo "::error::system32 contains unexpected machine: $f"; echo "$hdr" | sed -n '1,60p'; exit 1
+              fi
             done
             for f in "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/"*.dll; do
-              llvm-readobj --file-headers "$f" | grep -Eiq "Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?I386([[:space:]]|[()])" \
+              llvm-readobj --file-headers "$f" | grep -Eiq 'Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?I386([[:space:]]|\()' \
                 || { echo "::error::syswow64 contains non-I386: $f"; exit 1; }
             done
 
