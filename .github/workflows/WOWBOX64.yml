@@ -60,7 +60,7 @@ jobs:
           echo "/opt/llvm-mingw/i686-w64-mingw32/bin" >> $GITHUB_PATH
           echo "/opt/llvm-mingw/bin" >> $GITHUB_PATH
 
-      - name: Preflight: check __int128 support on i686-windows
+      - name: Preflight check __int128 support on i686-windows
         run: |
           set -Eeuo pipefail
           printf 'int main(){ __int128 x=0; (void)x; return 0; }\n' > t.c
