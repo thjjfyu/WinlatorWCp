@@ -50,6 +50,24 @@ jobs:
             fi
           done
 
+      - name: Sanity check llvm-mingw toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          set -x
+          : "${MINGW_COMPILER_PATH:?MINGW_COMPILER_PATH not set}"
+          test -d "$MINGW_COMPILER_PATH" || { echo "::error::MINGW_COMPILER_PATH not a directory"; exit 1; }
+          ls -la "$MINGW_COMPILER_PATH" | sed -n '1,50p'
+          echo "PATH=$PATH"
+          for t in aarch64-w64-mingw32-clang aarch64-w64-mingw32-clang++ aarch64-w64-mingw32-gcc aarch64-w64-mingw32-g++ \
+                   aarch64-w64-mingw32-as aarch64-w64-mingw32-ar aarch64-w64-mingw32-ranlib \
+                   aarch64-w64-mingw32-ld aarch64-w64-mingw32-windres aarch64-w64-mingw32-dlltool llvm-rc; do
+            if ! command -v "$t" >/dev/null 2>&1; then
+              echo "::error::$t not found in PATH"; missing=1
+            fi
+          done
+          if [ "${missing:-0}" = "1" ]; then exit 1; fi
+
       - name: Checkout upstream Box64 (HEAD)
         uses: actions/checkout@v4
         with:
@@ -66,50 +84,49 @@ jobs:
           echo "short=${SHA:0:7}" >> $GITHUB_OUTPUT
 
       - name: Configure and build (WOW64 external project)
+        shell: bash
         run: |
           set -Eeuo pipefail
-          # Ensure toolchain is discoverable everywhere
+          set -x
+
+          : "${MINGW_COMPILER_PATH:?MINGW_COMPILER_PATH not set}"
           export PATH="$MINGW_COMPILER_PATH:$PATH"
 
-          # Resolve absolute paths for the MinGW-w64 AArch64 toolchain
-          CC=$(command -v aarch64-w64-mingw32-clang || true)
-          CXX=$(command -v aarch64-w64-mingw32-clang++ || true)
-          if [ -z "$CC" ] || [ -z "$CXX" ]; then
-            CC=$(command -v aarch64-w64-mingw32-gcc)
-            CXX=$(command -v aarch64-w64-mingw32-g++)
-          fi
-          AS=$(command -v aarch64-w64-mingw32-as)
-          RC=$(command -v llvm-rc || command -v aarch64-w64-mingw32-windres)
+          # 각 커맨드 탐색은 실패해도 쉘 종료 금지
+          CC_CLANG="$(command -v aarch64-w64-mingw32-clang || true)"
+          CXX_CLANG="$(command -v aarch64-w64-mingw32-clang++ || true)"
+          CC_GCC="$(command -v aarch64-w64-mingw32-gcc || true)"
+          CXX_GCC="$(command -v aarch64-w64-mingw32-g++ || true)"
+          AS_BIN="$(command -v aarch64-w64-mingw32-as || true)"
+          RC_BIN="$(command -v llvm-rc || command -v aarch64-w64-mingw32-windres || true)"
 
-          for v in CC CXX AS RC; do
-            eval "val=\${$v}"
-            if [ -z "$val" ]; then echo "::error::$v not found in PATH"; exit 1; fi
-          done
+          # 최종 선택 및 존재 검사
+          CC="${CC_CLANG:-$CC_GCC}"; CXX="${CXX_CLANG:-$CXX_GCC}"
+          [ -n "${CC:-}" ]   || { echo "::error::No aarch64-w64-mingw32 C compiler found"; exit 1; }
+          [ -n "${CXX:-}" ]  || { echo "::error::No aarch64-w64-mingw32 C++ compiler found"; exit 1; }
+          [ -n "${AS_BIN:-}" ] || { echo "::error::aarch64-w64-mingw32-as not found"; exit 1; }
+          [ -n "${RC_BIN:-}" ] || { echo "::error::llvm-rc or windres not found"; exit 1; }
 
           mkdir -p build
           cd build
 
-          # Pin cross context for CMake and ExternalProject
-          export CC="$CC"
-          export CXX="$CXX"
-          export ASM="$AS"
-          export RC="$RC"
-          export CMAKE_C_COMPILER="$CC"
-          export CMAKE_CXX_COMPILER="$CXX"
-          export CMAKE_ASM_COMPILER="$AS"
-          export CMAKE_RC_COMPILER="$RC"
-          export CMAKE_SYSTEM_NAME="Windows"
+          # CMake가 try-run에서 실행 파일 요구하지 않도록
           export CMAKE_TRY_COMPILE_TARGET_TYPE="STATIC_LIBRARY"
-
+          # 교차 타겟 명시
           cmake .. \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_C_COMPILER="${CC}" \
+            -DCMAKE_CXX_COMPILER="${CXX}" \
+            -DCMAKE_ASM_COMPILER="${AS_BIN}" \
+            -DCMAKE_RC_COMPILER="${RC_BIN}" \
             ${BOX64_PLATFORM_MACRO} \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
 
-          # Debug prints
           which aarch64-w64-mingw32-clang || true
           which aarch64-w64-mingw32-gcc || true
           which aarch64-w64-mingw32-as || true
+
           make -j"$(nproc)"
 
       - name: Locate and verify wowbox64.dll
