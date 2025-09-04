@@ -298,20 +298,17 @@ jobs:
             # patches --------------------------------------------------------------- #
             # v2.5 UnmappedSubresource constexpr init issue -> safe cast
             TEX="src/d3d11/d3d11_texture.h"
-            if [[ -f "$TEX" ]] && grep -qE '\\bUnmappedSubresource\\b' "$TEX"; then
+            if [[ -f "$TEX" ]] && grep -qE '\bUnmappedSubresource\b' "$TEX"; then
               cp "$TEX" "${TEX}.bak"
-              perl -0777 -pe \
-                's/\b(?:(?:inline\s+)?static\s+)((?:(?:const|constexpr)\s+)+)(?:D3D11_MAP|auto)\s+UnmappedSubresource\s*=\s*(?:D3D11_MAP\(\s*-?1u?\s*\)|static_cast\s*<\s*D3D11_MAP\s*>\s*\(\s*-?1\s*\)|\(\s*D3D11_MAP\s*\)\s*-?1)\s*;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/g' \
-                -i "$TEX"
-              
-              # 패치가 실제 적용됐는지 확인(미적용이면 즉시 실패해 러닝타임 세이브)
-              if grep -q 'inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);' "$TEX"; then
-                PATCH_A=1; CHANGED=1
-              else
-                echo "::error::Failed to apply UnmappedSubresource patch to $TEX"
-                sed -n '1,140p' "$TEX" || true
-                exit 1
-              fi
+              perl -0777 -i -pe \
+                's@\b(?:(?:inline\s+)?static\s+)((?:(?:const|constexpr)\s+)+)(?:D3D11_MAP|auto)\s+UnmappedSubresource\s*=\s*(?:D3D11_MAP\(\s*-?1u?\s*\)|static_cast\s*<\s*D3D11_MAP\s*>\s*\(\s*-?1\s*\)|\(\s*D3D11_MAP\s*\)\s*-?1)\s*;@inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);@g' \
+                "$TEX" \
+              || { echo "::error::perl substitution failed for $TEX"; exit 1; }
+            
+              grep -q 'inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);' "$TEX" \
+                && { PATCH_A=1; CHANGED=1; } \
+                || { echo "::error::Failed to verify UnmappedSubresource patch in $TEX"; sed -n '1,140p' "$TEX" || true; exit 1; }
+            fi
             
             # patches --------------------------------------------------------------- #
             # Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate if toolchain has it
@@ -386,7 +383,7 @@ jobs:
               local files=( "$@" )
               [ ${#files[@]} -gt 0 ] || { echo "::error::no files to check for $want"; exit 1; }
               for f in "${files[@]}"; do
-                llvm-readobj --file-headers "$f" | grep -Eiq "Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?${want}([[:space:]]|\\()" \
+                llvm-readobj --file-headers "$f" | grep -Eiq "Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?${want}([[:space:]]|[()])" \
                   || { echo "::error::Unexpected machine for $f (want=$want)"; llvm-readobj --file-headers "$f" | sed -n '1,60p'; exit 1; }
 
               done
@@ -414,11 +411,11 @@ jobs:
 
             # Verify packaged layout (system32=ARM64EC, syswow64=I386) -------------- #
             for f in "${GITHUB_WORKSPACE}/DXVK_WCP/system32/"*.dll; do
-              llvm-readobj --file-headers "$f" | grep -Eiq "Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?ARM64EC([[:space:]]|\\()" \
+              llvm-readobj --file-headers "$f" | grep -Eiq "Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?ARM64EC([[:space:]]|[()])" \
                 || { echo "::error::system32 contains non-ARM64EC: $f"; exit 1; }
             done
             for f in "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/"*.dll; do
-              llvm-readobj --file-headers "$f" | grep -Eiq "Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?I386([[:space:]]|\\()" \
+              llvm-readobj --file-headers "$f" | grep -Eiq "Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?I386([[:space:]]|[()])" \
                 || { echo "::error::syswow64 contains non-I386: $f"; exit 1; }
             done
 
