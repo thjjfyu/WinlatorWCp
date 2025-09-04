@@ -1,4 +1,4 @@
-name: Build VKD3D arm64ec v2
+name: VKD3D arm64ec
 
 on:
   workflow_dispatch:
@@ -166,6 +166,24 @@ jobs:
           echo "TRIP_EC=$arm64ec_target" >> "$GITHUB_ENV"
           echo "TRIP_X86=$i686_target"   >> "$GITHUB_ENV"
 
+          # --- Hard gate: macro-level target sanity (hybrid-friendly) ---
+          arm_m="$(arm64ec-w64-mingw32-clang -dM -E - < /dev/null | tee /tmp/m_arm.txt || true)"
+          
+          # ARM64EC 매크로가 반드시 하나 이상 존재해야 함 (__arm64ec__ 또는 _M_ARM64EC)
+          grep -qE '^#define[[:space:]]+(__arm64ec__|_M_ARM64EC)[[:space:]]+1$' /tmp/m_arm.txt \
+            || { echo "::error::ARM64EC macro not defined (__arm64ec__/_M_ARM64EC)"; exit 1; }
+          
+          # 하이브리드(호환) 툴체인은 x64 매크로도 함께 정의될 수 있으므로 에러가 아니라 안내만
+          if grep -qE '(^|[[:space:]])(#define[[:space:]]+)(__x86_64__|_M_X64|_M_AMD64)\b' /tmp/m_arm.txt; then
+            echo "::notice::x64 compatibility macros detected (hybrid ARM64EC) — allowed"
+          fi
+          
+          # --- Link a tiny probe and verify PE machine = ARM64EC (0xA641) ---
+          printf 'int main(void){return 0;}\n' > /tmp/__ec_probe.c
+          arm64ec-w64-mingw32-clang --target=arm64ec-w64-mingw32 -fuse-ld=lld /tmp/__ec_probe.c -o /tmp/__ec_probe.exe
+          llvm-readobj --file-headers /tmp/__ec_probe.exe | grep -Eiq 'Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?ARM64EC([[:space:]]|\()' \
+            || { echo "::error::hello world is not ARM64EC"; llvm-readobj --file-headers /tmp/__ec_probe.exe | sed -n '1,80p'; exit 1; }
+
       - name: Verify toolchain in PATH
         run: |
           set -Eeuo pipefail
@@ -255,6 +273,12 @@ jobs:
           printf 'int main(void){return 0;}\n' > /tmp/t.c
           arm64ec-w64-mingw32-clang -v --target=arm64ec-w64-mingw32 /tmp/t.c -o /tmp/t-ec.exe -fuse-ld=lld
           i686-w64-mingw32-clang    -v --target=i686-w64-mingw32    /tmp/t.c -o /tmp/t-x86.exe -fuse-ld=lld
+
+          # Verify probe binaries' machine types (no silent fallbacks)
+          llvm-readobj --file-headers /tmp/t-ec.exe  | grep -Eiq 'Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?ARM64EC([[:space:]]|\()' \
+            || { echo "::error::/tmp/t-ec.exe is not ARM64EC"; llvm-readobj --file-headers /tmp/t-ec.exe  | sed -n '1,80p'; exit 1; }
+          llvm-readobj --file-headers /tmp/t-x86.exe | grep -Eiq 'Machine:[[:space:]]*(IMAGE_FILE_MACHINE_)?I386([[:space:]]|\()' \
+            || { echo "::error::/tmp/t-x86.exe is not I386";   llvm-readobj --file-headers /tmp/t-x86.exe | sed -n '1,80p'; exit 1; }
 
           meson setup build.ec \
             --cross-file "${GITHUB_WORKSPACE}/arm64ec.cross" \
