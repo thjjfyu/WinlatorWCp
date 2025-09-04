@@ -296,18 +296,32 @@ jobs:
             PATCH_MISC=0
             CHANGED=0
             # patches --------------------------------------------------------------- #
-            # v2.5 UnmappedSubresource constexpr init issue -> safe cast
+            # v2.5 UnmappedSubresource constexpr init issue -> safe cast (apply only if it uses D3D11_MAP)
             TEX="src/d3d11/d3d11_texture.h"
-            if [[ -f "$TEX" ]] && grep -qE '\bUnmappedSubresource\b' "$TEX"; then
-              cp "$TEX" "${TEX}.bak"
-              perl -0777 -i -pe \
-                's@\b(?:(?:inline\s+)?static\s+)((?:(?:const|constexpr)\s+)+)(?:D3D11_MAP|auto)\s+UnmappedSubresource\s*=\s*(?:D3D11_MAP\(\s*-?1u?\s*\)|static_cast\s*<\s*D3D11_MAP\s*>\s*\(\s*-?1\s*\)|\(\s*D3D11_MAP\s*\)\s*-?1)\s*;@inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);@g' \
-                "$TEX" \
-              || { echo "::error::perl substitution failed for $TEX"; exit 1; }
+            if [[ -f "$TEX" ]]; then
+              if grep -Eq '\b(static|constexpr|inline)[^;]*\bD3D11_MAP\s+UnmappedSubresource\b' "$TEX"; then
+                cp "$TEX" "${TEX}.bak"
+                perl -0777 -i -pe \
+                  's@\b(?:(?:inline\s+)?static\s+)((?:(?:const|constexpr)\s+)+)(?:D3D11_MAP|auto)\s+UnmappedSubresource\s*=\s*(?:D3D11_MAP\(\s*-?1u?\s*\)|static_cast\s*<\s*D3D11_MAP\s*>\s*\(\s*-?1\s*\)|\(\s*D3D11_MAP\s*\)\s*-?1)\s*;@inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);@g' \
+                  "$TEX" || { echo "::error::perl substitution failed for $TEX"; exit 1; }
             
-              grep -q 'inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);' "$TEX" \
-                && { PATCH_A=1; CHANGED=1; } \
-                || { echo "::error::Failed to verify UnmappedSubresource patch in $TEX"; sed -n '1,140p' "$TEX" || true; exit 1; }
+                if grep -Eq 'inline\s+static\s+const\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*static_cast<\s*D3D11_MAP\s*>\s*\(\s*-1\s*\)\s*;' "$TEX"; then
+                  PATCH_A=1
+                  CHANGED=1
+                  echo "::notice::Applied UnmappedSubresource fix (D3D11_MAP -> cast)"
+                else
+                  echo "::error::Failed to verify UnmappedSubresource patch in $TEX"
+                  sed -n '1,160p' "$TEX" || true
+                  exit 1
+                fi
+            
+              elif grep -Eq '\bstatic\s+constexpr\s+uint32_t\s+UnmappedSubresource\s*=\s*~0u\s*;' "$TEX"; then
+                echo "::notice::UnmappedSubresource already safe in ${tag} (uint32_t ~0u); no patch needed"
+                # no CHANGED, no PATCH_A
+            
+              else
+                echo "::notice::UnmappedSubresource symbol not found or uses an unknown form; skipping"
+              fi
             fi
             
             # patches --------------------------------------------------------------- #
