@@ -2,10 +2,14 @@ name: Build wowbox64.dll only (one-shot)
 
 on:
   workflow_dispatch:
+    inputs:
+      llvm_mingw_version:
+        description: llvm-mingw release tag (e.g. 20250430)
+        required: false
+        default: '20250430'
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -14,10 +18,10 @@ concurrency:
 jobs:
   wowbox64:
     name: Build upstream wowbox64.dll (latest) and pack WCP
-    runs-on: ubuntu-22.04-arm
+    runs-on: ubuntu-22.04-arm64
     timeout-minutes: 60
     env:
-      LLVM_MINGW_VERSION: 20250430
+      LLVM_MINGW_VERSION: ${{ inputs.llvm_mingw_version }}
     steps:
       - name: Install dependencies
         shell: bash
@@ -34,6 +38,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           url="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64.tar.xz"
+          echo "Downloading: $url"
           curl -fSLo llvm-mingw.tar.xz "$url"
           # Discover the top directory name inside the tarball instead of guessing
           ROOT_DIR=$(tar -tf llvm-mingw.tar.xz | head -n1 | cut -d/ -f1)
@@ -89,7 +94,7 @@ jobs:
             if [ -n "$CLANG_BIN" ] && [ -n "$CLANGXX_BIN" ]; then
               MODE="llvm-mingw-clang"
               CC="$CLANG_BIN"; CXX="$CLANGXX_BIN"; ASM_COMP="$CLANG_BIN"
-              CMAKE_EXTRA="-DCMAKE_C_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_CXX_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_ASM_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_ASM_FLAGS=-x\ assembler\ --target=aarch64-w64-mingw32 -DCMAKE_SYSROOT=${LLVM_MINGW_ROOT}"
+              CMAKE_EXTRA="-DCMAKE_C_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_CXX_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_ASM_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_ASM_FLAGS=\"-x assembler --target=aarch64-w64-mingw32\" -DCMAKE_SYSROOT=\"${LLVM_MINGW_ROOT}\""
             else
               echo "::error::No clang drivers found in $BIN (checked wrappers and versioned clang)."; ls -la "$BIN"; exit 1
             fi
@@ -150,17 +155,19 @@ jobs:
           set -Eeuo pipefail
           mkdir -p out
           cp "${{ steps.out.outputs.dll }}" wowbox64.dll
-          cat <<'JSON' > profile.json
+          # Use an unquoted heredoc so SHORT/DATECODE expand, but escape the syswow64 placeholder so it stays literal.
+          cat > profile.json <<EOF
           {
             "type": "WOWBox64",
             "versionName": "nightly-${SHORT}",
             "versionCode": ${DATECODE},
             "description": "${DATECODE} WowBox64 Build by Ari",
             "files": [
-              { "source": "wowbox64.dll", "target": "${syswow64}/wowbox64.dll" }
+              { "source": "wowbox64.dll", "target": "\${syswow64}/wowbox64.dll" }
             ]
           }
-          JSON
+          EOF
+          jq . profile.json || { echo '::warning::profile.json is not valid JSON'; cat -n profile.json; exit 1; }
           tar --zstd --format=gnu --owner=0 --group=0 --numeric-owner --sort=name \
             -cf "out/wowbox64-nightly-${DATECODE}.wcp" profile.json wowbox64.dll
           echo "wcp=out/wowbox64-nightly-${DATECODE}.wcp" >> $GITHUB_OUTPUT
