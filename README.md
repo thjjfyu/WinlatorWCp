@@ -29,7 +29,6 @@
 |PRoot  | legacy approach, no longer used. |
 
 Discontinued or nightly builds are not covered.<br>
-The old unofficial glibc based Winlator is no longer recommended.<br>
 CMod (bionic) offers the best controller support.
 </details>
 <br>
