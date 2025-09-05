@@ -11,17 +11,28 @@
 ---
 
 ## 🪟 Winlator Runtimes Info
-📌 Winlator is an Android application that lets you to run Windows (x86_64) applications
-| Type | Description | 📜 |
-|:-:|-|-|
-|Glibc  | official default. stable with solid performance. | |
-|Bionic | Android native approach. Can be faster, but compatibility is lower and unexpected issues can arise. | |
-|PRoot  | legacy approach, no longer used. | |
+📌 Winlator is an Android application that lets you to run Windows (x86_64) applications.
+| Type | Description |
+|:-:|-|
+|Glibc  | Official default. stable with solid performance. (Box64 Only) |
+|Bionic | Android native. sometimes faster, potential issues. (FEX + Box64) |
+|PRoot  | legacy approach, no longer used. |
 
-The old unofficial glibc-based Winlator is no longer recommended.<br>
-Winlator Cmod (bionic) offers the best controller support.
+<details>
+  <summary>⚡Links</summary>
+  
+| Type       | Description                                               |
+|:------:|---------------------------------------------------------------|
+| [**Official Winlator**](https://github.com/brunodev85/winlator) | The most stable option. |
+| [**Winlator-CMod**](https://github.com/coffincolors/winlator) | Bionic. best controller support. vkBasalt support. |
+| [**Winlator-Frost**](https://github.com/MrPhryaNikFrosty/Winlator-Frost) | Glibc. official Winlator base. |
+| [**Winlator-AMod**](https://github.com/afeimod/winlator-mod) | Glibc. official Winlator base. |
 
-<br><br>
+Discontinued or nightly builds are not covered.<br>
+The old unofficial glibc based Winlator is no longer recommended.
+</details>
+<br>
+
 
 ## ⚙️ FEXCore & Box64
 📌 Nightly - YYMMDD
@@ -41,7 +52,6 @@ Winlator Cmod (bionic) offers the best controller support.
 
 I recommend FEX by default. It’s easy to set up and usually just works.<br>
 Basic Box64 settings for unity games: ```STRONGMEM=1+ CALLRET=0 WEAKBARRIER=0~1```
-</details>
 </details>
 <br>
 
