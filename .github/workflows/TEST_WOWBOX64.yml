@@ -163,12 +163,8 @@ jobs:
             echo "::group::Debug: help.txt (first 200 lines)"
             sed -n '1,200p' help.txt || true
             echo "::endgroup::"
-            echo "::error::CMake target 'wowbox64' not found.
-			Hints:
-			- Ensure checkout is on v0.3.6+
-			- Ensure llvm-mingw tools are in PATH before configure (aarch64-w64-mingw32-clang/llvm-rc)
-			- See the previous step logs."
-						exit 1
+            echo "::error::CMake/Ninja target 'wowbox64' not found."
+            exit 1
           fi
           if grep -qi "wowbox64" help.txt; then
             cmake --build . --target wowbox64 -- -j"$(nproc)"
@@ -176,13 +172,9 @@ jobs:
             echo "::group::Debug: help.txt (first 200 lines)"
             sed -n '1,200p' help.txt || true
             echo "::endgroup::"
-            echo "::error::CMake target 'wowbox64' not found.
-			Hints:
-			- Ensure checkout is on v0.3.6+
-			- Ensure llvm-mingw tools are in PATH before configure (aarch64-w64-mingw32-clang/llvm-rc)
-			- See the previous step logs."
-						exit 1
-					  fi
+            echo "::error::CMake/Ninja target 'wowbox64' not found."
+            exit 1
+          fi
 
       - name: Locate and verify wowbox64.dll (ExternalProject output)
         id: out
