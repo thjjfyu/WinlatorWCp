@@ -10,7 +10,7 @@
 
 ---
 <details>
-  <summary>🚀How to install & Winlator info</summary>
+  <summary>🚀<b>How to install & Winlator info</b></summary>
 
 ## 📥 Install
 Menu → Contents → Install Content → pick .wcp
