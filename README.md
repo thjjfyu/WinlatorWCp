@@ -10,15 +10,12 @@
 
 ---
 <details>
-  <summary>🚀<b>How to install & Winlator info</b></summary>
+  <summary>🚀 <b>Winlator info</b></summary>
 
-## 📥 Install
-📌 On some versions, you can’t install wcp.<br><br>
-**Menu → Contents → Install Content → pick .wcp**
-<br><br>
-
-## 🪟 Winlator
-📌 Winlator is an Android application that lets you to run Windows (x86_64) applications.
+  ## 🪟 Winlator
+📌 Winlator is an Android application that lets you to run Windows (x86_64) applications.<br>
+📌 Discontinued or nightly builds are not covered.<br>
+📌 CMod (bionic) offers the best controller support.
 | Type       | 🧠 |
 |:------:|:------:|
 | [**Official Winlator**](https://github.com/brunodev85/winlator) | Glibc |
@@ -26,21 +23,31 @@
 | [**Winlator-AMod**](https://github.com/afeimod/winlator-mod) | Glibc |
 | [**Winlator-CMod**](https://github.com/coffincolors/winlator) | Bionic |
 
-<details>
-  <summary>⚡More info</summary>
-
 | Runtime | Description |
 |:-:|-|
 |Glibc  | Official default. stable with solid performance. (Box64 Only) |
 |Bionic | Android native. faster, potential issues. (FEX + Box64) |
 
-Discontinued or nightly builds are not covered.<br>
-CMod (bionic) offers the best controller support.
-</details>
+---
 
 </details>
+
+<details>
+  <summary>🚀 <b>How to install</b></summary>
+
+## 📥 Install
+📌 On some versions, you can’t install wcp.<br><br>
+**Menu → Contents → Install Content → pick .wcp**
 <br>
 
+---
+
+</details>
+
+<details>
+  <summary>🚀 <b>Troubleshooting</b></summary>
+
+</details>
 
 ## ⚙️ FEXCore & Box64
 📌 Nightly - YYMMDD
