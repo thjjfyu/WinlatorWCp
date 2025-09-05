@@ -10,6 +10,16 @@
 
 ---
 
+## 🪟 Winlator Runtimes Info
+📌 Winlator is an Android application that lets you to run Windows (x86_64) applications
+| Type | Description | 📜 |
+|:-:|-|-|
+|Glibc  | official default. stable with solid performance. | |
+|Bionic | Android native approach. Can be faster, but compatibility is lower and unexpected issues can arise. | |
+|PRoot  | legacy approach, no longer used. | |
+
+The old unofficial glibc-based Winlator is no longer recommended.<br>
+Winlator Cmod (bionic) offers the best controller support.
 <br>
 
 ## ⚙️ FEXCore & Box64
