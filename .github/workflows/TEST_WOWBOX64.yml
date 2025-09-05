@@ -153,8 +153,15 @@ jobs:
           if [ -z "$DLL" ]; then
             echo "::error::wowbox64.dll not produced"; exit 1
           fi
+      
+          echo "== file(1) =="
           file "$DLL"
-          objdump -p "$DLL" | grep -qi 'machine.*ARM64' || { echo "::error::Expected ARM64 PE"; exit 1; }
+      
+          echo "== llvm-readobj -h =="
+          "$LLVM_MINGW_ROOT/bin/llvm-readobj" -h "$DLL" | tee headers.txt
+          grep -qiE 'Format:\s*COFF' headers.txt || { echo "::error::Not a PE/COFF file"; exit 1; }
+          grep -qiE 'Machine:.*(ARM64|AARCH64)|Arch:\s*aarch64' headers.txt || { echo "::error::Not ARM64 (AArch64)"; exit 1; }
+      
           echo "dll=$DLL" >> "$GITHUB_OUTPUT"
 
       - name: Decide date code (YYMMDD, KST)
