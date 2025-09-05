@@ -19,6 +19,19 @@
 | FEXCore | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEX-NIGHTLY) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
 | Box64 Glibc | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-NIGHTLY) | <a href="https://github.com/ptitSeb/box64">🔗</a> |
 | Box64 Bionic | [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-BIONIC-NIGHTLY)| |
+
+<details>
+  <summary>⚡Info</summary>
+
+  
+| Type       | Description                                                   |
+|:------:|---------------------------------------------------------------|
+| **FEXCore**  | Easy to set up, and you can squeeze more performance by pairing it with the arm64ec translation layer.<br>(Games that require box64’s strongmem option might not run on FEX.) |
+| **Box64** | Setup is more involved, but it generally runs more games than FEX.<br>(Some picky titles may also run more smoothly.) |
+
+I recommend FEX by default. It’s easy to set up and usually just works.<br>(For Unity engine games, Box64 is generally more stable.)
+</details>
+</details>
 <br>
 
 ## 🧩 DXVK
@@ -42,7 +55,7 @@
 | **gplasync** | Reduces stuttering by rendering frames before shader compilation.<br>Possible graphics glitches. |
 | **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.**<br>(32-bit = same as standard DXVK.) |
 
-Try Sarek first. if you run into issues, try another version. Newer versions don’t always mean better performance.
+Try Sarek first. if you run into issues, try another version.<br>Newer versions don’t always mean better performance.
 </details>
 <br>
 
