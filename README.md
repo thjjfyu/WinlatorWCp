@@ -15,7 +15,7 @@
 | Type | Description |
 |:-:|-|
 |Glibc  | Official default. stable with solid performance. (Box64 Only) |
-|Bionic | Android native. sometimes faster, potential issues. (FEX + Box64) |
+|Bionic | Android native. faster, potential issues. (FEX + Box64) |
 |PRoot  | legacy approach, no longer used. |
 
 <details>
