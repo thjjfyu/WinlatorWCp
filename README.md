@@ -68,7 +68,7 @@
 | **Box64** | Setup is more involved, but it generally runs more games than FEX.<br>(Some picky titles may also run more smoothly.) |
 
 - Basic Box64 settings for unity games: ```STRONGMEM=1+``` ```CALLRET=0``` ```WEAKBARRIER=0~1```
-- Nightly: YYMMDD format.
+- Nightly: YYMMDD format. May include noncritical or unrelated commits.
 
 </details>
 <br>
