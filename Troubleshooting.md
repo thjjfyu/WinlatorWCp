@@ -32,5 +32,9 @@
 - DXVK 2.3.1–2.4.1 are pretty stable overall, but some games still throw the occasional graphics glitch. (Common in UE5 games.)
 - Games that precompile shaders can cause high load and stutter, wait for compilation to finish and monitor with ```DXVK_HUD=compiler```.
 
+## Wine/Proton
+
+- Don’t waste time chasing Wine/Proton hoping for fixes or some miracle improvement. The folks building Winlator and its forks know their stuff. if they haven’t pulled in a newer version, it’s because it isn’t worth it right now.
+
 
 
