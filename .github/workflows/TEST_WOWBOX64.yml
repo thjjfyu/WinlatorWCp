@@ -43,13 +43,17 @@ jobs:
           url="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-x86_64.tar.xz"
           echo "Downloading: $url"
           curl -fSLo llvm-mingw.tar.xz "$url"
-          ROOT_DIR=$(tar -tf llvm-mingw.tar.xz | head -n1 | cut -d/ -f1)
-          [ -n "$ROOT_DIR" ] || { echo "::error::Failed to detect root dir in llvm-mingw archive"; exit 1; }
-          tar -xf llvm-mingw.tar.xz
-          [ -d "$ROOT_DIR/bin" ] || { echo "::error::No bin directory in $ROOT_DIR"; ls -la; exit 1; }
-          echo "$PWD/$ROOT_DIR/bin" >> "$GITHUB_PATH"
-          echo "LLVM_MINGW_ROOT=$PWD/$ROOT_DIR" >> "$GITHUB_ENV"
-          echo "== llvm-mingw bin listing =="; ls -la "$ROOT_DIR/bin" | sed -n '1,200p'
+
+          # Avoid 'tar: stdout: write error' from 'tar -tf | head' under pipefail.
+          # Extract into a deterministic directory and use that as ROOT.
+          TOOLCHAIN_DIR="$PWD/llvm-mingw-root"
+          mkdir -p "$TOOLCHAIN_DIR"
+          tar -xf llvm-mingw.tar.xz -C "$TOOLCHAIN_DIR" --strip-components=1
+
+          [ -d "$TOOLCHAIN_DIR/bin" ] || { echo "::error::No bin directory in $TOOLCHAIN_DIR"; ls -la "$TOOLCHAIN_DIR"; exit 1; }
+          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+          echo "LLVM_MINGW_ROOT=$TOOLCHAIN_DIR" >> "$GITHUB_ENV"
+          echo "== llvm-mingw bin listing =="; ls -la "$TOOLCHAIN_DIR/bin" | sed -n '1,200p'
 
       - name: Checkout upstream Box64 (HEAD)
         uses: actions/checkout@v4
