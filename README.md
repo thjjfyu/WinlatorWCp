@@ -116,9 +116,13 @@ Newer versions don’t always mean better performance.
 </details>
 <br>
 
-## ✨ Drivers (for Adreno)
-[**K11MCH1's driver**](https://github.com/K11MCH1/AdrenoToolsDrivers)
-<br><br><br>
+## ✨ Driver (for Adreno)
+| Type |  |
+|:-------:|------|
+| [**K11MCH1**](https://github.com/K11MCH1/AdrenoToolsDrivers) | Qualcomm driver, Mesa turnip driver for a6xx - a7xx(partial) |
+| [**zoerakk**](https://github.com/zoerakk/qualcomm-adreno-driver) | Qualcomm driver for Elite / a830 |
+
+<br><br>
 
 
 ## 📦 Runtime Packages (official)
@@ -147,15 +151,16 @@ Newer versions don’t always mean better performance.
 <h3 align="center">
   
 [bylaws](https://github.com/bylaws)<br>
-[ptitSeb](https://github.com/ptitSeb)  
-[doitsujin](https://github.com/doitsujin)  
-[pythonlover02](https://github.com/pythonlover02)  
-[Ph42oN](https://gitlab.com/Ph42oN)  
-[HansKristian-Work](https://github.com/HansKristian-Work)  
-[brunodev85](https://github.com/brunodev85)  
-[coffincolors](https://github.com/coffincolors)  
-[Pipetto-crypto](https://github.com/Pipetto-crypto)  
-[K11MCH1](https://github.com/K11MCH1)
+[ptitSeb](https://github.com/ptitSeb)<br>
+[doitsujin](https://github.com/doitsujin)<br>
+[pythonlover02](https://github.com/pythonlover02)<br>
+[Ph42oN](https://gitlab.com/Ph42oN)<br>
+[HansKristian-Work](https://github.com/HansKristian-Work)<br>
+[brunodev85](https://github.com/brunodev85)<br>
+[coffincolors](https://github.com/coffincolors)<br>
+[Pipetto-crypto](https://github.com/Pipetto-crypto)<br>
+[K11MCH1](https://github.com/K11MCH1)<br>
+[zoerakk](https://github.com/zoerakk)
 
 </h3><p align="center">
 
