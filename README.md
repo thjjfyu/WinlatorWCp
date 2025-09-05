@@ -101,6 +101,7 @@ WIP
 
 - Try Sarek first. if you run into issues, try another version.<br>
 - Newer versions don’t always mean better performance.
+- Games that precompile shaders can cause high load and stutter, wait for compilation to finish and monitor with ```DXVK_HUD=compiler```.
 
 </details>
 <br>
@@ -118,6 +119,8 @@ WIP
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
 | **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.**<br>(32-bit = same as standard DXVK.) |
+
+- Frame rate limit: ```DXVK_FRAME_RATE``` ```VKD3D_FRAME_RATE```
 
 </details>
 <br>
