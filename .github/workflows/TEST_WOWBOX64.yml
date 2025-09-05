@@ -24,6 +24,14 @@ jobs:
       LLVM_MINGW_VERSION: ${{ inputs.llvm_mingw_version }}
       BOX64_PLATFORM_MACRO: -DWOW64=1 -DARM_DYNAREC=1
     steps:
+      - name: Checkout upstream Box64 (pin v0.3.6+ where WowBox64 exists)
+        uses: actions/checkout@v4
+        with:
+          repository: ptitSeb/box64
+          ref: v0.3.6
+          fetch-depth: 1
+          submodules: recursive
+
       - name: Install dependencies
         shell: bash
         run: |
@@ -35,42 +43,32 @@ jobs:
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             binutils zstd
 
-      - name: Download llvm-mingw (x86_64 host) and expose on PATH
+      - name: Download llvm-mingw (x86_64 host) into RUNNER_TEMP and expose on PATH
         id: toolchain
         shell: bash
         run: |
           set -Eeuo pipefail
           url="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-x86_64.tar.xz"
           echo "Downloading: $url"
-          curl -fSLo llvm-mingw.tar.xz "$url"
-
-          TOOLCHAIN_DIR="$PWD/llvm-mingw-root"
+          TOOLCHAIN_DIR="$RUNNER_TEMP/llvm-mingw-root"
           mkdir -p "$TOOLCHAIN_DIR"
-          tar -xf llvm-mingw.tar.xz -C "$TOOLCHAIN_DIR" --strip-components=1
-
+          curl -fSLo "$RUNNER_TEMP/llvm-mingw.tar.xz" "$url"
+          tar -xf "$RUNNER_TEMP/llvm-mingw.tar.xz" -C "$TOOLCHAIN_DIR" --strip-components=1
           [ -d "$TOOLCHAIN_DIR/bin" ] || { echo "::error::No bin directory in $TOOLCHAIN_DIR"; ls -la "$TOOLCHAIN_DIR"; exit 1; }
-          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+          # Persist for subsequent steps and also current shell
           echo "LLVM_MINGW_ROOT=$TOOLCHAIN_DIR" >> "$GITHUB_ENV"
+          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+          export LLVM_MINGW_ROOT="$TOOLCHAIN_DIR"
+          export PATH="$TOOLCHAIN_DIR/bin:$PATH"
           echo "== llvm-mingw bin listing =="; ls -la "$TOOLCHAIN_DIR/bin" | sed -n '1,200p'
 
       - name: Sanity-check llvm-mingw presence
         shell: bash
         run: |
           set -Eeuo pipefail
-          which clang || true
-          which aarch64-w64-mingw32-clang || true
-          which llvm-rc || true
-          which windres || true
-          clang --version || true
-          aarch64-w64-mingw32-clang --version || true
-
-      - name: Checkout upstream Box64 (pin v0.3.6+ where WowBox64 exists)
-        uses: actions/checkout@v4
-        with:
-          repository: ptitSeb/box64
-          ref: v0.3.6
-          fetch-depth: 1
-          submodules: recursive
+          command -v aarch64-w64-mingw32-clang
+          command -v llvm-rc
+          aarch64-w64-mingw32-clang --version | sed -n '1,2p'
 
       - name: Record commit info
         id: git
@@ -96,45 +94,12 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
 
-      - name: Show CMake cache and available targets
-        shell: bash
-        working-directory: build
-        run: |
-          set -Eeuo pipefail
-          echo '== Grep WOW/WINE/MINGW from CMakeCache.txt =='
-          grep -Ei 'WOW|WINE|MINGW' CMakeCache.txt || true
-          echo '== Writing --target help to help.txt (avoid broken pipe) =='
-          cmake --build . --target help > help.txt || true
-          echo '== First 200 lines of help.txt =='
-          sed -n '1,200p' help.txt || true
-
-      - name: Ensure llvm-mingw present (post-checkout)
+      - name: Export mingw compiler env for ExternalProject
         shell: bash
         run: |
           set -Eeuo pipefail
-          if [ -n "${LLVM_MINGW_ROOT:-}" ] && [ -d "${LLVM_MINGW_ROOT}/bin" ]; then
-            echo "llvm-mingw already present at $LLVM_MINGW_ROOT"
-          else
-            echo "Re-acquiring llvm-mingw into RUNNER_TEMP due to workspace cleanup"
-            url="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-x86_64.tar.xz"
-            echo "Downloading: $url"
-            mkdir -p "$RUNNER_TEMP/llvm-mingw-root"
-            curl -fSLo "$RUNNER_TEMP/llvm-mingw.tar.xz" "$url"
-            tar -xf "$RUNNER_TEMP/llvm-mingw.tar.xz" -C "$RUNNER_TEMP/llvm-mingw-root" --strip-components=1
-            echo "LLVM_MINGW_ROOT=$RUNNER_TEMP/llvm-mingw-root" >> "$GITHUB_ENV"
-            echo "$RUNNER_TEMP/llvm-mingw-root/bin" >> "$GITHUB_PATH"
-          fi
-          ls -la "${LLVM_MINGW_ROOT}/bin" | sed -n '1,80p'
-
-      - name: Prepare env for external mingw build
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          MINGW_BIN="$LLVM_MINGW_ROOT/bin"
-          echo "MINGW_BIN=$MINGW_BIN"
-          ls -la "$MINGW_BIN" | sed -n '1,80p'
-          command -v "$MINGW_BIN/aarch64-w64-mingw32-clang" || true
-          # Export full-path compilers so ExternalProject cmake sees absolute paths
+          MINGW_BIN="${LLVM_MINGW_ROOT}/bin"
+          [ -x "$MINGW_BIN/aarch64-w64-mingw32-clang" ] || { echo "::error::aarch64-w64-mingw32-clang not found under $MINGW_BIN"; exit 1; }
           {
             echo "CC=$MINGW_BIN/aarch64-w64-mingw32-clang"
             echo "CXX=$MINGW_BIN/aarch64-w64-mingw32-clang++"
@@ -145,6 +110,18 @@ jobs:
             echo "RANLIB=$MINGW_BIN/llvm-ranlib"
             echo "STRIP=$MINGW_BIN/llvm-strip"
           } >> "$GITHUB_ENV"
+          echo "Will use mingw toolchain from: $MINGW_BIN"
+
+      - name: Show CMake cache and targets (no pipe)
+        shell: bash
+        working-directory: build
+        run: |
+          set -Eeuo pipefail
+          echo '== Grep WOW/WINE/MINGW from CMakeCache.txt =='
+          grep -Ei 'WOW|WINE|MINGW' CMakeCache.txt || true
+          cmake --build . --target help > help.txt || true
+          echo '== First 200 lines of help.txt =='
+          sed -n '1,200p' help.txt || true
 
       - name: Build wowbox64 target (fail if missing)
         shell: bash
@@ -155,23 +132,9 @@ jobs:
             cmake --build . --target help > help.txt || true
           fi
           if grep -qi "wowbox64" help.txt; then
-            echo '== Using mingw toolchain (from $CC/$CXX/ASM) =='
             echo "CC=$CC"; echo "CXX=$CXX"; echo "ASM=$ASM"; echo "RC=$RC"
-            env | grep -E '^(CC|CXX|ASM|RC|AR|NM|RANLIB|STRIP)='
             cmake --build . --target wowbox64 -- -j"$(nproc)"
           else
-            echo "::group::Debug: help.txt (first 200 lines)"
-            sed -n '1,200p' help.txt || true
-            echo "::endgroup::"
-            echo "::error::CMake/Ninja target 'wowbox64' not found."
-            exit 1
-          fi
-          if grep -qi "wowbox64" help.txt; then
-            cmake --build . --target wowbox64 -- -j"$(nproc)"
-          else
-            echo "::group::Debug: help.txt (first 200 lines)"
-            sed -n '1,200p' help.txt || true
-            echo "::endgroup::"
             echo "::error::CMake/Ninja target 'wowbox64' not found."
             exit 1
           fi
@@ -199,7 +162,6 @@ jobs:
         shell: bash
         run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> $GITHUB_OUTPUT
 
-      # WCP packaging: kept EXACTLY as provided (no edits)
       - name: Package WCP (WowBox64)
         id: wcp
         env:
