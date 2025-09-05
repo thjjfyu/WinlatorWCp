@@ -13,7 +13,7 @@
 ## 🪟 Winlator
 📌 Winlator is an Android application that lets you to run Windows (x86_64) applications.
 | Type       | 🧠 |
-|:------:|:------:|------------------------------|
+|:------:|:------:|
 | [**Official Winlator**](https://github.com/brunodev85/winlator) | Glibc |
 | [**Winlator-Frost**](https://github.com/MrPhryaNikFrosty/Winlator-Frost) | Glibc |
 | [**Winlator-AMod**](https://github.com/afeimod/winlator-mod) | Glibc |
