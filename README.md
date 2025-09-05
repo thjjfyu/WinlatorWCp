@@ -13,9 +13,8 @@
   <summary>🚀 <b>Winlator info</b></summary>
 
   ## 🪟 Winlator
-📌 Winlator is an Android application that lets you to run Windows (x86_64) applications.<br>
 📌 Discontinued or nightly builds are not covered.<br>
-📌 CMod (bionic) offers the best controller support.
+📌 CMod (bionic) offers the best controller support.<br>
 | Type       | 🧠 |
 |:------:|:------:|
 | [**Official Winlator**](https://github.com/brunodev85/winlator) | Glibc |
@@ -37,7 +36,7 @@
 
 ## 📥 Install
 📌 On some versions, you can’t install wcp.<br><br>
-**Menu → Contents → Install Content → pick .wcp**
+**Menu → Contents → Install Content**
 <br>
 
 ---
