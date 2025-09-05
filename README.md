@@ -22,7 +22,7 @@
 <details>
   <summary>⚡More info</summary>
 
-| Type | Description |
+| Runtime | Description |
 |:-:|-|
 |Glibc  | Official default. stable with solid performance. (Box64 Only) |
 |Bionic | Android native. faster, potential issues. (FEX + Box64) |
