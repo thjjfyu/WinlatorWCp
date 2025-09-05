@@ -1,4 +1,4 @@
-name: _sarek-async-arm64ec test
+name: sarek-async-arm64ec test
 
 on:
   workflow_dispatch:
