@@ -26,8 +26,8 @@
 |Glibc  | Official default. stable with solid performance. (Box64 Only) |
 |Bionic | Android native. faster, potential issues. (FEX + Box64) |
 
-Discontinued or nightly builds are not covered.<br>
-CMod (bionic) offers the best controller support.<br>
+- Discontinued or nightly builds are not covered.<br>
+- CMod (bionic) offers the best controller support.<br>
 
 ---
 
@@ -57,7 +57,7 @@ WIP
 <br>
 
 ## ⚙️ FEXCore & Box64
-📌 Nightly - YYMMDD
+
 | Type | Build | 📜 |
 |:------:|:------:|:------:|
 | FEXCore | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEX-NIGHTLY) | <a href="https://github.com/FEX-Emu/FEX">🔗</a> |
@@ -72,11 +72,14 @@ WIP
 | **FEXCore**  | Easy to set up, and you can squeeze more performance by pairing it with the arm64ec translation layer.<br>(Games that require box64’s ```STRONGMEM``` might not run well on FEX.) |
 | **Box64** | Setup is more involved, but it generally runs more games than FEX.<br>(Some picky titles may also run more smoothly.) |
 
-Basic Box64 settings for unity games: ```STRONGMEM=1+``` ```CALLRET=0``` ```WEAKBARRIER=0~1```
+- Basic Box64 settings for unity games: ```STRONGMEM=1+``` ```CALLRET=0``` ```WEAKBARRIER=0~1```
+- Nightly: YYMMDD format.
+
 </details>
 <br>
 
 ## 🧩 DXVK (for DX9-11)
+
 | Build | 📜 |
 |-------|:------:|
 | [**DXVK**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK) |  <a href="https://github.com/doitsujin/dxvk">🔗</a> |
@@ -96,12 +99,14 @@ Basic Box64 settings for unity games: ```STRONGMEM=1+``` ```CALLRET=0``` ```WEAK
 | **gplasync** | Reduces stuttering by rendering frames before shader compilation.<br>(Possible graphics glitches.) |
 | **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.**<br>(32-bit = same as standard DXVK.) |
 
-Try Sarek first. if you run into issues, try another version.<br>
-Newer versions don’t always mean better performance.
+- Try Sarek first. if you run into issues, try another version.<br>
+- Newer versions don’t always mean better performance.
+
 </details>
 <br>
 
 ## 🌌 VKD3D-Proton (for DX12)
+
 | Build | 📜 |
 |-------|:------:|
 | [**VKD3D-proton**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON) |  <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
@@ -127,8 +132,7 @@ Newer versions don’t always mean better performance.
 
 
 ## 📦 Runtime Packages (official)
-📌 If older VC++ is needed, try an AIO package. <br>
-📌 May require the official .NET Framework instead of Mono.
+
 | Package | Description |
 |-------|-------------|
 | [**Visual C++ x64**](https://aka.ms/vs/17/release/vc_redist.x64.exe) | 2015–2022 Redistributable |
@@ -139,10 +143,14 @@ Newer versions don’t always mean better performance.
 | [**XNA Framework**](https://download.microsoft.com/download/a/c/2/ac2c903b-e6e8-42c2-9fd7-bebac362a930/xnafx40_redist.msi) | Old indie games runtime |
 | [**DirectX (June 2010)**](https://download.microsoft.com/download/8/4/a/84a35bf1-dafe-4ae8-82af-ad2ae20b6b14/directx_Jun2010_redist.exe) | Install ONLY if missing DLL (d3dx9_43.dll...) |
 | [**PhysX Legacy**](https://www.nvidia.com/content/DriverDownload-March2009/confirmation.php?url=/Windows/9.13.0604/PhysX-9.13.0604-SystemSoftware-Legacy.msi&lang=us&type=Other) | Install ONLY if a old game requests PhysX DLL |
-<br>
 
+<details>
+  <summary>⚡More info</summary>
 
+- If older VC++ is needed, try an [**AIO package**](https://github.com/abbodi1406/vcredist). <br>
+- May require the official [**.NET Framework**](https://dotnet.microsoft.com/ko-kr/download/dotnet-framework) instead of Mono.
 
+</details>
 
 <br><br>
 
@@ -155,7 +163,7 @@ Newer versions don’t always mean better performance.
 [bylaws](https://github.com/bylaws)<br>
 [coffincolors](https://github.com/coffincolors)<br>
 [doitsujin](https://github.com/doitsujin)<br>
-[HansKristian-Work](https://github.com/HansKristian-Work)<br>
+[Hans-Kristian Arntzen](https://github.com/HansKristian-Work)<br>
 [K11MCH1](https://github.com/K11MCH1)<br>
 [Ph42oN](https://gitlab.com/Ph42oN)<br>
 [Pipetto-crypto](https://github.com/Pipetto-crypto)<br>
