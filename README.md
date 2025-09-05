@@ -49,6 +49,9 @@
 
 </details>
 
+---
+<br>
+
 ## ⚙️ FEXCore & Box64
 📌 Nightly - YYMMDD
 | Type | Build | 📜 |
