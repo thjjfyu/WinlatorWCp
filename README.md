@@ -26,7 +26,6 @@
 |:-:|-|
 |Glibc  | Official default. stable with solid performance. (Box64 Only) |
 |Bionic | Android native. faster, potential issues. (FEX + Box64) |
-|PRoot  | legacy approach, no longer used. |
 
 Discontinued or nightly builds are not covered.<br>
 CMod (bionic) offers the best controller support.
