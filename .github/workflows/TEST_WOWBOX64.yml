@@ -20,54 +20,32 @@ jobs:
       LLVM_MINGW_VERSION: 20250430
     steps:
       - name: Install dependencies
+        shell: bash
         run: |
           set -Eeuo pipefail
           sudo apt-get update -yq
           sudo apt-get install -yq --no-install-recommends \
-            git cmake make python3 curl ca-certificates xz-utils file binutils \
-            clang lld \
-            gcc-mingw-w64-aarch64 g++-mingw-w64-aarch64 binutils-mingw-w64-aarch64
+            git cmake make python3 \
+            curl ca-certificates xz-utils file binutils zstd
 
-      - name: Download llvm-mingw (aarch64 host)
-        run: |
-          set -Eeuo pipefail
-          url="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64.tar.xz"
-          curl -fsSL "$url" -o llvm-mingw.tar.xz
-          tar -xf llvm-mingw.tar.xz
-          echo "$PWD/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64/bin" >> $GITHUB_PATH
-          echo "MINGW_COMPILER_PATH=$PWD/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64/bin" >> $GITHUB_ENV
-          echo "LLVM_MINGW_ROOT=$PWD/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64" >> $GITHUB_ENV
-          echo "BOX64_PLATFORM_MACRO=-DWOW64=1 -DARM_DYNAREC=1" >> $GITHUB_ENV
-
-      - name: Expose MinGW (aarch64) tools globally (best effort)
-        run: |
-          set -Eeuo pipefail
-          BIN="$MINGW_COMPILER_PATH"
-          for t in aarch64-w64-mingw32-clang aarch64-w64-mingw32-clang++ aarch64-w64-mingw32-as \
-                   aarch64-w64-mingw32-windres llvm-rc llvm-ar llvm-ranlib clang clang++ \
-                   aarch64-w64-mingw32-gcc aarch64-w64-mingw32-g++; do
-            src="$BIN/$t"
-            if [ -x "$src" ]; then
-              sudo ln -sf "$src" "/usr/bin/$t"
-            fi
-          done
-
-      - name: Sanity check toolchains
+      - name: Download llvm-mingw (aarch64 host) and detect root
+        id: toolchain
         shell: bash
         run: |
           set -Eeuo pipefail
-          set -x
-          : "${MINGW_COMPILER_PATH:?MINGW_COMPILER_PATH not set}"
-          : "${LLVM_MINGW_ROOT:?LLVM_MINGW_ROOT not set}"
-          export PATH="$MINGW_COMPILER_PATH:$PATH"
-          echo "PATH=$PATH"
-          echo "== llvm-mingw bin listing =="
-          ls -la "$MINGW_COMPILER_PATH" | sed -n '1,200p'
-          echo "== apt mingw aarch64 presence =="
-          command -v aarch64-w64-mingw32-gcc || true
-          command -v aarch64-w64-mingw32-g++ || true
-          command -v aarch64-w64-mingw32-as || true
-          command -v aarch64-w64-mingw32-windres || true
+          url="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64.tar.xz"
+          curl -fSLo llvm-mingw.tar.xz "$url"
+          # Discover the top directory name inside the tarball instead of guessing
+          ROOT_DIR=$(tar -tf llvm-mingw.tar.xz | head -n1 | cut -d/ -f1)
+          [ -n "$ROOT_DIR" ] || { echo "::error::Failed to detect root dir in llvm-mingw archive"; exit 1; }
+          tar -xf llvm-mingw.tar.xz
+          [ -d "$ROOT_DIR/bin" ] || { echo "::error::No bin directory in $ROOT_DIR"; ls -la; exit 1; }
+          echo "root=$ROOT_DIR" >> "$GITHUB_OUTPUT"
+          echo "$PWD/$ROOT_DIR/bin" >> "$GITHUB_PATH"
+          echo "LLVM_MINGW_ROOT=$PWD/$ROOT_DIR" >> "$GITHUB_ENV"
+          echo "MINGW_COMPILER_PATH=$PWD/$ROOT_DIR/bin" >> "$GITHUB_ENV"
+          echo "BOX64_PLATFORM_MACRO=-DWOW64=1 -DARM_DYNAREC=1" >> "$GITHUB_ENV"
+          echo "== llvm-mingw bin listing =="; ls -la "$ROOT_DIR/bin" | sed -n '1,200p'
 
       - name: Checkout upstream Box64 (HEAD)
         uses: actions/checkout@v4
@@ -78,6 +56,7 @@ jobs:
 
       - name: Record commit info
         id: git
+        shell: bash
         run: |
           set -Eeuo pipefail
           SHA=$(git rev-parse HEAD)
@@ -90,37 +69,37 @@ jobs:
           set -Eeuo pipefail
           set -x
 
-          : "${MINGW_COMPILER_PATH:?MINGW_COMPILER_PATH not set}"
           : "${LLVM_MINGW_ROOT:?LLVM_MINGW_ROOT not set}"
+          : "${MINGW_COMPILER_PATH:?MINGW_COMPILER_PATH not set}"
           export PATH="$MINGW_COMPILER_PATH:$PATH"
-
           BIN="$MINGW_COMPILER_PATH"
-          # Detect preferred toolchain in order: llvm-mingw wrappers -> llvm-mingw clang -> apt gcc
+
+          # Resolve compilers from the extracted toolchain (absolute paths, no PATH guessing)
           if [ -x "$BIN/aarch64-w64-mingw32-clang" ] && [ -x "$BIN/aarch64-w64-mingw32-clang++" ]; then
             MODE="llvm-mingw-wrappers"
             CC="$BIN/aarch64-w64-mingw32-clang"; CXX="$BIN/aarch64-w64-mingw32-clang++"; ASM_COMP="$BIN/aarch64-w64-mingw32-clang"
-            RC_BIN="$BIN/llvm-rc"; [ -x "$RC_BIN" ] || RC_BIN="$BIN/aarch64-w64-mingw32-windres"
             CMAKE_EXTRA=""
-          elif [ -x "$BIN/clang" ] || compgen -G "$BIN/clang-[0-9]*" >/dev/null; then
-            MODE="llvm-mingw-clang"
-            CLANG_BIN="$BIN/clang"; [ -x "$CLANG_BIN" ] || CLANG_BIN=$(compgen -G "$BIN/clang-[0-9]*" | head -n1)
-            CLANGXX_BIN="$BIN/clang++"; [ -x "$CLANGXX_BIN" ] || CLANGXX_BIN=$(compgen -G "$BIN/clang++-[0-9]*" | head -n1)
-            CC="$CLANG_BIN"; CXX="$CLANGXX_BIN"; ASM_COMP="$CLANG_BIN"
-            RC_BIN="$BIN/llvm-rc"; [ -x "$RC_BIN" ] || RC_BIN="$BIN/aarch64-w64-mingw32-windres"
-            CMAKE_EXTRA="-DCMAKE_C_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_CXX_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_ASM_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_ASM_FLAGS=-x\ assembler\ --target=aarch64-w64-mingw32 -DCMAKE_SYSROOT=${LLVM_MINGW_ROOT}"
           else
-            MODE="apt-gcc"
-            CC=$(command -v aarch64-w64-mingw32-gcc)
-            CXX=$(command -v aarch64-w64-mingw32-g++)
-            ASM_COMP=$(command -v aarch64-w64-mingw32-as)
-            RC_BIN=$(command -v aarch64-w64-mingw32-windres)
-            if [ -z "$CC" ] || [ -z "$CXX" ] || [ -z "$ASM_COMP" ] || [ -z "$RC_BIN" ]; then
-              echo "::error::No usable Windows AArch64 cross compiler found (neither llvm-mingw nor apt)"; exit 1;
+            # Some archives ship version-suffixed clang like clang-19
+            CLANG_BIN=""; CLANGXX_BIN=""
+            if [ -x "$BIN/clang" ]; then CLANG_BIN="$BIN/clang"; fi
+            if [ -x "$BIN/clang++" ]; then CLANGXX_BIN="$BIN/clang++"; fi
+            if [ -z "$CLANG_BIN" ]; then CLANG_BIN=$(compgen -G "$BIN/clang-[0-9]*" | head -n1 || true); fi
+            if [ -z "$CLANGXX_BIN" ]; then CLANGXX_BIN=$(compgen -G "$BIN/clang++-[0-9]*" | head -n1 || true); fi
+            if [ -n "$CLANG_BIN" ] && [ -n "$CLANGXX_BIN" ]; then
+              MODE="llvm-mingw-clang"
+              CC="$CLANG_BIN"; CXX="$CLANGXX_BIN"; ASM_COMP="$CLANG_BIN"
+              CMAKE_EXTRA="-DCMAKE_C_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_CXX_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_ASM_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_ASM_FLAGS=-x\ assembler\ --target=aarch64-w64-mingw32 -DCMAKE_SYSROOT=${LLVM_MINGW_ROOT}"
+            else
+              echo "::error::No clang drivers found in $BIN (checked wrappers and versioned clang)."; ls -la "$BIN"; exit 1
             fi
-            CMAKE_EXTRA=""
           fi
 
-          echo "Selected mode: $MODE"
+          # RC tool: prefer llvm-rc else windres
+          if [ -x "$BIN/llvm-rc" ]; then RC_BIN="$BIN/llvm-rc"; elif [ -x "$BIN/aarch64-w64-mingw32-windres" ]; then RC_BIN="$BIN/aarch64-w64-mingw32-windres"; else echo "::error::No resource compiler in $BIN"; exit 1; fi
+          AR_OPT=""; RANLIB_OPT=""
+          [ -x "$BIN/llvm-ar" ] && AR_OPT="-DCMAKE_AR=$BIN/llvm-ar"
+          [ -x "$BIN/llvm-ranlib" ] && RANLIB_OPT="-DCMAKE_RANLIB=$BIN/llvm-ranlib"
 
           mkdir -p build
           cd build
@@ -135,7 +114,8 @@ jobs:
             ${CMAKE_EXTRA} \
             ${BOX64_PLATFORM_MACRO} \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
+            -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON \
+            ${AR_OPT} ${RANLIB_OPT}
 
           "$CC" --version || true
           "$CXX" --version || true
@@ -144,6 +124,7 @@ jobs:
 
       - name: Locate and verify wowbox64.dll
         id: out
+        shell: bash
         run: |
           set -Eeuo pipefail
           DLL=$(find build -type f -iname 'wowbox64.dll' | head -n1 || true)
@@ -156,6 +137,7 @@ jobs:
 
       - name: Decide date code (YYMMDD, KST)
         id: date
+        shell: bash
         run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> $GITHUB_OUTPUT
 
       - name: Package WCP (WowBox64)
@@ -163,6 +145,7 @@ jobs:
         env:
           DATECODE: ${{ steps.date.outputs.code }}
           SHORT:    ${{ steps.git.outputs.short }}
+        shell: bash
         run: |
           set -Eeuo pipefail
           mkdir -p out
