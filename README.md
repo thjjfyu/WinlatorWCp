@@ -85,7 +85,7 @@ Try order: Sarek → 2.3.1-x ~ 2.4.1-x → (Glitches = Up, freezes = Down or use
 
 ---
 
-<h3 align="center">All rights and credit goes to the original creators and those who inspired this work</h3><p align="center">
+<h3 align="center">All credit to the original creators. Big thanks to everyone who inspired this.</h3><p align="center">
 <h3 align="center">
   
 [bylaws](https://github.com/bylaws)<br>
