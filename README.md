@@ -38,9 +38,9 @@
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
-| **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3 |
-| **gplasync** | Rendering frames before shader compilation = less stutter |
-| **arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
+| **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3.<br>You might see better performance on older devices. |
+| **gplasync** | Rendering frames before shader compilation = less stutter. |
+| **arm64ec**  | Performance boost for 64-bit games.<br>32-bit: same as normal DXVK. **Use only with FEX.**   |
 
 Try order: Sarek → 2.3.1-x ~ 2.4.1-x → (Glitches = Up, freezes = Down or use vanilla DXVK)
 </details>
@@ -58,7 +58,7 @@ Try order: Sarek → 2.3.1-x ~ 2.4.1-x → (Glitches = Up, freezes = Down or use
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
-| **arm64ec**  | Performance boost for 64-bit games (only with FEX)   |
+| **arm64ec**  | Performance boost for 64-bit games.<br>32-bit: same as normal DXVK. **Use only with FEX.**   |
 
 </details>
 <br>
