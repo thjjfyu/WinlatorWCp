@@ -46,6 +46,8 @@
 
 </details>
 
+- [Troubleshooting](https://github.com/Arihany/WinlatorWCPHub/blob/main/Troubleshooting.md)
+
 ---
 <br>
 
