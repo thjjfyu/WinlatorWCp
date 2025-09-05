@@ -61,6 +61,7 @@
 
 <details>
   <summary>⚡More info</summary>
+<br>
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
@@ -87,6 +88,7 @@
 
 <details>
   <summary>⚡More info</summary>
+<br> 
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
@@ -110,6 +112,7 @@
 
 <details>
   <summary>⚡More info</summary>
+<br>
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
@@ -144,7 +147,8 @@
 
 <details>
   <summary>⚡More info</summary>
-
+<br>
+  
 - If older VC++ is needed, try an [**AIO package**](https://github.com/abbodi1406/vcredist). <br>
 - May require the official [**.NET Framework**](https://dotnet.microsoft.com/ko-kr/download/dotnet-framework) instead of Mono.
 
