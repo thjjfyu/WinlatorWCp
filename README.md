@@ -37,8 +37,9 @@ CMod (bionic) offers the best controller support.<br>
   <summary>🚀 <b>How to install</b></summary>
 
 ## 📥 Install
-📌 On some versions, you can’t install wcp.<br><br>
-**Menu → Contents → Install Content**
+**Menu → Contents → Install Content**<br><br>
+
+**Menu → Adrenotools GPU Drivers → Install Drivers**
 <br>
 
 ---
