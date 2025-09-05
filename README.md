@@ -150,17 +150,17 @@ Newer versions don’t always mean better performance.
 
 <h3 align="center">All credit to the original creators. Big thanks to everyone who inspired this.</h3><p align="center">
 <h3 align="center">
-  
-[bylaws](https://github.com/bylaws)<br>
-[ptitSeb](https://github.com/ptitSeb)<br>
-[doitsujin](https://github.com/doitsujin)<br>
-[pythonlover02](https://github.com/pythonlover02)<br>
-[Ph42oN](https://gitlab.com/Ph42oN)<br>
-[HansKristian-Work](https://github.com/HansKristian-Work)<br>
+
 [brunodev85](https://github.com/brunodev85)<br>
+[bylaws](https://github.com/bylaws)<br>
 [coffincolors](https://github.com/coffincolors)<br>
-[Pipetto-crypto](https://github.com/Pipetto-crypto)<br>
+[doitsujin](https://github.com/doitsujin)<br>
+[HansKristian-Work](https://github.com/HansKristian-Work)<br>
 [K11MCH1](https://github.com/K11MCH1)<br>
+[Ph42oN](https://gitlab.com/Ph42oN)<br>
+[Pipetto-crypto](https://github.com/Pipetto-crypto)<br>
+[ptitSeb](https://github.com/ptitSeb)<br>
+[pythonlover02](https://github.com/pythonlover02)<br>
 [zoerakk](https://github.com/zoerakk)
 
 </h3><p align="center">
