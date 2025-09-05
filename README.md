@@ -12,8 +12,9 @@
 <details>
   <summary>🚀<b>How to install & Winlator info</b></summary>
 
-## 📥 Install (On some versions, you can’t install wcp)
-Menu → Contents → Install Content → pick .wcp
+## 📥 Install
+📌 On some versions, you can’t install wcp.<br><br>
+**Menu → Contents → Install Content → pick .wcp**
 <br><br>
 
 ## 🪟 Winlator
