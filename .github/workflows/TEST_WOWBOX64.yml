@@ -108,6 +108,26 @@ jobs:
           echo '== First 200 lines of help.txt =='
           sed -n '1,200p' help.txt || true
 
+      - name: Prepare env for external mingw build
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          MINGW_BIN="$LLVM_MINGW_ROOT/bin"
+          echo "MINGW_BIN=$MINGW_BIN"
+          ls -la "$MINGW_BIN" | sed -n '1,80p'
+          command -v "$MINGW_BIN/aarch64-w64-mingw32-clang" || true
+          # Export full-path compilers so ExternalProject cmake sees absolute paths
+          {
+            echo "CC=$MINGW_BIN/aarch64-w64-mingw32-clang"
+            echo "CXX=$MINGW_BIN/aarch64-w64-mingw32-clang++"
+            echo "ASM=$MINGW_BIN/aarch64-w64-mingw32-clang"
+            echo "RC=$MINGW_BIN/llvm-rc"
+            echo "AR=$MINGW_BIN/llvm-ar"
+            echo "NM=$MINGW_BIN/llvm-nm"
+            echo "RANLIB=$MINGW_BIN/llvm-ranlib"
+            echo "STRIP=$MINGW_BIN/llvm-strip"
+          } >> "$GITHUB_ENV"
+
       - name: Build wowbox64 target (fail if missing)
         shell: bash
         working-directory: build
@@ -117,18 +137,34 @@ jobs:
             cmake --build . --target help > help.txt || true
           fi
           if grep -qi "wowbox64" help.txt; then
+            echo '== Using mingw toolchain (from $CC/$CXX/ASM) =='
+            echo "CC=$CC"; echo "CXX=$CXX"; echo "ASM=$ASM"; echo "RC=$RC"
+            env | grep -E '^(CC|CXX|ASM|RC|AR|NM|RANLIB|STRIP)='
             cmake --build . --target wowbox64 -- -j"$(nproc)"
           else
             echo "::group::Debug: help.txt (first 200 lines)"
             sed -n '1,200p' help.txt || true
             echo "::endgroup::"
             echo "::error::CMake target 'wowbox64' not found.
-          Hints:
-          - Ensure checkout is on v0.3.6+
-          - Ensure llvm-mingw tools are in PATH before configure (aarch64-w64-mingw32-clang/llvm-rc)
-          - See the previous step logs."
-                      exit 1
-                    fi
+Hints:
+- Ensure checkout is on v0.3.6+
+- Ensure llvm-mingw tools are in PATH before configure (aarch64-w64-mingw32-clang/llvm-rc)
+- See the previous step logs."
+            exit 1
+          fi
+          if grep -qi "wowbox64" help.txt; then
+            cmake --build . --target wowbox64 -- -j"$(nproc)"
+          else
+            echo "::group::Debug: help.txt (first 200 lines)"
+            sed -n '1,200p' help.txt || true
+            echo "::endgroup::"
+            echo "::error::CMake target 'wowbox64' not found.
+Hints:
+- Ensure checkout is on v0.3.6+
+- Ensure llvm-mingw tools are in PATH before configure (aarch64-w64-mingw32-clang/llvm-rc)
+- See the previous step logs."
+            exit 1
+          fi
 
       - name: Locate and verify wowbox64.dll (ExternalProject output)
         id: out
