@@ -46,13 +46,6 @@
 
 </details>
 
-<details>
-  <summary>🚀 <b>Troubleshooting</b></summary>
-
-WIP
-
-</details>
-
 ---
 <br>
 
