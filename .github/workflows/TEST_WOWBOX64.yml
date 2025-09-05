@@ -1,4 +1,4 @@
-name: Build wowbox64.dll (upstream-style, hardened)
+name: wowbox64
 
 on:
   workflow_dispatch:
