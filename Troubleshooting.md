@@ -1,4 +1,4 @@
-<h1 align="center">Troubleshooting & some info..</h1>
+<h1 align="center">Troubleshooting & some info...</h1>
 <h3 align="center">⚠️WIP</h3><br><br>
 
 ## General
