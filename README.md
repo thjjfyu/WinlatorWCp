@@ -55,7 +55,7 @@ Basic Box64 settings for unity games: ```STRONGMEM=1+``` ```CALLRET=0``` ```WEAK
 </details>
 <br>
 
-## 🧩 DXVK
+## 🧩 DXVK (For DX9-11)
 | Build | 📜 |
 |-------|:------:|
 | [**DXVK**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK) |  <a href="https://github.com/doitsujin/dxvk">🔗</a> |
@@ -80,7 +80,7 @@ Newer versions don’t always mean better performance.
 </details>
 <br>
 
-## 🌌 VKD3D-Proton
+## 🌌 VKD3D-Proton (For DX12)
 | Build | 📜 |
 |-------|:------:|
 | [**VKD3D-proton**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON) |  <a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
