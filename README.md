@@ -21,15 +21,15 @@
 | Box64 Bionic | [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-BIONIC-NIGHTLY)| |
 
 <details>
-  <summary>⚡Info</summary>
-
+  <summary>⚡More info</summary>
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
 | **FEXCore**  | Easy to set up, and you can squeeze more performance by pairing it with the arm64ec translation layer.<br>(Games that require box64’s strongmem option might not run on FEX.) |
 | **Box64** | Setup is more involved, but it generally runs more games than FEX.<br>(Some picky titles may also run more smoothly.) |
 
-I recommend FEX by default. It’s easy to set up and usually just works.<br>(For Unity engine games, a well configured Box64 is generally more stable.)
+I recommend FEX by default. It’s easy to set up and usually just works.<br>
+Basic Box64 settings for unity games: ```STRONGMEM=1+ CALLRET=0 WEAKBARRIER=0~1```
 </details>
 </details>
 <br>
@@ -46,8 +46,7 @@ I recommend FEX by default. It’s easy to set up and usually just works.<br>(Fo
 | [**DXVK-gplasync-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-GPLASYNC-ARM64EC) |   |
 
 <details>
-  <summary>⚡DXVK version details</summary>
-
+  <summary>⚡More info</summary>
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
@@ -55,7 +54,8 @@ I recommend FEX by default. It’s easy to set up and usually just works.<br>(Fo
 | **gplasync** | Reduces stuttering by rendering frames before shader compilation.<br>Possible graphics glitches. |
 | **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.**<br>(32-bit = same as standard DXVK.) |
 
-Try Sarek first. if you run into issues, try another version.<br>Newer versions don’t always mean better performance.
+Try Sarek first. if you run into issues, try another version.<br>
+Newer versions don’t always mean better performance.
 </details>
 <br>
 
@@ -66,8 +66,7 @@ Try Sarek first. if you run into issues, try another version.<br>Newer versions 
 | [**VKD3D-proton-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON-ARM64EC) |   |
 
 <details>
-  <summary>⚡VKD3D-Proton version details</summary>
-
+  <summary>⚡More info</summary>
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
