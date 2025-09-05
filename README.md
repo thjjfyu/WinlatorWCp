@@ -9,6 +9,9 @@
 <h3 align="center">Automated builds, Always up to date</h3>
 
 ---
+<details>
+  <summary>🚀Quick start</summary>
+
 ## 📥 Install
 Menu → Contents → Install Content → pick .wcp
 <br><br>
@@ -33,7 +36,9 @@ Menu → Contents → Install Content → pick .wcp
 Discontinued or nightly builds are not covered.<br>
 CMod (bionic) offers the best controller support.
 </details>
-<br>
+
+</details>
+<br><br>
 
 
 ## ⚙️ FEXCore & Box64
