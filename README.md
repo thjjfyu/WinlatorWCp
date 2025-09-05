@@ -117,7 +117,7 @@ Newer versions don’t always mean better performance.
 <br>
 
 ## ✨ Driver (for Adreno)
-| Type |  |
+| Type | Description |
 |:-------:|------|
 | [**K11MCH1**](https://github.com/K11MCH1/AdrenoToolsDrivers) | Qualcomm driver, Mesa turnip driver for a6xx - a7xx(partial) |
 | [**zoerakk**](https://github.com/zoerakk/qualcomm-adreno-driver) | Qualcomm driver for Elite / a830 |
