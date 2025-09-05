@@ -50,7 +50,6 @@ The old unofficial glibc based Winlator is no longer recommended.
 | **FEXCore**  | Easy to set up, and you can squeeze more performance by pairing it with the arm64ec translation layer.<br>(Games that require box64’s ```STRONGMEM``` might not run well on FEX.) |
 | **Box64** | Setup is more involved, but it generally runs more games than FEX.<br>(Some picky titles may also run more smoothly.) |
 
-I recommend FEX by default. It’s easy to set up and usually just works.<br>
 Basic Box64 settings for unity games: ```STRONGMEM=1+``` ```CALLRET=0``` ```WEAKBARRIER=0~1```
 </details>
 <br>
