@@ -9,6 +9,9 @@
 <h3 align="center">Automated builds, Always up to date</h3>
 
 ---
+## 📥 Install
+Menu → Contents → Install Content → pick .wcp
+<br><br>
 
 ## 🪟 Winlator
 📌 Winlator is an Android application that lets you to run Windows (x86_64) applications.
