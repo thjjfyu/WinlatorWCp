@@ -1,4 +1,4 @@
-name: Build wowbox64.dll only (one-shot)
+name: Build wowbox64.dll (upstream-style)
 
 on:
   workflow_dispatch:
@@ -17,11 +17,12 @@ concurrency:
 
 jobs:
   wowbox64:
-    name: Build upstream wowbox64.dll (latest) and pack WCP
-    runs-on: ubuntu-22.04-arm64
+    name: Build upstream wowbox64.dll only
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       LLVM_MINGW_VERSION: ${{ inputs.llvm_mingw_version }}
+      BOX64_PLATFORM_MACRO: -DWOW64=1 -DARM_DYNAREC=1
     steps:
       - name: Install dependencies
         shell: bash
@@ -29,10 +30,12 @@ jobs:
           set -Eeuo pipefail
           sudo apt-get update -yq
           sudo apt-get install -yq --no-install-recommends \
-            git cmake make python3 \
-            curl ca-certificates xz-utils file binutils zstd
+            git cmake make \
+            curl ca-certificates xz-utils file \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            binutils zstd
 
-      - name: Download llvm-mingw (aarch64 host) and detect root
+      - name: Download llvm-mingw (aarch64 host) and expose on PATH
         id: toolchain
         shell: bash
         run: |
@@ -40,16 +43,12 @@ jobs:
           url="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-aarch64.tar.xz"
           echo "Downloading: $url"
           curl -fSLo llvm-mingw.tar.xz "$url"
-          # Discover the top directory name inside the tarball instead of guessing
           ROOT_DIR=$(tar -tf llvm-mingw.tar.xz | head -n1 | cut -d/ -f1)
           [ -n "$ROOT_DIR" ] || { echo "::error::Failed to detect root dir in llvm-mingw archive"; exit 1; }
           tar -xf llvm-mingw.tar.xz
           [ -d "$ROOT_DIR/bin" ] || { echo "::error::No bin directory in $ROOT_DIR"; ls -la; exit 1; }
-          echo "root=$ROOT_DIR" >> "$GITHUB_OUTPUT"
           echo "$PWD/$ROOT_DIR/bin" >> "$GITHUB_PATH"
           echo "LLVM_MINGW_ROOT=$PWD/$ROOT_DIR" >> "$GITHUB_ENV"
-          echo "MINGW_COMPILER_PATH=$PWD/$ROOT_DIR/bin" >> "$GITHUB_ENV"
-          echo "BOX64_PLATFORM_MACRO=-DWOW64=1 -DARM_DYNAREC=1" >> "$GITHUB_ENV"
           echo "== llvm-mingw bin listing =="; ls -la "$ROOT_DIR/bin" | sed -n '1,200p'
 
       - name: Checkout upstream Box64 (HEAD)
@@ -59,122 +58,54 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
-      - name: Record commit info
-        id: git
+      - name: Configure top-level (Linux target) per upstream style
         shell: bash
         run: |
           set -Eeuo pipefail
-          SHA=$(git rev-parse HEAD)
-          echo "sha=$SHA" >> $GITHUB_OUTPUT
-          echo "short=${SHA:0:7}" >> $GITHUB_OUTPUT
-
-      - name: Configure and build (WOW64 external project)
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          set -x
-
-          : "${LLVM_MINGW_ROOT:?LLVM_MINGW_ROOT not set}"
-          : "${MINGW_COMPILER_PATH:?MINGW_COMPILER_PATH not set}"
-          export PATH="$MINGW_COMPILER_PATH:$PATH"
-          BIN="$MINGW_COMPILER_PATH"
-
-          # Resolve compilers from the extracted toolchain (absolute paths, no PATH guessing)
-          if [ -x "$BIN/aarch64-w64-mingw32-clang" ] && [ -x "$BIN/aarch64-w64-mingw32-clang++" ]; then
-            MODE="llvm-mingw-wrappers"
-            CC="$BIN/aarch64-w64-mingw32-clang"; CXX="$BIN/aarch64-w64-mingw32-clang++"; ASM_COMP="$BIN/aarch64-w64-mingw32-clang"
-            CMAKE_EXTRA=""
-          else
-            # Some archives ship version-suffixed clang like clang-19
-            CLANG_BIN=""; CLANGXX_BIN=""
-            if [ -x "$BIN/clang" ]; then CLANG_BIN="$BIN/clang"; fi
-            if [ -x "$BIN/clang++" ]; then CLANGXX_BIN="$BIN/clang++"; fi
-            if [ -z "$CLANG_BIN" ]; then CLANG_BIN=$(compgen -G "$BIN/clang-[0-9]*" | head -n1 || true); fi
-            if [ -z "$CLANGXX_BIN" ]; then CLANGXX_BIN=$(compgen -G "$BIN/clang++-[0-9]*" | head -n1 || true); fi
-            if [ -n "$CLANG_BIN" ] && [ -n "$CLANGXX_BIN" ]; then
-              MODE="llvm-mingw-clang"
-              CC="$CLANG_BIN"; CXX="$CLANGXX_BIN"; ASM_COMP="$CLANG_BIN"
-              CMAKE_EXTRA="-DCMAKE_C_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_CXX_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_ASM_COMPILER_TARGET=aarch64-w64-mingw32 -DCMAKE_ASM_FLAGS=\"-x assembler --target=aarch64-w64-mingw32\" -DCMAKE_SYSROOT=\"${LLVM_MINGW_ROOT}\""
-            else
-              echo "::error::No clang drivers found in $BIN (checked wrappers and versioned clang)."; ls -la "$BIN"; exit 1
-            fi
-          fi
-
-          # RC tool: prefer llvm-rc else windres
-          if [ -x "$BIN/llvm-rc" ]; then RC_BIN="$BIN/llvm-rc"; elif [ -x "$BIN/aarch64-w64-mingw32-windres" ]; then RC_BIN="$BIN/aarch64-w64-mingw32-windres"; else echo "::error::No resource compiler in $BIN"; exit 1; fi
-          AR_OPT=""; RANLIB_OPT=""
-          [ -x "$BIN/llvm-ar" ] && AR_OPT="-DCMAKE_AR=$BIN/llvm-ar"
-          [ -x "$BIN/llvm-ranlib" ] && RANLIB_OPT="-DCMAKE_RANLIB=$BIN/llvm-ranlib"
-
           mkdir -p build
           cd build
-
           cmake .. \
-            -DCMAKE_SYSTEM_NAME=Windows \
-            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
-            -DCMAKE_C_COMPILER="${CC}" \
-            -DCMAKE_CXX_COMPILER="${CXX}" \
-            -DCMAKE_ASM_COMPILER="${ASM_COMP}" \
-            -DCMAKE_RC_COMPILER="${RC_BIN}" \
-            ${CMAKE_EXTRA} \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
             ${BOX64_PLATFORM_MACRO} \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON \
-            ${AR_OPT} ${RANLIB_OPT}
+            -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
 
-          "$CC" --version || true
-          "$CXX" --version || true
+      - name: Build only wowbox64 target if available
+        shell: bash
+        working-directory: build
+        run: |
+          set -Eeuo pipefail
+          # Try to build the 'wowbox64' target (ExternalProject). If not present, fall back to full build.
+          if cmake --build . --target help | grep -qi "wowbox64"; then
+            cmake --build . --target wowbox64 -- -j"$(nproc)"
+          else
+            echo "::warning::Target 'wowbox64' not found in CMake help; building default target instead."
+            cmake --build . -- -j"$(nproc)"
+          fi
 
-          make -j"$(nproc)"
-
-      - name: Locate and verify wowbox64.dll
+      - name: Locate and verify wowbox64.dll (ExternalProject output)
         id: out
         shell: bash
         run: |
           set -Eeuo pipefail
-          DLL=$(find build -type f -iname 'wowbox64.dll' | head -n1 || true)
+          # Upstream expects the dll under wowbox64 ExternalProject build tree
+          CANDIDATE="build/wowbox64-prefix/src/wowbox64-build/wowbox64.dll"
+          if [ -f "$CANDIDATE" ]; then
+            DLL="$CANDIDATE"
+          else
+            DLL=$(find build -type f -iname 'wowbox64.dll' | head -n1 || true)
+          fi
           if [ -z "$DLL" ]; then
             echo "::error::wowbox64.dll not produced"; exit 1
           fi
           file "$DLL"
           objdump -p "$DLL" | grep -qi 'machine.*ARM64' || { echo "::error::Expected ARM64 PE"; exit 1; }
-          echo "dll=$DLL" >> $GITHUB_OUTPUT
+          echo "dll=$DLL" >> "$GITHUB_OUTPUT"
 
-      - name: Decide date code (YYMMDD, KST)
-        id: date
-        shell: bash
-        run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> $GITHUB_OUTPUT
-
-      - name: Package WCP (WowBox64)
-        id: wcp
-        env:
-          DATECODE: ${{ steps.date.outputs.code }}
-          SHORT:    ${{ steps.git.outputs.short }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          mkdir -p out
-          cp "${{ steps.out.outputs.dll }}" wowbox64.dll
-          # Use an unquoted heredoc so SHORT/DATECODE expand, but escape the syswow64 placeholder so it stays literal.
-          cat > profile.json <<EOF
-          {
-            "type": "WOWBox64",
-            "versionName": "nightly-${SHORT}",
-            "versionCode": ${DATECODE},
-            "description": "${DATECODE} WowBox64 Build by Ari",
-            "files": [
-              { "source": "wowbox64.dll", "target": "\${syswow64}/wowbox64.dll" }
-            ]
-          }
-          EOF
-          jq . profile.json || { echo '::warning::profile.json is not valid JSON'; cat -n profile.json; exit 1; }
-          tar --zstd --format=gnu --owner=0 --group=0 --numeric-owner --sort=name \
-            -cf "out/wowbox64-nightly-${DATECODE}.wcp" profile.json wowbox64.dll
-          echo "wcp=out/wowbox64-nightly-${DATECODE}.wcp" >> $GITHUB_OUTPUT
-
-      - name: Upload WCP artifact
+      - name: Upload artifact (dll only; no packaging)
         uses: actions/upload-artifact@v4
         with:
-          name: wowbox64-nightly-${{ steps.date.outputs.code }}.wcp
-          path: ${{ steps.wcp.outputs.wcp }}
+          name: wowbox64.dll
+          path: ${{ steps.out.outputs.dll }}
           if-no-files-found: error
