@@ -1,4 +1,4 @@
-name: Build wowbox64.dll (upstream-style)
+name: Build wowbox64.dll (upstream-style, hardened)
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ concurrency:
 jobs:
   wowbox64:
     name: Build upstream wowbox64.dll only and package WCP (as-is)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04 # match the llvm-mingw artifact we download
     timeout-minutes: 60
     env:
       LLVM_MINGW_VERSION: ${{ inputs.llvm_mingw_version }}
@@ -44,8 +44,6 @@ jobs:
           echo "Downloading: $url"
           curl -fSLo llvm-mingw.tar.xz "$url"
 
-          # Avoid 'tar: stdout: write error' from 'tar -tf | head' under pipefail.
-          # Extract into a deterministic directory and use that as ROOT.
           TOOLCHAIN_DIR="$PWD/llvm-mingw-root"
           mkdir -p "$TOOLCHAIN_DIR"
           tar -xf llvm-mingw.tar.xz -C "$TOOLCHAIN_DIR" --strip-components=1
@@ -55,10 +53,22 @@ jobs:
           echo "LLVM_MINGW_ROOT=$TOOLCHAIN_DIR" >> "$GITHUB_ENV"
           echo "== llvm-mingw bin listing =="; ls -la "$TOOLCHAIN_DIR/bin" | sed -n '1,200p'
 
-      - name: Checkout upstream Box64 (HEAD)
+      - name: Sanity-check llvm-mingw presence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          which clang || true
+          which aarch64-w64-mingw32-clang || true
+          which llvm-rc || true
+          which windres || true
+          clang --version || true
+          aarch64-w64-mingw32-clang --version || true
+
+      - name: Checkout upstream Box64 (pin v0.3.6+ where WowBox64 exists)
         uses: actions/checkout@v4
         with:
           repository: ptitSeb/box64
+          ref: v0.3.6
           fetch-depth: 1
           submodules: recursive
 
@@ -81,19 +91,31 @@ jobs:
             -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
             -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
             ${BOX64_PLATFORM_MACRO} \
+            -DWOWBOX64=1 \
+            -DLLVM_MINGW_ROOT="$LLVM_MINGW_ROOT" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
 
-      - name: Build only wowbox64 target if available
+      - name: Show CMake cache and available targets
         shell: bash
         working-directory: build
         run: |
           set -Eeuo pipefail
-          if cmake --build . --target help | grep -qi "wowbox64"; then
+          echo '== Grep WOW/WINE/MINGW from CMakeCache.txt =='
+          grep -Ei 'WOW|WINE|MINGW' CMakeCache.txt || true
+          echo '== First 200 lines of --target help =='
+          cmake --build . --target help | sed -n '1,200p'
+
+      - name: Build wowbox64 target (fail if missing)
+        shell: bash
+        working-directory: build
+        run: |
+          set -Eeuo pipefail
+          if cmake --build . --target help | grep -qi "^...*wowbox64"; then
             cmake --build . --target wowbox64 -- -j"$(nproc)"
           else
-            echo "::warning::Target 'wowbox64' not found in CMake help; building default target instead."
-            cmake --build . -- -j"$(nproc)"
+            echo "::error::CMake target 'wowbox64' not found. Upstream added it in v0.3.6+.\n- Ensure checkout is on v0.3.6+\n- Ensure llvm-mingw tools are in PATH before configure (aarch64-w64-mingw32-clang/llvm-rc)\n- See the previous step logs for detection details."
+            exit 1
           fi
 
       - name: Locate and verify wowbox64.dll (ExternalProject output)
@@ -151,4 +173,11 @@ jobs:
         with:
           name: wowbox64-nightly-${{ steps.date.outputs.code }}.wcp
           path: ${{ steps.wcp.outputs.wcp }}
+          if-no-files-found: error
+
+      - name: Upload bare DLL artifact (for quick testing)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wowbox64-${{ steps.date.outputs.code }}.dll
+          path: ${{ steps.out.outputs.dll }}
           if-no-files-found: error
