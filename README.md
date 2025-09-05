@@ -12,12 +12,12 @@
 
 ## 🪟 Winlator
 📌 Winlator is an Android application that lets you to run Windows (x86_64) applications.
-| Type       | Description                                               |
-|:------:|---------------------------------------------------------------|
-| [**Official Winlator**](https://github.com/brunodev85/winlator) | The most stable option. |
-| [**Winlator-CMod**](https://github.com/coffincolors/winlator) | Bionic. best controller support. vkBasalt support. |
-| [**Winlator-Frost**](https://github.com/MrPhryaNikFrosty/Winlator-Frost) | Glibc. official Winlator base. |
-| [**Winlator-AMod**](https://github.com/afeimod/winlator-mod) | Glibc. official Winlator base. |
+| Type       | 🧠 |
+|:------:|:------:|------------------------------|
+| [**Official Winlator**](https://github.com/brunodev85/winlator) | Glibc |
+| [**Winlator-Frost**](https://github.com/MrPhryaNikFrosty/Winlator-Frost) | Glibc |
+| [**Winlator-AMod**](https://github.com/afeimod/winlator-mod) | Glibc |
+| [**Winlator-CMod**](https://github.com/coffincolors/winlator) | Bionic |
 
 <details>
   <summary>⚡More info</summary>
@@ -29,7 +29,8 @@
 |PRoot  | legacy approach, no longer used. |
 
 Discontinued or nightly builds are not covered.<br>
-The old unofficial glibc based Winlator is no longer recommended.
+The old unofficial glibc based Winlator is no longer recommended.<br>
+CMod (bionic) offers the best controller support.
 </details>
 <br>
 
