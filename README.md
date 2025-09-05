@@ -94,7 +94,7 @@ Newer versions don’t always mean better performance.
 </details>
 <br>
 
-## ✨Turnip driver
+## ✨ Drivers (for Adreno)
 [**K11MCH1's driver**](https://github.com/K11MCH1/AdrenoToolsDrivers)
 <br><br><br>
 
