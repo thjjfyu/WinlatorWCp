@@ -36,7 +36,7 @@
 <details>
   <summary>🚀 <b>How to install</b></summary>
 
-## 📥 Install
+## 📥 Install (*.wcp & driver)
 **Menu → Contents → Install Content**<br><br>
 
 **Menu → Adrenotools GPU Drivers → Install Drivers**
