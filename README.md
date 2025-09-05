@@ -12,7 +12,7 @@
 <details>
   <summary>🚀 <b>Winlator info</b></summary>
 
-  ## 🪟 Winlator
+  ## ⊞ Winlator
 📌 Discontinued or nightly builds are not covered.<br>
 📌 CMod (bionic) offers the best controller support.<br>
 | Type       | 🧠 |
