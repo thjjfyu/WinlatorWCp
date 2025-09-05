@@ -29,7 +29,7 @@
 | **FEXCore**  | Easy to set up, and you can squeeze more performance by pairing it with the arm64ec translation layer.<br>(Games that require box64’s strongmem option might not run on FEX.) |
 | **Box64** | Setup is more involved, but it generally runs more games than FEX.<br>(Some picky titles may also run more smoothly.) |
 
-I recommend FEX by default. It’s easy to set up and usually just works.<br>(For Unity engine games, Box64 is generally more stable.)
+I recommend FEX by default. It’s easy to set up and usually just works.<br>(For Unity engine games, a well configured Box64 is generally more stable.)
 </details>
 </details>
 <br>
