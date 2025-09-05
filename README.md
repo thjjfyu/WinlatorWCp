@@ -13,8 +13,7 @@
   <summary>🚀 <b>Winlator info</b></summary>
 
   ## ⊞ Winlator
-📌 Discontinued or nightly builds are not covered.<br>
-📌 CMod (bionic) offers the best controller support.<br>
+
 | Type       | 🧠 |
 |:------:|:------:|
 | [**Official Winlator**](https://github.com/brunodev85/winlator) | Glibc |
@@ -26,6 +25,9 @@
 |:-:|-|
 |Glibc  | Official default. stable with solid performance. (Box64 Only) |
 |Bionic | Android native. faster, potential issues. (FEX + Box64) |
+
+Discontinued or nightly builds are not covered.<br>
+CMod (bionic) offers the best controller support.<br>
 
 ---
 
