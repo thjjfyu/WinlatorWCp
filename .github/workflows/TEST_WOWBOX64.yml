@@ -103,18 +103,30 @@ jobs:
           set -Eeuo pipefail
           echo '== Grep WOW/WINE/MINGW from CMakeCache.txt =='
           grep -Ei 'WOW|WINE|MINGW' CMakeCache.txt || true
-          echo '== First 200 lines of --target help =='
-          cmake --build . --target help | sed -n '1,200p'
+          echo '== Writing --target help to help.txt (avoid broken pipe) =='
+          cmake --build . --target help > help.txt || true
+          echo '== First 200 lines of help.txt =='
+          sed -n '1,200p' help.txt || true
 
       - name: Build wowbox64 target (fail if missing)
         shell: bash
         working-directory: build
         run: |
           set -Eeuo pipefail
-          if cmake --build . --target help | grep -qi "^...*wowbox64"; then
+          if [ ! -f help.txt ]; then
+            cmake --build . --target help > help.txt || true
+          fi
+          if grep -qi "wowbox64" help.txt; then
             cmake --build . --target wowbox64 -- -j"$(nproc)"
           else
-            echo "::error::CMake target 'wowbox64' not found. Upstream added it in v0.3.6+.\n- Ensure checkout is on v0.3.6+\n- Ensure llvm-mingw tools are in PATH before configure (aarch64-w64-mingw32-clang/llvm-rc)\n- See the previous step logs for detection details."
+            echo "::group::Debug: help.txt (first 200 lines)"
+            sed -n '1,200p' help.txt || true
+            echo "::endgroup::"
+            echo "::error::CMake target 'wowbox64' not found.
+Hints:
+- Ensure checkout is on v0.3.6+
+- Ensure llvm-mingw tools are in PATH before configure (aarch64-w64-mingw32-clang/llvm-rc)
+- See the previous step logs."
             exit 1
           fi
 
