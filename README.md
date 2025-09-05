@@ -71,8 +71,8 @@ Basic Box64 settings for unity games: ```STRONGMEM=1+``` ```CALLRET=0``` ```WEAK
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
-| **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3.<br>May run faster on older devices. |
-| **gplasync** | Reduces stuttering by rendering frames before shader compilation.<br>Possible graphics glitches. |
+| **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3.<br>(May run faster on older devices.) |
+| **gplasync** | Reduces stuttering by rendering frames before shader compilation.<br>(Possible graphics glitches.) |
 | **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.**<br>(32-bit = same as standard DXVK.) |
 
 Try Sarek first. if you run into issues, try another version.<br>
