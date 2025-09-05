@@ -20,7 +20,8 @@
 
 The old unofficial glibc-based Winlator is no longer recommended.<br>
 Winlator Cmod (bionic) offers the best controller support.
-<br>
+
+<br><br>
 
 ## ⚙️ FEXCore & Box64
 📌 Nightly - YYMMDD
