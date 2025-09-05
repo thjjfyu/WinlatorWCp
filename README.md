@@ -92,7 +92,7 @@
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
-| **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3.<br>(May run faster on older devices.) |
+| **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3.<br>(May run better on older devices.) |
 | **gplasync** | Reduces stuttering by rendering frames before shader compilation.<br>(Possible graphics glitches.) |
 | **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.**<br>(32-bit = same as standard DXVK.) |
 
