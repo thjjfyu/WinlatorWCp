@@ -9,7 +9,7 @@
 
 ---
 
-</details>
+<br><br><br>
 
 ## General
 
