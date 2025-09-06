@@ -12,7 +12,10 @@
 <details>
   <summary>🚀 <b>Winlator info</b></summary>
 
-  ## ⊞ Winlator
+## ⊞ Winlator
+
+Winlator is an Android application started by brunodev85 that lets you run Windows (x86_64) applications using Wine and Box86/Box64.
+
 
 | Type       | 🧠 |
 |:------:|:------:|
@@ -77,7 +80,7 @@
 <details>
   <summary>⚡Useful info</summary>
 <br> 
-  
+
 | Type       | Description    |
 |:------:|-----------------|
 | **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3. (May run better on older devices.) |
@@ -166,12 +169,11 @@
 
 [brunodev85](https://github.com/brunodev85)<br>
 [bylaws](https://github.com/bylaws)<br>
-[coffincolors](https://github.com/coffincolors)<br>
 [doitsujin](https://github.com/doitsujin)<br>
 [Hans-Kristian Arntzen](https://github.com/HansKristian-Work)<br>
 [K11MCH1](https://github.com/K11MCH1)<br>
+[MESA](https://mesa3d.org/)<br>
 [Ph42oN](https://gitlab.com/Ph42oN)<br>
-[Pipetto-crypto](https://github.com/Pipetto-crypto)<br>
 [ptitSeb](https://github.com/ptitSeb)<br>
 [pythonlover02](https://github.com/pythonlover02)<br>
 [zoerakk](https://github.com/zoerakk)
