@@ -127,7 +127,7 @@
 | Link | Description |
 |:-------:|------|
 | [**K11MCH1**](https://github.com/K11MCH1/AdrenoToolsDrivers) | Qualcomm driver, Mesa turnip driver for a6xx - a7xx(partial) |
-| [**zoerakk**](https://github.com/zoerakk/qualcomm-adreno-driver) | Qualcomm driver for Elite (a830) |
+| [**zoerakk**](https://github.com/zoerakk/qualcomm-adreno-driver) | Qualcomm driver for Elite ```Adreno 830``` |
 
 <details>
   <summary>⚡More info</summary>
@@ -137,6 +137,8 @@
 |:------:|---------------------------------------------------------------|
 | **Qualcomm driver**    | Extracted from the official Adreno driver of a recent device. Partially compatible with similar chipsets. Emulation may show reduced performance or rendering glitches. |
 | **Mesa turnip driver** | Open source Mesa driver with broader Vulkan support and emulator friendly behavior. Often more compatible or stable across devices. Results vary by version and SoC. |
+
+- There are no signs of ```Adreno 830``` support in freedreno/Turnip, and no upstream work has publicly started.
 
 </details>
 <br>
