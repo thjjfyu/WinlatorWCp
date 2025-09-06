@@ -88,6 +88,7 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 | **gplasync** | Reduces stuttering by rendering frames before shader compilation. |
 | **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.** |
 
+- GPLAsync patches are marked with ```-n``` so ```2.7-1``` is based on DXVK ```2.7```
 - Newer versions don’t always mean better performance.
 - If you encounter rendering issues, try a newer build or revert to the standard DXVK.
 - If the game has a built-in frame limiter, use that. In some cases, ```DXVK_FRAME_RATE``` can introduce stutter.
