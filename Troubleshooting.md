@@ -3,8 +3,8 @@
 
 ## General
 
+- To resolve issues, start by understanding your game. Look up the game’s engine and common known problems here: [PCGW](https://www.pcgamingwiki.com/wiki/Home).
 - Since we’re running on Wine too, browsing Wine(proton)-related forums often yields quick fixes for lots of issues.
-- You can find common issues on [PCGW](https://www.pcgamingwiki.com/wiki/Home).
 
 ## Container
 - Some old games only work properly if all services are loaded.<br>(Edit Container → Advanced → System → Load all sevices)
@@ -20,8 +20,9 @@
 ## Box64
 
 - **Regular stuttering** usually means your Box64 settings are too aggressive.
-- Unity games generally run well with this: ```STRONGMEM=1+``` ```CALLRET=0``` ```WEAKBARRIER=0~1```
-- ```WEAKBARRIER``` generally reduces the performance hit caused by ```STRONGMEM```. However, some sensitive games may still fail to run with ```WEAKBARRIER=1```.
+- Unity games are generally more stable when run with Box64.
+- Basic Box64 settings for unity games: ```STRONGMEM=1+``` ```CALLRET=0``` ```WEAKBARRIER=0~1```
+- ```WEAKBARRIER``` can mitigate the performance hit from ```STRONGMEM```, but regressions or crashes have been reported depending on the build/version/game. If issues occur, set it to ```0```.
 - You can find the official Box64 settings [here](https://github.com/ptitSeb/box64/blob/main/system/box64.box64rc)
 
 ## FEX
@@ -29,8 +30,22 @@
 
 ## DXVK
 
-- DXVK 2.3.1–2.4.1 are pretty stable overall, but some games still throw the occasional graphics glitch. (Common in UE5 games.)
+- Newer versions don’t always mean better performance.
+- If you encounter rendering issues, try a newer build or revert to the standard DXVK.
+- If the game has a built-in frame limiter, use that. In some cases, ```DXVK_FRAME_RATE``` can introduce stutter.
+- 2.3.1–2.4.1 are pretty stable overall, but some games still throw the occasional graphics glitch. (Common in UE4(5) games.)
 - Games that precompile shaders can cause high load and stutter, wait for compilation to finish and monitor with ```DXVK_HUD=compiler```.
+
+## VKD3D
+
+- If it isn’t required, **leave the VKD3D feature level at its default**. Forcing a higher feature level can trigger different code paths and extra shader compilation, which may lead to stutter.
+- You can limit the frame rate using: ```DXVK_FRAME_RATE``` or ```VKD3D_FRAME_RATE```
+
+## Runtime Package
+
+- If Visual C++ errors persist in an ARM64EC container, install ```Visual C++ ARM64```
+- If older VC++ is needed, try an [**AIO package**](https://github.com/abbodi1406/vcredist). <br>
+- May require the official [**.NET Framework**](https://dotnet.microsoft.com/ko-kr/download/dotnet-framework) instead of Mono.
 
 ## Wine/Proton
 
