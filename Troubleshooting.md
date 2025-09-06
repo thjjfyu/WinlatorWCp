@@ -4,7 +4,7 @@
 ## General
 
 - Since we’re running on Wine too, browsing Wine(proton)-related forums often yields quick fixes for lots of issues.
-- You can find a game’s traits and common issues on [PCGW](https://www.pcgamingwiki.com/wiki/Home).
+- You can find common issues on [PCGW](https://www.pcgamingwiki.com/wiki/Home).
 
 ## Container
 - Some old games only work properly if all services are loaded.<br>(Edit Container → Advanced → System → Load all sevices)
