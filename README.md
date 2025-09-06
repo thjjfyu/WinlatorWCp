@@ -12,7 +12,7 @@
 <details>
   <summary>🚀 <b>Winlator info</b></summary>
 
-## ⊞ Winlator
+## 🎮 Winlator
 
 Winlator is an Android application started by brunodev85 that lets you run Windows (x86_64) applications using Wine and Box86/Box64.
 
