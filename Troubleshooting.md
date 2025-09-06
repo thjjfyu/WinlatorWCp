@@ -11,6 +11,8 @@
 
 <br><br><br>
 
+## The official Winlator can’t install WCP. But no worries. Bruno only uses stable, well-tested versions.
+
 ## General
 
 - To resolve issues, start by understanding your game. Look up the game’s engine and common known problems here: [PCGW](https://www.pcgamingwiki.com/wiki/Home).
