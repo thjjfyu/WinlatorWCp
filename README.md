@@ -60,16 +60,17 @@
 | Box64 Bionic | [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-BIONIC-NIGHTLY)| |
 
 <details>
-  <summary>⚡More info</summary>
+  <summary>⚡Useful info</summary>
 <br>
   
-| Type       | Description                                                   |
-|:------:|---------------------------------------------------------------|
-| **FEXCore**  | Easy to set up, and you can squeeze more performance by pairing it with the arm64ec translation layer.<br>(Games that require box64’s ```STRONGMEM``` might not run well on FEX.) |
-| **Box64** | Setup is more involved, but it generally runs more games than FEX.<br>(Some picky titles may also run more smoothly.) |
+| Type       | Description |
+|:------:|-------------|
+| **FEX**  | Easy to configure, can improve performance when paired with the arm64ec translation layer. |
+| **Box64** | More complex to configure, but it generally runs a wider range of games than FEX. |
 
+- Unity games are generally more stable when run with Box64.
 - Basic Box64 settings for unity games: ```STRONGMEM=1+``` ```CALLRET=0``` ```WEAKBARRIER=0~1```
-- Nightly: YYMMDD format. May include noncritical or unrelated commits.
+- ```WEAKBARRIER``` can mitigate the performance hit from ```STRONGMEM```, but regressions or crashes have been reported depending on the build/version/game. If issues occur, set it to ```0```.
 
 </details>
 <br>
@@ -87,18 +88,18 @@
 | [**DXVK-gplasync-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-GPLASYNC-ARM64EC) |   |
 
 <details>
-  <summary>⚡More info</summary>
+  <summary>⚡Useful info</summary>
 <br> 
   
-| Type       | Description                                                   |
-|:------:|---------------------------------------------------------------|
-| **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3.<br>(May run better on older devices.) |
-| **gplasync** | Reduces stuttering by rendering frames before shader compilation.<br>(Possible graphics glitches.) |
-| **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.**<br>(32-bit = same as standard DXVK.) |
+| Type       | Description    |
+|:------:|-----------------|
+| **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3. (May run better on older devices.) |
+| **gplasync** | Reduces stuttering by rendering frames before shader compilation. |
+| **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.** |
 
-- Try Sarek first. if you run into issues, try another version.<br>
 - Newer versions don’t always mean better performance.
-- Games that precompile shaders can cause high load and stutter, wait for compilation to finish and monitor with ```DXVK_HUD=compiler```.
+- If you encounter rendering issues, try a newer build or revert to the standard DXVK.
+- If the game has a built-in frame limiter, use that. In some cases, ```DXVK_FRAME_RATE``` can introduce stutter.
 
 </details>
 <br>
@@ -111,14 +112,16 @@
 | [**VKD3D-proton-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON-ARM64EC) |   |
 
 <details>
-  <summary>⚡More info</summary>
+  <summary>⚡Useful info</summary>
 <br>
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
-| **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.**<br>(32-bit = same as standard DXVK.) |
+| **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.** |
 
-- Frame rate limit: ```DXVK_FRAME_RATE``` ```VKD3D_FRAME_RATE```
+- If it isn’t required, **leave the VKD3D feature level at its default**. Forcing a higher feature level can trigger different code paths and extra shader compilation, which may lead to stutter.
+- You can limit the frame rate using: ```DXVK_FRAME_RATE``` ```VKD3D_FRAME_RATE```
+- If the game has a built-in frame limiter, use that. In some cases, ```X_FRAME_RATE``` can introduce stutter.
 
 </details>
 <br>
@@ -130,7 +133,7 @@
 | [**zoerakk**](https://github.com/zoerakk/qualcomm-adreno-driver) | Qualcomm driver for Elite ```Adreno 830``` |
 
 <details>
-  <summary>⚡More info</summary>
+  <summary>⚡Useful info</summary>
 <br> 
   
 | Type       | Description                                                   |
@@ -138,7 +141,7 @@
 | **Qualcomm driver**    | Extracted from the official Adreno driver of a recent device. Partially compatible with similar chipsets. Emulation may show reduced performance or rendering glitches. |
 | **Mesa turnip driver** | Open source Mesa driver with broader Vulkan support and emulator friendly behavior. Often more compatible or stable across devices. Results vary by version and SoC. |
 
-- There are no signs of ```Adreno 830``` support in freedreno/Turnip, and no upstream work has publicly started.
+- There are no signs of ```Adreno 830``` support in freedreno/Turnip, and no upstream work has publicly started 😔
 
 </details>
 <br>
@@ -158,7 +161,7 @@
 | [**PhysX Legacy**](https://www.nvidia.com/content/DriverDownload-March2009/confirmation.php?url=/Windows/9.13.0604/PhysX-9.13.0604-SystemSoftware-Legacy.msi&lang=us&type=Other) | Install ONLY if a old game requests PhysX DLL |
 
 <details>
-  <summary>⚡More info</summary>
+  <summary>⚡Useful info</summary>
 <br>
   
 - If older VC++ is needed, try an [**AIO package**](https://github.com/abbodi1406/vcredist). <br>
