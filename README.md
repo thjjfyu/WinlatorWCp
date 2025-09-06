@@ -159,6 +159,10 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 - May require the official [**.NET Framework**](https://dotnet.microsoft.com/ko-kr/download/dotnet-framework) instead of Mono.
 
 </details>
+<br>
+
+## 🔁 Special patches & more info
+[**Winlator 101**](https://github.com/K11MCH1/Winlator101)
 
 <br><br>
 
