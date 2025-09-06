@@ -9,9 +9,9 @@
 
 ---
 
-<br><br><br>
+<br><br>⚠️ The official Winlator can’t install WCP. But no worries. Bruno only uses stable, well-tested versions.<br><br>
 
-## The official Winlator can’t install WCP. But no worries. Bruno only uses stable, well-tested versions.
+
 
 ## General
 
