@@ -7,7 +7,7 @@
 - Since we’re running on Wine too, browsing Wine(proton)-related forums often yields quick fixes for lots of issues.
 
 ## Container
-- Some old games only work properly if all services are loaded.<br>(Edit Container → Advanced → System → Load all sevices)
+- Some old games only work properly if all services are loaded. (Edit Container → Advanced → System → Load all sevices)
 - Some old games need to be on the C: drive to launch correctly or to eliminate loading issues and stuttering.
 - If there’s a hook DLL, set an environment variable: ```WINEDLLOVERRIDES="name.dll=n,b"```.
 - Capping processor affinity can resolve stutter in some games.
