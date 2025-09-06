@@ -49,7 +49,6 @@
 
 ## Wine/Proton
 
-- Don’t waste time chasing Wine/Proton hoping for fixes or some miracle improvement. The folks building Winlator and its forks know their stuff. if they haven’t pulled in a newer version, it’s because it isn’t worth it right now.
-
+- Don’t waste time chasing Wine/Proton hoping for fixes or some miracle improvement.
 
 
