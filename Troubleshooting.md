@@ -1,6 +1,16 @@
 <h1 align="center">Troubleshooting & some info...</h1>
 <h3 align="center">⚠️WIP</h3><br><br>
 
+## 📥 How to install
+**WCP: Menu → Contents → Install Content**<br><br>
+
+**Driver: Menu → Adrenotools GPU Drivers → Install Drivers**
+<br>
+
+---
+
+</details>
+
 ## General
 
 - To resolve issues, start by understanding your game. Look up the game’s engine and common known problems here: [PCGW](https://www.pcgamingwiki.com/wiki/Home).
