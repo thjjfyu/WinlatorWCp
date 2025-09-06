@@ -33,19 +33,6 @@
 
 </details>
 
-<details>
-  <summary>🚀 <b>How to install</b></summary>
-
-## 📥 Install (*.wcp & driver)
-**Menu → Contents → Install Content**<br><br>
-
-**Menu → Adrenotools GPU Drivers → Install Drivers**
-<br>
-
----
-
-</details>
-
 - [**Troubleshooting**](https://github.com/Arihany/WinlatorWCPHub/blob/main/Troubleshooting.md)
 
 ---
@@ -120,7 +107,7 @@
 | **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.** |
 
 - If it isn’t required, **leave the VKD3D feature level at its default**. Forcing a higher feature level can trigger different code paths and extra shader compilation, which may lead to stutter.
-- You can limit the frame rate using: ```DXVK_FRAME_RATE``` ```VKD3D_FRAME_RATE```
+- You can limit the frame rate using: ```DXVK_FRAME_RATE``` or ```VKD3D_FRAME_RATE```
 - If the game has a built-in frame limiter, use that. In some cases, ```X_FRAME_RATE``` can introduce stutter.
 
 </details>
@@ -147,7 +134,7 @@
 <br>
 
 
-## 📦 Runtime Packages (official)
+## 📦 Runtime Package (official)
 
 | Package | Description |
 |-------|-------------|
@@ -163,7 +150,8 @@
 <details>
   <summary>⚡Useful info</summary>
 <br>
-  
+
+- If Visual C++ errors persist in an ARM64EC container, install ```Visual C++ ARM64```
 - If older VC++ is needed, try an [**AIO package**](https://github.com/abbodi1406/vcredist). <br>
 - May require the official [**.NET Framework**](https://dotnet.microsoft.com/ko-kr/download/dotnet-framework) instead of Mono.
 
