@@ -116,7 +116,13 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 - If the game has a built-in frame limiter, use that. In some cases, ```X_FRAME_RATE``` can introduce stutter.
 
 </details>
-<br>
+<br><br><br>
+
+---
+
+<h1 align="center">Additional Packages and Helpful Links</h1>
+
+<br><br>
 
 ## ✨ Driver (for Adreno)
 | Link | Description |
