@@ -86,7 +86,7 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 |:------:|-----------------|
 | **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3. (May run better on older devices.) |
 | **gplasync** | Reduces stuttering by rendering frames before shader compilation. |
-| **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.** |
+| **arm64ec**  | Boosts performance in 64-bit games. ⚠️ **Use only with FEX.** ⚠️ |
 
 - GPLAsync patches are marked with ```-n``` so ```2.7-1``` is based on DXVK ```2.7```
 - Newer versions don’t always mean better performance.
@@ -109,7 +109,7 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
-| **arm64ec**  | Boosts performance in 64-bit games. **Use only with FEX.** |
+| **arm64ec**  | Boosts performance in 64-bit games. ⚠️ **Use only with FEX.** ⚠️ |
 
 - If it isn’t required, **leave the VKD3D feature level at its default**. Forcing a higher feature level can trigger different code paths and extra shader compilation, which may lead to stutter.
 - You can limit the frame rate using: ```DXVK_FRAME_RATE``` or ```VKD3D_FRAME_RATE```
