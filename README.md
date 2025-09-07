@@ -120,7 +120,9 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 
 ---
 
-<h1 align="center">Additional Packages and Helpful Links</h1>
+<br>
+
+<h2 align="center">Additional Packages and Helpful Links</h2>
 
 <br><br>
 
