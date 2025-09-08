@@ -179,7 +179,7 @@ jobs:
           set -Eeuo pipefail
           mkdir -p out
           cp "${{ steps.out.outputs.dll }}" wowbox64.dll
-          # Unquoted heredoc so SHORT/DATECODE expand; keep ${syswow64} literal via backslash.
+          # Unquoted heredoc so SHORT/DATECODE expand; keep ${system32} literal via backslash.
           cat > profile.json <<EOF
           {
             "type": "WOWBox64",
@@ -187,7 +187,7 @@ jobs:
             "versionCode": ${DATECODE},
             "description": "${DATECODE} WowBox64 Build by Ari",
             "files": [
-              { "source": "wowbox64.dll", "target": "\${syswow64}/wowbox64.dll" }
+              { "source": "wowbox64.dll", "target": "\${system32}/wowbox64.dll" }
             ]
           }
           EOF
