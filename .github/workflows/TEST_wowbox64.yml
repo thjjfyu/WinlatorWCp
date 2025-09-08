@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ptitSeb/box64
-          ref:
+          #ref:
           fetch-depth: 1
           submodules: recursive
 
@@ -177,10 +177,10 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p out
-          cp "${{ steps.out.outputs.dll }}" wowbox64.dll
-          # Unquoted heredoc so SHORT/DATECODE expand; keep ${system32} literal via backslash.
-          cat > profile.json <<EOF
+          mkdir -p out pkgroot/system32
+          cp "${{ steps.out.outputs.dll }}" pkgroot/system32/wowbox64.dll
+          
+          cat > pkgroot/profile.json <<EOF
           {
             "type": "WOWBox64",
             "versionName": "nightly-${SHORT}",
@@ -192,7 +192,8 @@ jobs:
           }
           EOF
           tar --zstd --format=gnu --owner=0 --group=0 --numeric-owner --sort=name \
-            -cf "out/wowbox64-nightly-${DATECODE}.wcp" profile.json wowbox64.dll
+            -C pkgroot \
+            -cf "out/wowbox64-nightly-${DATECODE}.wcp" profile.json system32/wowbox64.dll
           echo "wcp=out/wowbox64-nightly-${DATECODE}.wcp" >> $GITHUB_OUTPUT
 
       - name: Upload WCP artifact
