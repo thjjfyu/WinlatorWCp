@@ -187,7 +187,7 @@ jobs:
             "versionCode": ${DATECODE},
             "description": "${DATECODE} WowBox64 Build by Ari",
             "files": [
-              { "source": "wowbox64.dll", "target": "\${system32}/wowbox64.dll" }
+              { "source": "system32/wowbox64.dll", "target": "\${system32}/wowbox64.dll" }
             ]
           }
           EOF
