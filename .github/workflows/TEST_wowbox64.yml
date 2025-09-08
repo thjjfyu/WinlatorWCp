@@ -24,11 +24,11 @@ jobs:
       LLVM_MINGW_VERSION: ${{ inputs.llvm_mingw_version }}
       BOX64_PLATFORM_MACRO: -DWOW64=1 -DARM_DYNAREC=1
     steps:
-      - name: Checkout upstream Box64 (pin v0.3.6+ where WowBox64 exists)
+      - name: Checkout upstream Box64
         uses: actions/checkout@v4
         with:
           repository: ptitSeb/box64
-          ref: v0.3.6
+          ref:
           fetch-depth: 1
           submodules: recursive
 
