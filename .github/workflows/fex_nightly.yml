@@ -291,3 +291,24 @@ jobs:
           gh release upload "FEX-NIGHTLY" \
             "./FEXCore_DLLs/fex-nightly-${DATECODE}.wcp" \
             --repo "$REPO" --clobber
+
+      - name: Trim old assets (keep latest 5)
+        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          API="https://api.github.com/repos/${REPO}/releases/tags/FEX-NIGHTLY"
+          assets="$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API" | jq -c '.assets | sort_by(.created_at)')"
+          count="$(echo "$assets" | jq 'length')"
+          if [ "$count" -gt 5 ]; then
+            delcount=$((count-5))
+            echo "::notice::Found $count assets, will delete $delcount oldest."
+            echo "$assets" | jq -r ".[0:$delcount][] | .id" | while read -r id; do
+              curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                   "https://api.github.com/repos/${REPO}/releases/assets/${id}"
+              echo "Deleted asset id=$id"
+            done
+          else
+            echo "::notice::Asset count $count (≤5); nothing to delete."
+          fi
