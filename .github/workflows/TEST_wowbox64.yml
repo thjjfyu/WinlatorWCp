@@ -191,9 +191,9 @@ jobs:
             ]
           }
           EOF
-          tar --zstd --format=gnu --owner=0 --group=0 --numeric-owner --sort=name \
+          tar --zstd --format=ustar --owner=0 --group=0 --numeric-owner \
             -C pkgroot \
-            -cf "out/wowbox64-nightly-${DATECODE}.wcp" profile.json system32/wowbox64.dll
+            -cf "out/wowbox64-nightly-${DATECODE}.wcp" ./profile.json ./system32/ ./system32/wowbox64.dll
           echo "wcp=out/wowbox64-nightly-${DATECODE}.wcp" >> $GITHUB_OUTPUT
 
       - name: Upload WCP artifact
