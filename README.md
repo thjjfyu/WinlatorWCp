@@ -164,7 +164,7 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
   <summary>⚡Useful info</summary>
 <br>
 
-- If Visual C++ errors persist in an ARM64EC container, install ```Visual C++ ARM64```
+- If VC++ errors persist in an ARM64EC container, install ```Visual C++ ARM64```
 - If older VC++ is needed, try an [**AIO package**](https://github.com/abbodi1406/vcredist). <br>
 - May require the official [**.NET Framework**](https://dotnet.microsoft.com/ko-kr/download/dotnet-framework) instead of Mono.
 
