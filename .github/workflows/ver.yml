@@ -112,7 +112,6 @@ jobs:
                 ver="$prev"
               fi
 
-              # 태그별 유효성 검사: FEX는 숫자/숫자.패치, 그 외는 semver/rc/meta/날짜형도 허용
               suspicious=0
               if [ "$tag" = "FEX-STABLE" ]; then
                 perl -e 'exit((shift)=~/^\d{2,6}(\.\d+)?$/ ? 0 : 1)' "$ver" || suspicious=1
