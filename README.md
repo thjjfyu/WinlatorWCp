@@ -47,8 +47,8 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 
 | Type | Build | 🏷️ | 📜 |
 |:------:|:------:|:------:|:------:|
-| FEXCore | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEX-NIGHTLY) | <!--fex--> |<a href="https://github.com/FEX-Emu/FEX">🔗</a> |
-| Box64 Glibc | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-NIGHTLY) | <!--box64--> |<a href="https://github.com/ptitSeb/box64">🔗</a> |
+| FEXCore | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEX-NIGHTLY) | <!--fex--> 2509|<a href="https://github.com/FEX-Emu/FEX">🔗</a> |
+| Box64 Glibc | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-NIGHTLY) | <!--box64--> 0.3.6|<a href="https://github.com/ptitSeb/box64">🔗</a> |
 | Box64 Bionic | [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-BIONIC-NIGHTLY)| | |
 
 <details>
@@ -71,13 +71,13 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 
 | Build | 🏷️ | 📜 |
 |-------|:------:|:------:|
-| [**DXVK**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK) | <!--dxvk--> | <a href="https://github.com/doitsujin/dxvk">🔗</a> |
-| [**DXVK-sarek**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-SAREK) | <!--sarek--> | <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
-| [**DXVK-sarek-async**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-SAREK-ASYNC) | <!--sarek-async--> | |
-| [**DXVK-sarek-async-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-SAREK-ASYNC-ARM64EC) | <!--sarek-async-arm64ec--> | |
-| [**DXVK-gplasync**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-GPLASYNC) | <!--gplasync--> | <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
-| [**DXVK-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-ARM64EC) | <!--arm64ec--> | |
-| [**DXVK-gplasync-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-GPLASYNC-ARM64EC) | <!--gplasync-arm64ec--> | |
+| [**DXVK**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK) | <!--dxvk--> 2.7.1| <a href="https://github.com/doitsujin/dxvk">🔗</a> |
+| [**DXVK-sarek**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-SAREK) | <!--sarek--> 1.11.0| <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
+| [**DXVK-sarek-async**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-SAREK-ASYNC) | <!--sarek-async--> 1.11.0| |
+| [**DXVK-sarek-async-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-SAREK-ASYNC-ARM64EC) | <!--sarek-async-arm64ec--> 1.11.0| |
+| [**DXVK-gplasync**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-GPLASYNC) | <!--gplasync--> 2.7-1| <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
+| [**DXVK-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-ARM64EC) | <!--arm64ec--> 2.7.1| |
+| [**DXVK-gplasync-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-GPLASYNC-ARM64EC) | <!--gplasync-arm64ec--> 2.7-1| |
 
 <details>
   <summary>⚡Useful info</summary>
@@ -101,8 +101,8 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 
 | Build | 🏷️ | 📜 |
 |-------|:------:|:------:|
-| [**VKD3D-proton**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON) | <!--vkd3d--> |<a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
-| [**VKD3D-proton-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON-ARM64EC) | <!--vkd3d-arm64ec--> | |
+| [**VKD3D-proton**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON) | <!--vkd3d--> 2.14.1|<a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
+| [**VKD3D-proton-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON-ARM64EC) | <!--vkd3d-arm64ec--> 2.14.1| |
 
 <details>
   <summary>⚡Useful info</summary>
