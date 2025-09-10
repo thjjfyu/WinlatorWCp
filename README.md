@@ -45,7 +45,7 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 
 ## ⚙️ FEXCore & Box64
 
-| Type | Build | | 📜 |
+| Type | Build | 🏷️ | 📜 |
 |:------:|:------:|:------:|:------:|
 | FEXCore | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEX-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEX-NIGHTLY) | <!--fex--> |<a href="https://github.com/FEX-Emu/FEX">🔗</a> |
 | Box64 Glibc | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-NIGHTLY) | <!--box64--> |<a href="https://github.com/ptitSeb/box64">🔗</a> |
@@ -69,7 +69,7 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 
 ## 🧩 DXVK (for DX9-11)
 
-| Build |  | 📜 |
+| Build | 🏷️ | 📜 |
 |-------|:------:|:------:|
 | [**DXVK**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK) | <!--dxvk--> | <a href="https://github.com/doitsujin/dxvk">🔗</a> |
 | [**DXVK-sarek**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-SAREK) | <!--sarek--> | <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
@@ -99,7 +99,7 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 
 ## 🌌 VKD3D-Proton (for DX12)
 
-| Build |  | 📜 |
+| Build | 🏷️ | 📜 |
 |-------|:------:|:------:|
 | [**VKD3D-proton**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON) | <!--vkd3d--> |<a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
 | [**VKD3D-proton-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON-ARM64EC) | <!--vkd3d-arm64ec--> | |
