@@ -71,7 +71,7 @@ jobs:
           fi
           echo "old=$(cat /tmp/old.json | jq -c .)" >> $GITHUB_OUTPUT
 
-      - name: Resolve Current: versions from release bodies
+      - name: Resolve Current versions from release bodies
                # rule: one 'Current:' line exists per release; take first token after it
         id: collect
         run: |
