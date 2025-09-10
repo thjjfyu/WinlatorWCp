@@ -1,0 +1,168 @@
+name: README • Current versions from release bodies
+
+on:
+  schedule:
+    - cron: "0 19 * * *"   # others run at 18:00 UTC; this runs 1h later
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bump-readme-current:
+    name: Extract `Current:` from tagged releases → update README placeholders
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install jq
+        run: |
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends jq ca-certificates
+
+      - name: Define placeholder↔tag map
+        id: map
+        run: |
+          mkdir -p .cache
+          cat > /tmp/map.json <<'EOF'
+          {
+            "fex":                    "FEX-STABLE",
+            "box64":                  "BOX64-STABLE",
+            "dxvk":                   "DXVK",
+            "sarek":                  "DXVK-SAREK",
+            "sarek-async":            "DXVK-SAREK-ASYNC",
+            "sarek-async-arm64ec":    "DXVK-SAREK-ASYNC-ARM64EC",
+            "gplasync":               "DXVK-GPLASYNC",
+            "arm64ec":                "DXVK-ARM64EC",
+            "gplasync-arm64ec":       "DXVK-GPLASYNC-ARM64EC",
+            "vkd3d":                  "VKD3D-PROTON",
+            "vkd3d-arm64ec":          "VKD3D-PROTON-ARM64EC"
+          }
+          EOF
+          # sanity: all placeholders must exist exactly once in README.md
+          test -f README.md || { echo "::error::README.md not found"; exit 1; }
+          missing=0; dup=0
+          while IFS= read -r key; do
+            c=$(grep -o "<!--${key}-->" README.md | wc -l | tr -d ' ')
+            if [ "$c" -eq 0 ]; then echo "::error file=README.md::missing placeholder <!--${key}-->"; missing=1; fi
+            if [ "$c" -gt 1 ]; then echo "::error file=README.md::duplicate placeholder <!--${key}--> appears ${c} times"; dup=1; fi
+          done < <(jq -r 'keys[]' /tmp/map.json)
+          [ "$missing" -eq 0 ] || exit 1
+          [ "$dup" -eq 0 ] || exit 1
+
+      - name: Load previous snapshot (if any)
+        id: prev
+        run: |
+          if [ -s .cache/current_versions.json ]; then
+            cp .cache/current_versions.json /tmp/old.json
+          else
+            echo '{}' > /tmp/old.json
+          fi
+          echo "old=$(cat /tmp/old.json | jq -c .)" >> $GITHUB_OUTPUT
+
+      - name: Resolve Current: versions from release bodies
+               # rule: one 'Current:' line exists per release; take first token after it
+        id: collect
+        run: |
+          set -Eeuo pipefail
+          API="https://api.github.com/repos/${REPO}"
+          echo '{}' > /tmp/new.json
+          # iterate mapping: key -> tag
+          while IFS=$'\t' read -r key tag; do
+            url="${API}/releases/tags/${tag}"
+            json="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$url")" || {
+              echo "::warning::failed to fetch release for tag ${tag}; keeping previous value for ${key}"
+              prev=$(jq -r --arg k "$key" '.[$k] // empty' /tmp/old.json)
+              if [ -z "$prev" ]; then
+                echo "::error::no previous value and cannot fetch ${tag}"; exit 1
+              fi
+              jq --arg k "$key" --arg v "$prev" '.[$k]=$v' /tmp/new.json > /tmp/new.json.tmp && mv /tmp/new.json.tmp /tmp/new.json
+              continue
+            }
+            body="$(echo "$json" | jq -r '.body // ""')"
+            # normalize newlines, find the 'Current:' line anywhere, grab first token after it
+            line="$(printf '%s' "$body" | tr '\r' '\n' | grep -m1 -E '^[[:space:]]*Current:' || true)"
+            if [ -z "$line" ]; then
+              echo "::warning::no 'Current:' line in tag ${tag}; keeping previous value for ${key}"
+              prev=$(jq -r --arg k "$key" '.[$k] // empty' /tmp/old.json)
+              if [ -z "$prev" ]; then
+                echo "::error::no previous value and missing Current: for ${tag}"; exit 1
+              fi
+              ver="$prev"
+            else
+              # extract version token (numbers/letters . - +), stop at space, @, comma, or line end
+              ver="$(printf '%s' "$line" | sed -E 's/^[[:space:]]*Current:[[:space:]]*([0-9A-Za-z][0-9A-Za-z\.\-\+]*).*$/\1/')"
+              # minimal sanity: must look like 1.2 or 1.2.3-rc1 etc.
+              if ! echo "$ver" | grep -Eq '^[0-9]+(\.[0-9A-Za-z]+)+([\-+][0-9A-Za-z\.]+)?$'; then
+                echo "::warning::parsed suspicious version '${ver}' from ${tag}; keeping previous value for ${key}"
+                prev=$(jq -r --arg k "$key" '.[$k] // empty' /tmp/old.json)
+                if [ -z "$prev" ]; then
+                  echo "::error::no previous value and invalid parsed version for ${tag}"; exit 1
+                fi
+                ver="$prev"
+              fi
+            fi
+            jq --arg k "$key" --arg v "$ver" '.[$k]=$v' /tmp/new.json > /tmp/new.json.tmp && mv /tmp/new.json.tmp /tmp/new.json
+            echo "${key} = ${ver}"
+          done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' /tmp/map.json)
+
+          echo "new=$(cat /tmp/new.json | jq -c .)" >> $GITHUB_OUTPUT
+
+      - name: Skip if nothing changed
+        id: decide
+        run: |
+          changed=$(jq -n --argjson a '${{ steps.prev.outputs.old }}' --argjson b '${{ steps.collect.outputs.new }}' '$a != $b')
+          echo "changed=${changed}" >> $GITHUB_OUTPUT
+          echo "Changed? ${changed}"
+
+      - name: Update README placeholders
+        if: steps.decide.outputs.changed == 'true'
+        run: |
+          set -Eeuo pipefail
+          # replace in-table: <!--key--> ... up to next pipe becomes "<!--key--> <ver>"
+          tmp="$(mktemp)"
+          cp README.md "$tmp"
+          while IFS=$'\t' read -r key ver; do
+            # ensure exactly one occurrence again before touching
+            c=$(grep -o "<!--${key}-->" "$tmp" | wc -l | tr -d ' ')
+            [ "$c" -eq 1 ] || { echo "::error::placeholder count for ${key} changed during run"; exit 1; }
+            perl -0777 -pe "s/(<!--${key}-->)(?:[^\\|\\n]*)?(?=\\s*\\|)/\\1 ${ver}/g" -i "$tmp"
+          done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' /tmp/new.json)
+          mv "$tmp" README.md
+
+      - name: Write snapshot
+        if: steps.decide.outputs.changed == 'true'
+        run: |
+          mkdir -p .cache
+          jq -c . /tmp/new.json > .cache/current_versions.json
+
+      - name: Commit and push (single commit)
+        if: steps.decide.outputs.changed == 'true'
+        run: |
+          set -Eeuo pipefail
+          # Build concise commit message with diffs
+          msg="ci(readme): bump"
+          while IFS=$'\t' read -r key ver; do
+            old=$(jq -r --arg k "$key" '.[$k] // "∅"' /tmp/old.json)
+            if [ "$old" != "$ver" ]; then
+              msg="${msg} ${key} ${old} → ${ver};"
+            fi
+          done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' /tmp/new.json)
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md .cache/current_versions.json
+          git diff --cached --quiet && { echo "No staged changes"; exit 0; }
+          git commit -m "$msg"
+          git push
