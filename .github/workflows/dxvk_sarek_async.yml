@@ -1,12 +1,15 @@
-name: D-Sarek async
+name: DXVK-Sarek-Async
+# LLVM_MINGW 20250910
+# 1.11.0+
+# done for now
 
 on:
-  workflow_dispatch:              # Manual trigger (any branch)
+  workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"         # Daily (UTC)
+    - cron: "0 18 * * *"
 
 permissions:
-  contents: write
+  contents: read
 
 defaults:
   run:
@@ -18,291 +21,309 @@ concurrency:
 
 jobs:
   guard:
-    name: "Fast guard (API-only: async HEAD changed?)"
+    name: Check Update
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     outputs:
-      build:      ${{ steps.decide.outputs.build }}
-      base:       ${{ steps.meta.outputs.base }}
-      head_sha:   ${{ steps.meta.outputs.head_sha }}
-      head_short: ${{ steps.meta.outputs.head_short }}
+      build:    ${{ steps.detect.outputs.missing }}
+      to_build: ${{ steps.detect.outputs.list }}
     env:
-      GH_TOKEN:     ${{ github.token }}
-      REPO:         ${{ github.repository }}
-      SAREK_REPO:   pythonlover02/DXVK-Sarek
-      SAREK_BRANCH: async
-      RELEASE_TAG:  DXVK-SAREK-ASYNC
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      SAREK_REPO: pythonlover02/DXVK-Sarek
+      RELEASE_TAG: DXVK-SAREK-ASYNC
     steps:
-      - name: Install jq, curl
+      - name: Install jq, curl (minimal)
         run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends jq curl
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
 
-      - name: Read previous ASYNC_HEAD from release (if exists)
-        id: prev
+      - name: Collect already-published versions
+        id: have
         run: |
           set -Eeuo pipefail
-          API="https://api.github.com/repos/${REPO}/releases/tags/${RELEASE_TAG}"
-          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' \
-                  -H "Authorization: Bearer ${GH_TOKEN}" \
-                  -H "Accept: application/vnd.github+json" "$API" || true)"
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+                  "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
           if [ "$HTTP" = "200" ]; then
-            body="$(jq -r '.body // ""' /tmp/rel.json)"
-            prev="$(printf '%s\n' "$body" | sed -nE 's/^ASYNC_HEAD=([0-9a-f]{7,40}).*$/\1/p' | head -n1 || true)"
-            echo "prev=${prev}" >> "$GITHUB_OUTPUT"
+            jq -r '.assets[].name' /tmp/rel.json \
+              | sed -n -E 's/^dxvk-sarek-async-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
+              | sort -V > /tmp/exist.txt
           else
-            echo "prev=" >> "$GITHUB_OUTPUT"
+            : > /tmp/exist.txt
           fi
+          echo "Existing:"; cat /tmp/exist.txt || true
 
-      - name: Resolve async branch HEAD + latest base tag (API)
-        id: meta
+      - name: Detect ALL missing candidates and export list
+        id: detect
+        env:
+          SAREK_REPO: ${{ env.SAREK_REPO }}
+          GH_TOKEN: ${{ env.GH_TOKEN }}
         run: |
           set -Eeuo pipefail
           API="https://api.github.com"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
 
-          # HEAD of async branch (no clone)
-          head_sha="$(curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${SAREK_REPO}/branches/${SAREK_BRANCH}" | jq -r '.commit.sha')"
-          [ -n "$head_sha" ] || { echo "::error::Failed to resolve ${SAREK_REPO}@${SAREK_BRANCH} HEAD"; exit 1; }
-          head_short="$(printf '%s' "$head_sha" | cut -c1-8)"
-
-          # Latest tag >= 1.10.8 (no clone)
-          min="1.10.8"
+          : > /tmp/upstream_async.txt
           page=1
-          base=""
-          > /tmp/tags.txt
           while :; do
-            json="$(curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${SAREK_REPO}/tags?per_page=100&page=${page}")"
-            count="$(jq 'length' <<<"$json")"
-            [ "$count" -gt 0 ] || break
-            jq -r '.[].name' <<<"$json" >> /tmp/tags.txt
+            url="$API/repos/${SAREK_REPO}/releases?per_page=100&page=${page}"
+            HTTP="$(curl -sS -w '%{http_code}' -o /tmp/rels.json "${auth[@]}" "${ver[@]}" "$url")"
+            [ "$HTTP" = "200" ] || { echo "::error::Upstream releases query failed: HTTP $HTTP"; break; }
+        
+            jq -r '
+              .[] | select(.draft==false and .prerelease==false)
+              | .assets[]? | .name
+            ' /tmp/rels.json \
+            | sed -n -E 's/^dxvk-sarek-async-v([0-9]+\.[0-9]+(\.[0-9]+)?)\.tar\.gz$/\1/p' \
+            >> /tmp/upstream_async.txt
+
+            [ "$(jq 'length' /tmp/rels.json)" -lt 100 ] && break
             page=$((page+1))
-            [ "$count" -lt 100 ] && break
           done
-          if [ -s /tmp/tags.txt ]; then
-            grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' /tmp/tags.txt | sort -V > /tmp/tags.sorted
-            while read -r t; do
-              v="${t#v}"
-              if [ "$(printf '%s\n' "$v" "$min" | sort -V | tail -n1)" = "$v" ]; then
-                base="$v"
-              fi
-            done < /tmp/tags.sorted
+
+          if [ ! -s /tmp/upstream_async.txt ]; then
+            echo "list=" >> "$GITHUB_OUTPUT"
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          [ -n "$base" ] || base="rolling"
+        
+          LC_ALL=C sort -V -u /tmp/upstream_async.txt > /tmp/candidates.txt
 
-          {
-            echo "base=$base"
-            echo "head_sha=$head_sha"
-            echo "head_short=$head_short"
-          } >> "$GITHUB_OUTPUT"
+          awk '
+            function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1}return 0}
+            { if (cmp($0,"1.11.0")>=0) print }
+          ' /tmp/candidates.txt > /tmp/candidates_111.txt
 
-      - name: Decide skip/build
-        id: decide
-        run: |
-          if [ -n "${{ steps.prev.outputs.prev }}" ] && [ "${{ steps.prev.outputs.prev }}" = "${{ steps.meta.outputs.head_sha }}" ]; then
-            echo "No change in async HEAD: ${{ steps.meta.outputs.head_sha }}"
-            echo "build=false" >> "$GITHUB_OUTPUT"
+          : > /tmp/to_build.txt
+          while read -r base; do
+            [ -n "$base" ] || continue
+            if ! grep -Fxq "$base" /tmp/exist.txt; then
+              echo "v${base} ${base}" >> /tmp/to_build.txt
+            fi
+          done < /tmp/candidates_111.txt
+        
+          if [[ -s /tmp/to_build.txt ]]; then
+            {
+              echo 'list<<EOF'
+              cat /tmp/to_build.txt
+              echo 'EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "missing=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Async HEAD changed (was: '${{ steps.prev.outputs.prev }}', now: '${{ steps.meta.outputs.head_sha }}')"
-            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "list=" >> "$GITHUB_OUTPUT"
+            echo "missing=false" >> "$GITHUB_OUTPUT"
           fi
 
   build-and-release:
-    name: Build & release (async)
+    name: Build & release missing versions
     runs-on: ubuntu-24.04
     needs: guard
     if: needs.guard.outputs.build == 'true'
+    timeout-minutes: 60
+    permissions:
+      contents: write
     env:
       SAREK_REPO:   pythonlover02/DXVK-Sarek
       SAREK_BRANCH: async
-      PREFIX_X64:   ${{ github.workspace }}/dist-x64
-      PREFIX_X86:   ${{ github.workspace }}/dist-x86
-      TOOLCHAIN_DIR: ${{ github.workspace }}/.tmp/llvm-mingw   # Use runner temp to avoid permission issues
+      TOOLCHAIN_DIR: /opt/llvm-mingw
       RELEASE_TAG:  DXVK-SAREK-ASYNC
       GH_TOKEN:     ${{ github.token }}
-      BASE_VER:     ${{ needs.guard.outputs.base }}
-      HEAD_SHA:     ${{ needs.guard.outputs.head_sha }}
-      HEAD_SHORT:   ${{ needs.guard.outputs.head_short }}
-
+      LLVM_MINGW_TAG: ${{ vars.LLVM_MINGW_TAG || '20250910' }}
     steps:
-      - name: Install host tooling
+      - name: Install host tooling (lean set; no cache)
         run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends \
             curl xz-utils jq ca-certificates \
             git meson ninja-build glslang-tools pkg-config \
-            build-essential python3 zstd file rsync
+            build-essential python3 zstd gh
 
-      - name: Ensure glslang (--vn) available
-        run: |
-          set -Eeuo pipefail
-          cat > /tmp/min.comp <<'GLSL'
-          #version 450
-          void main() {}
-          GLSL
-          have() { command -v "$1" >/dev/null 2>&1 || return 1; "$1" --quiet --target-env vulkan1.3 --vn testvar -o /tmp/min.h /tmp/min.comp; }
-          if have glslang; then :
-          elif have glslangValidator; then
-            BIN="$HOME/.local/bin"; mkdir -p "$BIN"
-            ln -sf "$(command -v glslangValidator)" "$BIN/glslang"
-            echo "$BIN" >> "$GITHUB_PATH"
-          else
-            echo "::error::No glslang/glslangValidator with working --vn"; exit 1
-          fi
-
-      - name: Install gh CLI
-        run: |
-          set -Eeuo pipefail
-          if ! command -v gh >/dev/null 2>&1; then
-            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-              | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-              | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-            sudo apt-get update -y
-            sudo apt-get install -y gh
-          fi
-
-      - name: Download & extract llvm-mingw (ucrt; Ubuntu x86_64 asset)
+      - name: Download pinned llvm-mingw (UCRT)
         id: llvm
+        env:
+          TAG: ${{ env.LLVM_MINGW_TAG }}
         run: |
           set -Eeuo pipefail
-          json="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
-                 -H "Accept: application/vnd.github+json" \
-                 https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest)"
-          url="$(echo "$json"  | jq -r '.assets[] | select(.name|test("ucrt-ubuntu-.*-x86_64\\.tar\\.xz$")) .browser_download_url' | head -n1)"
-          [[ -n "$url" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
-          mkdir -p "$TOOLCHAIN_DIR"
-          curl -fL -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
-          tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
+          API="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/tags/${TAG}"
+          json=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$API" || true)
+
+          pick_url() {
+            local json="$1"
+            local url=""
+            for dist in 24.04 22.04 20.04; do
+              url=$(jq -r --arg dist "$dist" '
+                .assets[]?
+                | select(.name | endswith("ucrt-ubuntu-" + $dist + "-x86_64.tar.xz"))
+                | .browser_download_url
+              ' <<<"$json" | head -n1 || true)
+              [[ -n "$url" && "$url" != "null" ]] && { echo "$url"; return 0; }
+            done
+            return 1
+          }
+
+          url="$(pick_url "$json" || true)"
+          if [[ -z "${url:-}" ]]; then
+            echo "::warning::Pinned llvm-mingw ${TAG} asset not found; falling back to latest"
+            json=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" \
+                   https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest || true)
+            url="$(pick_url "$json" || true)"
+          fi
+
+          [[ -n "${url:-}" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
+
+          TOOLCHAIN_DIR=/opt/llvm-mingw
+          sudo mkdir -p "$TOOLCHAIN_DIR"
+          curl -fL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" \
+               "$url" -o /tmp/llvm-mingw.tar.xz
+          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
-      - name: Verify toolchain in PATH
-        run: |
-          set -Eeuo pipefail
-          which x86_64-w64-mingw32-gcc
-          x86_64-w64-mingw32-gcc --version
-          which i686-w64-mingw32-gcc
-          i686-w64-mingw32-gcc --version
-          which llvm-strip || true
-
-      - name: Clone DXVK-Sarek (async branch + submodules)
-        run: |
-          set -Eeuo pipefail
-          git clone --branch "${SAREK_BRANCH}" --single-branch --recurse-submodules https://github.com/${SAREK_REPO}.git src
-          cd src
-          git fetch --tags --force
-
-      - name: Ensure cross files prefer llvm-strip (and windres fallback)
-        working-directory: src
-        run: |
-          set -Eeuo pipefail
-          for f in build-win64.txt build-win32.txt; do
-            [ -f "$f" ] || continue
-            # Prefer llvm-strip for PE/COFF; add or replace if present
-            if grep -q '^[[:space:]]*strip[[:space:]]*=' "$f"; then
-              sed -i "s|^[[:space:]]*strip[[:space:]]*=.*|strip = 'llvm-strip'|" "$f" || true
-            else
-              sed -i "/^\[binaries\]/a strip = 'llvm-strip'" "$f" || true
-            fi
-            # If triplet windres is missing at runtime, fallback to llvm-rc
-            if ! command -v x86_64-w64-mingw32-windres >/dev/null || ! command -v i686-w64-mingw32-windres >/dev/null; then
-              sed -i "s|^[[:space:]]*windres[[:space:]]*=.*|windres = 'llvm-rc'|" "$f" || true
-            fi
-          done
-
-      - name: Build (x64 + x86) and stage WCP
+      - name: Clone DXVK-Sarek (async branch per upstream guidance)
         env:
-          PREFIX_X64: ${{ env.PREFIX_X64 }}
-          PREFIX_X86: ${{ env.PREFIX_X86 }}
+          SAREK_REPO: ${{ env.SAREK_REPO }}
+          SAREK_BRANCH: ${{ env.SAREK_BRANCH }}
+        run: |
+          set -Eeuo pipefail
+          git clone --branch "${SAREK_BRANCH}" --recurse-submodules https://github.com/${SAREK_REPO}.git src
+          git -C src fetch --tags --force
+          git -C src remote set-branches origin "${SAREK_BRANCH}"
+          git -C src fetch origin "${SAREK_BRANCH}" --force
+
+      - name: Configure git identity
+        run: |
+          git -C src config user.name "DXVK Builder"
+          git -C src config user.email "builder@users.noreply.github.com"
+
+      - name: Build NEW versions from async branch aligned to tag timestamp
+        env:
+          TO_BUILD: ${{ needs.guard.outputs.to_build }}
+          SAREK_BRANCH: ${{ env.SAREK_BRANCH }}
         run: |
           set -Eeuo pipefail
           OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
           cd "${GITHUB_WORKSPACE}/src"
 
-          rm -rf "${GITHUB_WORKSPACE}/build.w64" "${GITHUB_WORKSPACE}/build.w32" \
-                 "${GITHUB_WORKSPACE}/dist-x64"  "${GITHUB_WORKSPACE}/dist-x86" \
-                 "${GITHUB_WORKSPACE}/DXVK_WCP"
-
-          # x64 (to system32)
-          meson setup "${GITHUB_WORKSPACE}/build.w64" \
-            --cross-file build-win64.txt \
-            --buildtype release \
-            --prefix "${PREFIX_X64}" \
-            -Dbuild_id=false -Dstrip=true \
-            -Dc_args='-Wno-nontrivial-memcall' \
-            -Dcpp_args='-Wno-nontrivial-memcall'
-          ninja -C "${GITHUB_WORKSPACE}/build.w64" -j"$(nproc)"
-          meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.w64"
-
-          # x86 (to syswow64)
-          meson setup "${GITHUB_WORKSPACE}/build.w32" \
-            --cross-file build-win32.txt \
-            --buildtype release \
-            --prefix "${PREFIX_X86}" \
-            -Dbuild_id=false -Dstrip=true \
-            -Dc_args='-Wno-nontrivial-memcall' \
-            -Dcpp_args='-Wno-nontrivial-memcall'
-          ninja -C "${GITHUB_WORKSPACE}/build.w32" -j"$(nproc)"
-          meson install --no-rebuild -C "${GITHUB_WORKSPACE}/build.w32"
-
-          mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
-          cp -v "${PREFIX_X64}/bin/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
-          cp -v "${PREFIX_X86}/bin/"*.dll "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
-
-          (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort)  > /tmp/x64.txt || true
-          (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort)  > /tmp/x86.txt || true
-          if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
-            echo "::error::No DLLs discovered"; exit 1
+          LIST="$(mktemp)"
+          printf '%s\n' "${TO_BUILD}" | sed '/^\s*$/d' > "$LIST"
+          if [[ ! -s "$LIST" ]]; then
+            echo "No new versions to build."
+            exit 0
           fi
 
-          jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
-          jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
+          while read -r tag base; do
+            echo "::group::Build ${tag} (async branch)"
 
-          VN="sarek-async-${BASE_VER}"
-          jq -n \
-            --arg VN "${VN}" \
-            --argjson VC 0 \
-            --arg DESC "DXVK-Sarek async build by Ari (@${HEAD_SHORT})" \
-            --arg SYS '${system32}/' \
-            --arg WOW '${syswow64}/' \
-            --slurpfile x64 /tmp/x64.json \
-            --slurpfile x86 /tmp/x86.json \
-            '
-            ($x64[0] // []) as $A |
-            ($x86[0] // []) as $B |
-            {
-              type: "DXVK",
-              versionName: $VN,
-              versionCode: $VC,
-              description: $DESC,
-              files: [
-                ($A[]? | {source: ("system32/"+.), target: ($SYS + .)}),
-                ($B[]? | {source: ("syswow64/"+.), target: ($WOW + .)})
-              ]
-            }' > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
+            git reset --hard
+            git clean -fdx
+            git fetch origin "${SAREK_BRANCH}" --force
+            git fetch --tags --force
 
-          mkdir -p "${GITHUB_WORKSPACE}/out"
-          tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd \
-              --format=gnu --owner=0 --group=0 --numeric-owner \
-              -cf "${GITHUB_WORKSPACE}/out/dxvk-sarek-async-${BASE_VER}.wcp" \
-              profile.json system32 syswow64
+            # Find async branch commit that is at or before the tag date
+            tag_date="$(git log -1 --format=%cI "tags/${tag}" || true)"
+            if [[ -n "$tag_date" ]]; then
+              async_commit="$(git rev-list -1 --before="$tag_date" "origin/${SAREK_BRANCH}" || true)"
+            fi
+            if [[ -z "${async_commit:-}" ]]; then
+              echo "::warning::Could not resolve async commit before tag date; falling back to origin/${SAREK_BRANCH} HEAD"
+              async_commit="$(git rev-parse "origin/${SAREK_BRANCH}")"
+            fi
 
-      - name: Create/Update GitHub Release (DXVK-SAREK-ASYNC) + upload (overwrite)
+            git checkout -f "$async_commit"
+            git submodule sync --recursive
+            git submodule update --init --recursive --checkout
+            echo "Using async commit: $(git rev-parse --short HEAD) for ${tag} (tag date: ${tag_date:-unknown})"
+
+            if git merge-base --is-ancestor "tags/${tag}" "$async_commit"; then
+              echo "Async commit includes or follows ${tag}."
+            else
+              echo "::notice::Async commit may not include ${tag}; building closest state by timestamp."
+            fi
+
+            PKGDIR="${GITHUB_WORKSPACE}/pkg"
+            mkdir -p "$PKGDIR"
+            ./package-release.sh "$tag" "$PKGDIR" --no-package
+
+            PKG_ROOT="${GITHUB_WORKSPACE}/pkg/dxvk-async-${tag}"
+            PREFIX_X64="${PKG_ROOT}/x64"
+            PREFIX_X86="${PKG_ROOT}/x32"
+            [[ -d "${PREFIX_X64}/bin" ]] && PREFIX_X64="${PREFIX_X64}/bin"
+            [[ -d "${PREFIX_X86}/bin" ]] && PREFIX_X86="${PREFIX_X86}/bin"
+
+            WCP_DIR="${GITHUB_WORKSPACE}/DXVK_WCP"
+            rm -rf "$WCP_DIR"
+            mkdir -p "${WCP_DIR}/system32" "${WCP_DIR}/syswow64"
+
+            cp -v "${PREFIX_X64}/"*.dll  "${WCP_DIR}/system32/" || true
+            cp -v "${PREFIX_X86}/"*.dll  "${WCP_DIR}/syswow64/" || true
+
+            if command -v llvm-strip >/dev/null 2>&1; then
+              find "${WCP_DIR}" -type f -name '*.dll' -print0 | xargs -0 -I{} llvm-strip -s "{}" || true
+            fi
+
+            (cd "$WCP_DIR" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
+            (cd "$WCP_DIR" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
+
+            if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
+              echo "::error::No DLLs discovered for ${tag}"
+              exit 1
+            fi
+
+            jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
+            jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
+
+            jq -n \
+              --arg DESC "DXVK-Sarek-Async Automated Build (Built by Ari's Winlator WCP Hub. Upstream: doitsujin, pythonlover02)" \
+              --arg VN "sarek-async-${base}" \
+              --argjson VC 0 \
+              --arg SYS '${system32}/' \
+              --arg WOW '${syswow64}/' \
+              --slurpfile x64 /tmp/x64.json \
+              --slurpfile x86 /tmp/x86.json \
+              '
+              ($x64[0] // []) as $A |
+              ($x86[0] // []) as $B |
+              {
+                type: "DXVK",
+                versionName: $VN,
+                versionCode: $VC,
+                description: $DESC,
+                files: [
+                  ($A[]? | {source: ("system32/"+ .), target: ($SYS + .)}),
+                  ($B[]? | {source: ("syswow64/"+ .), target: ($WOW + .)})
+                ]
+              }' > "${WCP_DIR}/profile.json"
+
+            tar -C "$WCP_DIR" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
+              --sort=name \
+              -cf "${OUT}/dxvk-sarek-async-${base}.wcp" profile.json system32 syswow64
+
+            echo "::endgroup::"
+          done < "$LIST"
+          
+      - name: Build release notes
+        run: |
+          set -Eeuo pipefail
+          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          printf '🤖 Automated DXVK-Sarek-Async builds (1.11.0+).\n\n' > "$NOTES"
+          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-sarek-async-*.wcp" > /dev/null; then
+            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-sarek-async-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
+            ver="${latest#dxvk-sarek-async-}"; ver="${ver%.wcp}"
+            echo "Current: ${ver}" >> "$NOTES"
+          fi
+          cat "$NOTES"
+
+      - name: Create/Update GitHub Release (DXVK-Sarek) + upload WCPs
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          {
-            echo "Automated DXVK-Sarek async builds (1.11.0+)"
-            echo
-            echo "Current: ${BASE_VER} @ [${HEAD_SHORT}](https://github.com/${SAREK_REPO}/commit/${HEAD_SHA})"
-          } > "$NOTES"
+          RELEASE_TAG="DXVK-SAREK-ASYNC"
 
           if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
@@ -310,10 +331,8 @@ jobs:
             gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           fi
 
-          gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
-
-          # Ensure single ASYNC_HEAD= line (replace if existed)
-          body="$(gh api repos/${REPO}/releases/tags/${RELEASE_TAG} --jq .body || echo "")"
-          body_no_old="$(printf '%s\n' "$body" | sed '/^ASYNC_HEAD=/d')"
-          printf '%s\nASYNC_HEAD=%s\n' "$body_no_old" "${HEAD_SHA}" > /tmp/newbody.txt
-          gh release edit "${RELEASE_TAG}" --repo "${REPO}" -F /tmp/newbody.txt
+          if compgen -G "${GITHUB_WORKSPACE}/out/*.wcp" > /dev/null; then
+            gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
+          else
+            echo "No new WCP files to upload."
+          fi
