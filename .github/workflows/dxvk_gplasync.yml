@@ -48,7 +48,6 @@ jobs:
           HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
                   "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
           if [ "$HTTP" = "200" ]; then
-            # rev: 1..9 단일 자리
             jq -r '.assets[].name' /tmp/rel.json \
               | sed -n -E 's/^dxvk-gplasync-([0-9]+\.[0-9]+(\.[0-9]+)?)\-([1-9])\.wcp$/\1 \3/p' \
               | LC_ALL=C sort -V > /tmp/exist.txt
@@ -70,12 +69,10 @@ jobs:
           : > /tmp/names.txt
           : > /tmp/relmap.json
 
-          # 브랜치는 main 우선, 안 되면 master 시도
           for REF in main master; do
             page=1
             got_any=0
             while :; do
-              # -f 금지: 4xx일 때 바디 안 쓰는 바람에 /tmp/p.json 자체가 없음
               HTTP="$(curl -sS -L \
                 -D /tmp/h \
                 -w '%{http_code}' \
@@ -84,16 +81,13 @@ jobs:
 
               if [ "$HTTP" = "200" ]; then
                 got_any=1
-                # 혹시라도 비어 있으면 jq가 터지지 않도록 보정
                 [ -s /tmp/p.json ] || echo "[]" > /tmp/p.json
                 jq -r '.[].name // empty' /tmp/p.json >> /tmp/names.txt || true
 
-                # 페이지네이션: X-Next-Page 헤더 체크
                 next="$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')"
                 [ -z "${next:-}" ] && break
                 page="$next"
               elif [ "$HTTP" = "404" ]; then
-                # 이 REF로는 경로/프로젝트/브랜치가 없음 → 다음 REF 시도
                 echo "::notice::GitLab tree 404 for ref=${REF}, page=${page}; trying another ref if available"
                 break
               else
@@ -102,11 +96,9 @@ jobs:
               fi
             done
 
-            # 한 번이라도 성공했으면 더 이상 다른 REF로 시도할 필요 없음
             [ "$got_any" = "1" ] && break
           done
 
-          # names.txt가 비면 그냥 빈 맵으로 종료 (후속 스텝들이 죽지 않게)
           if [ ! -s /tmp/names.txt ]; then
             echo "{}" > /tmp/relmap.json
             echo 'json<<EOF' >> "$GITHUB_OUTPUT"
@@ -116,7 +108,7 @@ jobs:
             exit 0
           fi
 
-          # 파일명 → { base: max_rev } 맵 생성
+          # { base: max_rev }
           jq -Rs '
             split("\n") | map(select(length>0)) |
             # 형식: dxvk-gplasync-<base>-<rev>.patch  (rev = 1..9)
@@ -142,7 +134,6 @@ jobs:
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
 
-          # DXVK 태그 수집(2.3.1+)
           curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${DXVK_REPO}/tags?per_page=100" \
             | jq -r '.[].name' \
             | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
@@ -161,11 +152,9 @@ jobs:
             [ -n "$tag" ] || continue
             base="${tag#v}"
           
-            # 폴백 금지
             rev="$(jq -r --arg b "$base" '.[$b] // empty' /tmp/relmap.json)"
             [[ -z "$rev" ]] && continue
           
-            # 이미 게시된 (base,rev) 제외
             if ! grep -Fq "${base} ${rev}" /tmp/exist.txt; then
               echo "${tag} ${base} ${rev}" >> /tmp/to_build.txt
             fi
@@ -285,108 +274,68 @@ jobs:
           set -Eeuo pipefail
           OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
           cd "${GITHUB_WORKSPACE}/src"
-
+        
           LIST="$(mktemp)"
           printf '%s\n' "${TO_BUILD}" | sed '/^\s*$/d' > "$LIST"
           if [[ ! -s "$LIST" ]]; then
-            echo "No new versions to build."; exit 0; fi
-
-          # 입력: tag base rev (patch_base 제거)
+            echo "No new versions to build."
+            exit 0
+          fi
+        
           while read -r tag base rev; do
             echo "::group::Build ${tag} (gplasync rev ${rev})"
+        
+            git reset --hard
+            git clean -fdx
+        
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
-          
-            # ★ 정확 일치 패치만 사용
+        
             url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${base}-${rev}.patch"
             if ! curl -sfI "$url" >/dev/null; then
               echo "::warning::Exact patch not found for ${base}-${rev}; skipping"
-              echo "::endgroup::"; continue
+              echo "::endgroup::"
+              continue
             fi
             curl -fsSL "$url" -o /tmp/gpl.patch
-          
+        
             git config user.name  ci
             git config user.email ci@local
-            if git am -3 /tmp/gpl.patch; then :; else
+            if git am -3 /tmp/gpl.patch; then
+              :
+            else
               git am --abort || true
               git apply -p1 --reject /tmp/gpl.patch || { echo "::error::Patch failed for ${base}-${rev}"; exit 1; }
             fi
-          
-            # 안전망: 옵션 플래그 존재 확인(패치가 진짜 먹었는지 빠르게 체크)
+        
             grep -q "enableAsync" src/dxvk/dxvk_options.h || { echo "::error::Patch not applied cleanly for ${base}-${rev}"; exit 1; }
-          
-            # ... 이하 기존 빌드/패키징 동일 ...
-            echo "::endgroup::"
-          done < "$LIST"
-
-            CHANGED=0
-            # --------------------------------------------------------------- patches #
-            # Apply gplasync patch picked from repo tree map
-            url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${patch_base}-${rev}.patch"
-            curl -sfI "$url" >/dev/null || { echo "::error::Missing patch: $url"; exit 1; }
-            curl -fsSL "$url" -o /tmp/gpl.patch
-            git config user.name  ci
-            git config user.email ci@local
-            if git am -3 /tmp/gpl.patch; then :; else git am --abort || true; git apply -p1 --reject /tmp/gpl.patch; fi
-            grep -q "enableAsync" src/dxvk/dxvk_options.h || { echo "::error::Patch not applied cleanly for ${base} (using ${patch_base}-${rev})"; git status -sb; exit 1; }
-
-            # v2.5 UnmappedSubresource constexpr init issue -> safe cast
-            TEX="src/d3d11/d3d11_texture.h"
-            if [[ -f "$TEX" ]] && grep -qE '\\bUnmappedSubresource\\b' "$TEX"; then
-              cp "$TEX" "${TEX}.bak"
-              perl -0777 -pe \
-                's/\\bstatic\\s+(?:const|constexpr)\\s+D3D11_MAP\\s+UnmappedSubresource\\s*=\\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
-                -i "$TEX" && CHANGED=1
-            fi
-
-            # Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate if toolchain has it
-            INC="src/d3d9/d3d9_include.h"
-            TOOL_X64="/opt/llvm-mingw/x86_64-w64-mingw32/include/d3d9types.h"
-            TOOL_X86="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
-            if [[ -f "$INC" ]] && (grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X64" || grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X86"); then
-              if grep -qE 'typedef\\s+struct\\s+_D3DDEVINFO_RESOURCEMANAGER\\b' "$INC"; then
-                cp "$INC" "${INC}.bak"
-                perl -0777 -pe 's/typedef\\s+struct\\s+_D3DDEVINFO_RESOURCEMANAGER\\b.*?}\\s*D3DDEVINFO_RESOURCEMANAGER\\b[^;]*;//s' -i "$INC" && CHANGED=1
-              fi
-            fi
-
-            # Mismatched-tags warning: align forward decl to 'struct' (optional)
-            MEM="src/dxvk/dxvk_memory.h"
-            if [[ -f "$MEM" ]] \
-               && grep -qE '^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;' "$MEM" \
-               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*\\{' "$MEM"; then
-              cp "$MEM" "${MEM}.bak2"
-              sed -E -i 's/^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;/struct DxvkMemoryChunk;/' "$MEM" && CHANGED=1
-            fi
-
-            ver="${tag#v}"
-
-            # Build using official script + cross files
+        
             PKGDIR="${GITHUB_WORKSPACE}/pkg"
             mkdir -p "$PKGDIR"
             ./package-release.sh "$tag" "$PKGDIR" --no-package --dev-build
-
-            # derive install roots from package script output
+        
             PKG_ROOT="${GITHUB_WORKSPACE}/pkg/dxvk-${tag}"
             PREFIX_X64="${PKG_ROOT}/x64"
             PREFIX_X86="${PKG_ROOT}/x32"
             [[ -d "${PREFIX_X64}/bin" ]] && PREFIX_X64="${PREFIX_X64}/bin"
             [[ -d "${PREFIX_X86}/bin" ]] && PREFIX_X86="${PREFIX_X86}/bin"
-            export PREFIX_X64 PREFIX_X86
-
-            # Collect DLLs (no extra /bin here)
-            mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
-            cp -v "${PREFIX_X64}/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
-            cp -v "${PREFIX_X86}/"*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
-
-            (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
-            (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
+        
+            WCP_DIR="${GITHUB_WORKSPACE}/DXVK_WCP"
+            rm -rf "$WCP_DIR"
+            mkdir -p "${WCP_DIR}/system32" "${WCP_DIR}/syswow64"
+            cp -v "${PREFIX_X64}/"*.dll  "${WCP_DIR}/system32/" || true
+            cp -v "${PREFIX_X86}/"*.dll  "${WCP_DIR}/syswow64/" || true
+        
+            (cd "$WCP_DIR" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
+            (cd "$WCP_DIR" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
             if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
-              echo "::error::No DLLs discovered for ${base}-${rev}"; exit 1; fi
-
+              echo "::error::No DLLs discovered for ${base}-${rev}"
+              exit 1
+            fi
+        
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
-
+        
             DESC="DXVK gplasync build by Ari"
             jq -n \
               --arg VN "gplasync-${base}" \
@@ -408,26 +357,29 @@ jobs:
                   ($A[]? | {source: ("system32/"+ .), target: ($SYS + .)}),
                   ($B[]? | {source: ("syswow64/"+ .), target: ($WOW + .)})
                 ]
-              }' > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
-
+              }' > "${WCP_DIR}/profile.json"
+        
             export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct "$tag")"
-            mkdir -p "${GITHUB_WORKSPACE}/out"
-            tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
+            mkdir -p "$OUT"
+            tar -C "$WCP_DIR" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
               --sort=name \
-              -cf "${GITHUB_WORKSPACE}/out/dxvk-gplasync-${base}-${rev}.wcp" profile.json system32 syswow64
+              -cf "${OUT}/dxvk-gplasync-${base}-${rev}.wcp" profile.json system32 syswow64
+        
             echo "::endgroup::"
           done < "$LIST"
-
+                
       - name: Build release notes (minimal)
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          printf '🤖 Automated gplasync builds (2.3.1+)\n\n' > "$NOTES"
-          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-gplasync-*.wcp" > /dev/null; then
-            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-gplasync-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
-            cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"
-            echo "\nCurrent: ${cur}" >> "$NOTES"
-          fi
+          {
+            printf '🤖 Automated gplasync builds (2.3.1+)\n\n'
+            if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-gplasync-*.wcp" > /dev/null; then
+              latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-gplasync-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
+              cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"
+              printf 'Current: %s\n' "$cur"
+            fi
+          } > "$NOTES"
           cat "$NOTES"
 
       - name: Create/Update GitHub Release (DXVK-GPLASYNC) + upload WCPs
