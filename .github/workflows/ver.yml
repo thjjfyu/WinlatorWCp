@@ -1,8 +1,8 @@
-name: README • Current versions from release bodies
+name: VEROBO
 
 on:
   schedule:
-    - cron: "0 19 * * *"   # others run at 18:00 UTC; this runs 1h later
+    - cron: "0 19 * * *"
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   bump-readme-current:
-    name: Extract `Current:` from tagged releases → update README placeholders
+    name: Extract Current
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -50,7 +50,7 @@ jobs:
             "vkd3d-arm64ec":          "VKD3D-PROTON-ARM64EC"
           }
           EOF
-          # sanity: all placeholders must exist exactly once in README.md
+
           test -f README.md || { echo "::error::README.md not found"; exit 1; }
           missing=0; dup=0
           while IFS= read -r key; do
@@ -101,7 +101,6 @@ jobs:
               fi
               ver="$prev"
             else
-              # Current: 뒤 첫 토큰만 집계 (공백/쉼표/@ 전까지)
               ver="$(printf '%s' "$line" | perl -ne 'print $1 if /^\s*Current:\s*([^\s,@]+)/')"
               if [ -z "$ver" ]; then
                 echo "::warning::could not parse version token from ${tag}; falling back to previous"
