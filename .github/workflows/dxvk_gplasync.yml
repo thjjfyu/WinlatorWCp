@@ -1,4 +1,8 @@
-name: D-gplasync
+name: DXVK-GPLAsync
+# LLVM_MINGW 20250910
+# 2.3.1+
+# Deleted useless patches (2.3.1, 2.5)
+# done for now
 
 on:
   workflow_dispatch:
@@ -6,7 +10,7 @@ on:
     - cron: "0 18 * * *"
 
 permissions:
-  contents: write
+  contents: read
 
 defaults:
   run:
@@ -18,12 +22,11 @@ concurrency:
 
 jobs:
   guard:
-    name: Check Update (DXVK tags -> GPLAsync release map from repo tree)
+    name: Check Update
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      build:  ${{ steps.decide.outputs.build }}
-      relmap: ${{ steps.relmap.outputs.json }}
+      build:    ${{ steps.detect.outputs.missing }}
       to_build: ${{ steps.detect.outputs.list }}
     env:
       GH_TOKEN: ${{ github.token }}
@@ -37,7 +40,6 @@ jobs:
           sudo apt-get -yq update
           sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
 
-      # -------------------------------------------------------------------------- #
       - name: Collect already-published (base,rev)
         id: have
         run: |
@@ -56,72 +58,58 @@ jobs:
           fi
           echo "Existing base/rev:"; cat /tmp/exist.txt || true
 
-      - name: Build GPLAsync release map from repo tree only (rev 1..9)
+      - name: Build GPLAsync release map from repo tree (main only)
         id: relmap
         env:
           GITLAB_PROJECT: ${{ env.GITLAB_PROJECT }}
         run: |
           set -Eeuo pipefail
-
-          # URL-encode "Ph42oN/dxvk-gplasync" -> "Ph42oN%2Fdxvk-gplasync"
           enc="$(jq -rn --arg s "$GITLAB_PROJECT" '$s|@uri')"
-
           : > /tmp/names.txt
           : > /tmp/relmap.json
 
-          for REF in main master; do
-            page=1
-            got_any=0
-            while :; do
-              HTTP="$(curl -sS -L \
-                -D /tmp/h \
-                -w '%{http_code}' \
-                "https://gitlab.com/api/v4/projects/${enc}/repository/tree?ref=${REF}&path=patches&recursive=true&per_page=100&page=${page}" \
-                -o /tmp/p.json || true)"
+          page=1
+          while :; do
+            HTTP="$(curl -sS -L --retry 3 --retry-delay 2 \
+              -D /tmp/h \
+              -w '%{http_code}' \
+              "https://gitlab.com/api/v4/projects/${enc}/repository/tree?ref=main&path=patches&recursive=true&per_page=100&page=${page}" \
+              -o /tmp/p.json || true)"
 
-              if [ "$HTTP" = "200" ]; then
-                got_any=1
-                [ -s /tmp/p.json ] || echo "[]" > /tmp/p.json
-                jq -r '.[].name // empty' /tmp/p.json >> /tmp/names.txt || true
-
-                next="$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')"
-                [ -z "${next:-}" ] && break
-                page="$next"
-              elif [ "$HTTP" = "404" ]; then
-                echo "::notice::GitLab tree 404 for ref=${REF}, page=${page}; trying another ref if available"
-                break
-              else
-                echo "::warning::GitLab tree HTTP ${HTTP} for ref=${REF}, page=${page}; stopping this ref"
-                break
-              fi
-            done
-
-            [ "$got_any" = "1" ] && break
+            if [ "$HTTP" = "200" ]; then
+              [ -s /tmp/p.json ] || echo "[]" > /tmp/p.json
+              jq -r '.[].name // empty' /tmp/p.json >> /tmp/names.txt || true
+              next="$(awk 'tolower($1)=="x-next-page:"{print $2}' /tmp/h | tr -d '\r')"
+              [ -z "${next:-}" ] && break
+              page="$next"
+            elif [ "$HTTP" = "404" ]; then
+              echo "::error::GitLab tree 404 for ref=main"; exit 1
+            else
+              echo "::error::GitLab tree HTTP ${HTTP} for ref=main"; exit 1
+            fi
           done
 
           if [ ! -s /tmp/names.txt ]; then
-            echo "{}" > /tmp/relmap.json
-            echo 'json<<EOF' >> "$GITHUB_OUTPUT"
-            cat /tmp/relmap.json >> "$GITHUB_OUTPUT"
-            echo 'EOF' >> "$GITHUB_OUTPUT"
-            echo "Release map: (empty)"
-            exit 0
+            echo "::error::No patch names discovered from GitLab."; exit 1
           fi
 
-          # { base: max_rev }
           jq -Rs '
             split("\n") | map(select(length>0)) |
-            # 형식: dxvk-gplasync-<base>-<rev>.patch  (rev = 1..9)
             map(capture("dxvk-gplasync-(?<base>[0-9]+\\.[0-9]+(?:\\.[0-9]+)?)-(?<rev>[1-9])\\.patch")?) |
             map(select(. != null)) |
             group_by(.base) |
             map({key: .[0].base, value: (map(.rev|tonumber)|max)}) | from_entries
           ' /tmp/names.txt > /tmp/relmap.json
 
+          if [ "$(jq 'length' /tmp/relmap.json)" -eq 0 ]; then
+            echo "::error::Release map empty after parsing GitLab tree."; exit 1
+          fi
+
           echo 'json<<EOF' >> "$GITHUB_OUTPUT"
           cat /tmp/relmap.json >> "$GITHUB_OUTPUT"
           echo 'EOF' >> "$GITHUB_OUTPUT"
-          echo "Release map:"; cat /tmp/relmap.json || true
+
+          echo "Release map:"; cat /tmp/relmap.json
 
       - name: Detect ALL missing candidates and export list
         id: detect
@@ -138,28 +126,26 @@ jobs:
             | jq -r '.[].name' \
             | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
             | LC_ALL=C sort -V > /tmp/tags.txt
-          
+
           awk '
             function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1}return 0}
             { base=substr($0,2); if (cmp(base,"2.3.1")>=0) print $0 }
           ' /tmp/tags.txt > /tmp/candidates.txt
-          
+
           RELMAP='${{ steps.relmap.outputs.json }}'
           printf '%s\n' "$RELMAP" > /tmp/relmap.json
-          
+
           : > /tmp/to_build.txt
           while read -r tag; do
             [ -n "$tag" ] || continue
             base="${tag#v}"
-          
             rev="$(jq -r --arg b "$base" '.[$b] // empty' /tmp/relmap.json)"
             [[ -z "$rev" ]] && continue
-          
             if ! grep -Fq "${base} ${rev}" /tmp/exist.txt; then
               echo "${tag} ${base} ${rev}" >> /tmp/to_build.txt
             fi
           done < /tmp/candidates.txt
-          
+
           if [[ -s /tmp/to_build.txt ]]; then
             echo 'list<<EOF' >> "$GITHUB_OUTPUT"
             cat /tmp/to_build.txt >> "$GITHUB_OUTPUT"
@@ -170,25 +156,21 @@ jobs:
             echo "missing=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Decide build
-        id: decide
-        run: |
-          [[ "${{ steps.detect.outputs.missing }}" = "true" ]] && echo "build=true"  >> "$GITHUB_OUTPUT" || echo "build=false" >> "$GITHUB_OUTPUT"
-
-  # ------------------------------------------------------------------------------ #
-
   build-and-release:
     name: Build & release missing versions
     runs-on: ubuntu-24.04
     needs: guard
     if: needs.guard.outputs.build == 'true'
+    timeout-minutes: 60
+    permissions:
+      contents: write
     env:
       DXVK_REPO: doitsujin/dxvk
       GPLASYNC_BASE_URL: https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/patches
       TOOLCHAIN_DIR: /opt/llvm-mingw
       RELEASE_TAG: DXVK-GPLASYNC
       GH_TOKEN: ${{ github.token }}
-      LLVM_MINGW_TAG: ${{ vars.LLVM_MINGW_TAG || '20250613' }}
+      LLVM_MINGW_TAG: ${{ vars.LLVM_MINGW_TAG || '20250910' }}
       GITLAB_PROJECT: Ph42oN/dxvk-gplasync
     steps:
       - name: Install host tooling (lean set; no cache)
@@ -198,23 +180,6 @@ jobs:
             curl xz-utils jq ca-certificates \
             git meson ninja-build glslang-tools pkg-config \
             build-essential python3 zstd gh
-
-      - name: Ensure glslang (--vn)
-        run: |
-          set -Eeuo pipefail
-          cat > /tmp/min.comp <<'GLSL'
-          #version 450
-          void main() {}
-          GLSL
-          have() { command -v "$1" >/dev/null 2>&1 || return 1; "$1" --quiet --target-env vulkan1.3 --vn testvar -o /tmp/min.h /tmp/min.comp; }
-          if have glslang; then :
-          elif have glslangValidator; then
-            BIN="$HOME/.local/bin"; mkdir -p "$BIN"
-            ln -sf "$(command -v glslangValidator)" "$BIN/glslang"
-            echo "$BIN" >> "$GITHUB_PATH"
-          else
-            echo "::error::No glslang/glslangValidator with working --vn"; exit 1
-          fi
 
       - name: Download pinned llvm-mingw (UCRT)
         id: llvm
@@ -228,7 +193,7 @@ jobs:
           pick_url() {
             local json="$1"
             local url=""
-            for dist in 22.04 20.04; do
+            for dist in 24.04 22.04 20.04; do
               url=$(jq -r --arg dist "$dist" '
                 .assets[]?
                 | select(.name | endswith("ucrt-ubuntu-" + $dist + "-x86_64.tar.xz"))
@@ -267,80 +232,130 @@ jobs:
           git -C src config user.name "DXVK Builder"
           git -C src config user.email "builder@users.noreply.github.com"
 
-      - name: Build NEW versions (use guard.to_build)
+      - name: Build NEW versions
         env:
           TO_BUILD: ${{ needs.guard.outputs.to_build }}
         run: |
           set -Eeuo pipefail
           OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
           cd "${GITHUB_WORKSPACE}/src"
-        
+
           LIST="$(mktemp)"
           printf '%s\n' "${TO_BUILD}" | sed '/^\s*$/d' > "$LIST"
           if [[ ! -s "$LIST" ]]; then
             echo "No new versions to build."
             exit 0
           fi
-        
+
           while read -r tag base rev; do
             echo "::group::Build ${tag} (gplasync rev ${rev})"
-        
+
             git reset --hard
             git clean -fdx
-        
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
-        
+
             url="${GPLASYNC_BASE_URL}/dxvk-gplasync-${base}-${rev}.patch"
-            if ! curl -sfI "$url" >/dev/null; then
-              echo "::warning::Exact patch not found for ${base}-${rev}; skipping"
+            if ! curl -fSL "$url" -o /tmp/gpl.patch; then
+              echo "::warning::Patch not found for ${base}-${rev}; skipping"
               echo "::endgroup::"
               continue
             fi
-            curl -fsSL "$url" -o /tmp/gpl.patch
-        
-            git config user.name  ci
-            git config user.email ci@local
-            if git am -3 /tmp/gpl.patch; then
-              :
-            else
-              git am --abort || true
-              git apply -p1 --reject /tmp/gpl.patch || { echo "::error::Patch failed for ${base}-${rev}"; exit 1; }
+
+            if ! head -n1 /tmp/gpl.patch | grep -q '^diff --git '; then
+              echo "::error::Downloaded patch is not a git diff for ${base}-${rev}"
+              exit 1
             fi
-        
-            grep -q "enableAsync" src/dxvk/dxvk_options.h || { echo "::error::Patch not applied cleanly for ${base}-${rev}"; exit 1; }
-        
+
+            if ! git apply --check /tmp/gpl.patch; then
+              echo "::error::Patch precheck failed for ${base}-${rev} (would not apply cleanly)"
+              exit 1
+            fi
+
+            git apply --index /tmp/gpl.patch
+            git commit -m "gplasync: apply ${base}-${rev}"
+
+            if ! git grep -q --fixed-strings 'enableAsync' -- src/dxvk/dxvk_options.h; then
+              echo "::error::Sanity check failed: enableAsync symbol not found after patch ${base}-${rev}"
+              exit 1
+            fi
+
+            if [ -n "$(git status --porcelain=v1 --untracked-files=no)" ]; then
+              echo "::error::Dirty working tree after patch ${base}-${rev} (tracked changes present)"
+              git status --porcelain=v1 --untracked-files=no
+              exit 1
+            fi
+
+            HEAD_BEFORE="$(git rev-parse HEAD)"
+
+            TAGNAME="v${base}-${rev}-gplasync"
+
+            git tag -d "$TAGNAME" >/dev/null 2>&1 || true
+            git tag -a "$TAGNAME" -m "DXVK GPLAsync ${base}-${rev} build anchor for HUD"
+
+            DESC_NOW="$(git describe --dirty=+)"
+            if [[ "$DESC_NOW" != "$TAGNAME" ]]; then
+              echo "::error::git describe returned '$DESC_NOW' (expected '$TAGNAME')."
+              echo "::error::Check that an *annotated* tag exists on the current commit."
+              exit 1
+            fi
+
+            [ -f meson.build ] || { echo "::error::Not at DXVK repo root (pwd=$(pwd))"; exit 1; }
+            
+            if [ -f version.h.in ]; then
+              HDR="version.h.in"
+            else
+              HDR="$(git grep -l -E '@VCS_TAG@|DXVK_VERSION' -- '**/*.h.in' ':!subprojects/*' | head -n1 || true)"
+            fi
+            [ -n "$HDR" ] || { echo "::error::DXVK *_version.h.in not found (pwd=$(pwd))"; exit 1; }
+            
+            if grep -q '@VCS_TAG@' "$HDR"; then
+              sed -i -E "s/@VCS_TAG@/${base}-${rev}-gplasync/g" "$HDR"
+            else
+              sed -i -E "s@^(#define[[:space:]]+DXVK_VERSION[[:space:]]+\").*(\".*)$@\\1${base}-${rev}-gplasync\\2@" "$HDR"
+            fi
+            grep -q "${base}-${rev}-gplasync" "$HDR" || { echo "::error::DXVK_VERSION override failed"; exit 1; }
+            
+            TAGNAME="v${base}-${rev}-gplasync"
+            git tag -d "$TAGNAME" >/dev/null 2>&1 || true
+            git tag -a "$TAGNAME" -m "DXVK GPLAsync ${base}-${rev} build anchor for HUD" || true
+
             PKGDIR="${GITHUB_WORKSPACE}/pkg"
             mkdir -p "$PKGDIR"
-            ./package-release.sh "$tag" "$PKGDIR" --no-package --dev-build
-        
+            ./package-release.sh "$tag" "$PKGDIR" --no-package
+            
             PKG_ROOT="${GITHUB_WORKSPACE}/pkg/dxvk-${tag}"
             PREFIX_X64="${PKG_ROOT}/x64"
             PREFIX_X86="${PKG_ROOT}/x32"
             [[ -d "${PREFIX_X64}/bin" ]] && PREFIX_X64="${PREFIX_X64}/bin"
             [[ -d "${PREFIX_X86}/bin" ]] && PREFIX_X86="${PREFIX_X86}/bin"
-        
+
             WCP_DIR="${GITHUB_WORKSPACE}/DXVK_WCP"
             rm -rf "$WCP_DIR"
             mkdir -p "${WCP_DIR}/system32" "${WCP_DIR}/syswow64"
+
             cp -v "${PREFIX_X64}/"*.dll  "${WCP_DIR}/system32/" || true
             cp -v "${PREFIX_X86}/"*.dll  "${WCP_DIR}/syswow64/" || true
-        
+
+            if command -v llvm-strip >/dev/null 2>&1; then
+              find "${WCP_DIR}" -type f -name '*.dll' -print0 | xargs -0 -I{} llvm-strip -s "{}" || true
+            fi
+
             (cd "$WCP_DIR" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
             (cd "$WCP_DIR" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
+
             if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
-              echo "::error::No DLLs discovered for ${base}-${rev}"
+              echo "::error::No DLLs discovered for ${tag}"
               exit 1
             fi
-        
+
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
-        
-            DESC="DXVK gplasync build by Ari"
+
             jq -n \
+              --arg DESC "DXVK-GPLAsync Automated Build (Built by Ari's Winlator WCP Hub. Upstream: doitsujin, Ph42oN)" \
               --arg VN "gplasync-${base}" \
               --argjson VC "${rev}" \
-              --arg DESC "$DESC" \
               --arg SYS '${system32}/' \
               --arg WOW '${syswow64}/' \
               --slurpfile x64 /tmp/x64.json \
@@ -358,28 +373,25 @@ jobs:
                   ($B[]? | {source: ("syswow64/"+ .), target: ($WOW + .)})
                 ]
               }' > "${WCP_DIR}/profile.json"
-        
+
             export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct "$tag")"
-            mkdir -p "$OUT"
             tar -C "$WCP_DIR" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
               --sort=name \
               -cf "${OUT}/dxvk-gplasync-${base}-${rev}.wcp" profile.json system32 syswow64
-        
+
             echo "::endgroup::"
           done < "$LIST"
-                
-      - name: Build release notes (minimal)
+
+      - name: Build release notes
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          {
-            printf '🤖 Automated gplasync builds (2.3.1+)\n\n'
-            if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-gplasync-*.wcp" > /dev/null; then
-              latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-gplasync-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
-              cur="${latest#dxvk-gplasync-}"; cur="${cur%.wcp}"
-              printf 'Current: %s\n' "$cur"
-            fi
-          } > "$NOTES"
+          printf '🤖 Automated DXVK-GPLAsync builds (2.3.1+)\n\n' > "$NOTES"
+          if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-gplasync-*.wcp" > /dev/null; then
+            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-gplasync-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
+            ver="${latest#dxvk-gplasync-}"; ver="${ver%.wcp}"
+            echo "Current: ${ver}" >> "$NOTES"
+          fi
           cat "$NOTES"
 
       - name: Create/Update GitHub Release (DXVK-GPLASYNC) + upload WCPs
