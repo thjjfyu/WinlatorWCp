@@ -1,4 +1,8 @@
 name: DXVK
+# LLVM_MINGW 20250910
+# 2.4.1+
+# Deleted useless patches (2.3.1, 2.5)
+# done for now
 
 on:
   workflow_dispatch:
@@ -6,7 +10,7 @@ on:
     - cron: "0 18 * * *"
 
 permissions:
-  contents: write
+  contents: read
 
 defaults:
   run:
@@ -22,83 +26,91 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      build: ${{ steps.decide.outputs.build }}
+      build:    ${{ steps.detect.outputs.missing }}
+      to_build: ${{ steps.detect.outputs.list }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RELEASE_TAG: DXVK
+      DXVK_REPO: doitsujin/dxvk
     steps:
       - name: Install jq, curl (minimal)
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends jq curl ca-certificates
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
 
-# ------------------------------------------------------------------------------ #
-
-      - name: Get latest tag
-        id: upstream
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Collect already-published versions
+        id: have
         run: |
           set -Eeuo pipefail
           API="https://api.github.com"
-          OWNER="doitsujin"; REPO="dxvk"
-          LATEST="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                   "$API/repos/$OWNER/$REPO/releases/latest" | jq -r .tag_name)"
-          if [[ -z "$LATEST" || "$LATEST" == "null" ]]; then
-            LATEST="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                     "$API/repos/$OWNER/$REPO/tags?per_page=100" \
-                     | jq -r '.[].name' | grep -E '^v[0-9]+' | sort -V | tail -n1)"
-          fi
-          [[ -z "$LATEST" ]] && { echo "::error::No upstream tag found"; exit 1; }
-          echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
-
-      - name: DXVK release?
-        id: local
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO:     ${{ github.repository }}
-        run: |
-          set -Eeuo pipefail
-          API="https://api.github.com/repos/${REPO}/releases/tags/DXVK"
-          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' \
-                  -H "Authorization: Bearer ${GH_TOKEN}" \
-                  -H "Accept: application/vnd.github+json" "$API" || true)"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+          HTTP="$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+                  "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
           if [ "$HTTP" = "200" ]; then
-            CUR="$(jq -r '.assets[].name' /tmp/rel.json \
+            jq -r '.assets[].name' /tmp/rel.json \
               | sed -n -E 's/^dxvk-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
-              | sort -V | tail -n1)"
+              | LC_ALL=C sort -V > /tmp/exist.txt
           else
-            CUR=""
+            : > /tmp/exist.txt
           fi
-          echo "cur=${CUR}" >> "$GITHUB_OUTPUT"
-          echo "Current: ${CUR:-<none>}"
+          echo "Existing:"; cat /tmp/exist.txt || true
 
-      - name: Decide build
-        id: decide
+      - name: Detect ALL missing candidates and export list
+        id: detect
+        env:
+          DXVK_REPO: ${{ env.DXVK_REPO }}
+          GH_TOKEN: ${{ env.GH_TOKEN }}
         run: |
           set -Eeuo pipefail
-          UP="${{ steps.upstream.outputs.tag }}"
-          CUR="${{ steps.local.outputs.cur }}"
-          up_base="${UP#v}"
-          if [[ -z "$CUR" ]]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          if dpkg --compare-versions "$up_base" gt "$CUR"; then
-            echo "build=true"  >> "$GITHUB_OUTPUT"
+          API="https://api.github.com"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+          ver=(-H "Accept: application/vnd.github+json")
+
+          curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${DXVK_REPO}/tags?per_page=100" \
+            | jq -r '.[].name' \
+            | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            | LC_ALL=C sort -V > /tmp/tags.txt
+
+          awk '
+            function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1}return 0}
+            { base=substr($0,2); if (cmp(base,"2.7.1")>=0) print $0 }
+          ' /tmp/tags.txt > /tmp/candidates.txt
+
+          : > /tmp/to_build.txt
+          while read -r tag; do
+            [ -n "$tag" ] || continue
+            base="${tag#v}"
+            if ! grep -Fxq "$base" /tmp/exist.txt; then
+              echo "$tag $base" >> /tmp/to_build.txt
+            fi
+          done < /tmp/candidates.txt
+
+          if [[ -s /tmp/to_build.txt ]]; then
+            echo 'list<<EOF' >> "$GITHUB_OUTPUT"
+            cat /tmp/to_build.txt >> "$GITHUB_OUTPUT"
+            echo 'EOF' >> "$GITHUB_OUTPUT"
+            echo "missing=true" >> "$GITHUB_OUTPUT"
           else
-            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "list=" >> "$GITHUB_OUTPUT"
+            echo "missing=false" >> "$GITHUB_OUTPUT"
           fi
 
-# ------------------------------------------------------------------------------ #
-  
   build-and-release:
     name: Build & release missing versions
+    runs-on: ubuntu-24.04
     needs: guard
     if: needs.guard.outputs.build == 'true'
-    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
     env:
       DXVK_REPO: doitsujin/dxvk
+      TOOLCHAIN_DIR: /opt/llvm-mingw
       RELEASE_TAG: DXVK
       GH_TOKEN: ${{ github.token }}
-      # Pinned llvm-mingw. Override via workflow input/env if needed.
-      LLVM_MINGW_TAG: ${{ vars.LLVM_MINGW_TAG || '20250613' }}
+      LLVM_MINGW_TAG: ${{ vars.LLVM_MINGW_TAG || '20250910' }}
     steps:
       - name: Install host tooling (lean set; no cache)
         run: |
@@ -106,24 +118,7 @@ jobs:
           sudo apt-get -yq install --no-install-recommends \
             curl xz-utils jq ca-certificates \
             git meson ninja-build glslang-tools pkg-config \
-            build-essential python3 zstd gh file
-
-      - name: Ensure glslang (--vn)
-        run: |
-          set -Eeuo pipefail
-          cat > /tmp/min.comp <<'GLSL'
-          #version 450
-          void main() {}
-          GLSL
-          have() { command -v "$1" >/dev/null 2>&1 || return 1; "$1" --quiet --target-env vulkan1.3 --vn testvar -o /tmp/min.h /tmp/min.comp; }
-          if have glslang; then :
-          elif have glslangValidator; then
-            BIN="$HOME/.local/bin"; mkdir -p "$BIN"
-            ln -sf "$(command -v glslangValidator)" "$BIN/glslang"
-            echo "$BIN" >> "$GITHUB_PATH"
-          else
-            echo "::error::No glslang/glslangValidator with working --vn"; exit 1
-          fi
+            build-essential python3 zstd gh
 
       - name: Download pinned llvm-mingw (UCRT)
         id: llvm
@@ -137,7 +132,7 @@ jobs:
           pick_url() {
             local json="$1"
             local url=""
-            for dist in 22.04 20.04; do
+            for dist in 24.04 22.04 20.04; do
               url=$(jq -r --arg dist "$dist" '
                 .assets[]?
                 | select(.name | endswith("ucrt-ubuntu-" + $dist + "-x86_64.tar.xz"))
@@ -176,143 +171,87 @@ jobs:
           git -C src config user.name "DXVK Builder"
           git -C src config user.email "builder@users.noreply.github.com"
 
-      - name: Resolve versions & compute NEW to build
-        env:
-          REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -Eeuo pipefail
-          cd src
-          git tag -l 'v*' \
-            | { grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' || true; } \
-            | LC_ALL=C sort -V \
-            | awk '
-                function cmp(a,b,  i,A,B){split(a,A,".");split(b,B,".");
-                  for(i=1;i<=3;i++){if((A[i]+0)<(B[i]+0))return -1;if((A[i]+0)>(B[i]+0))return 1}return 0}
-                {ver=substr($0,2); if (cmp(ver,"2.3.1")>=0) print $0}
-              ' > "${GITHUB_WORKSPACE}/versions.txt"
-
-          : > "${GITHUB_WORKSPACE}/to_build.txt"
-
-          EXIST="/tmp/exist.txt"; : > "$EXIST"
-          if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
-            gh api repos/"${REPO}"/releases/tags/"${RELEASE_TAG}" \
-              | jq -r '.assets[].name' \
-              | sed -n -E 's/^dxvk-([0-9]+\.[0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
-              | LC_ALL=C sort -V > "$EXIST" || true
-          fi
-
-          while IFS= read -r tag; do
-            [ -n "$tag" ] || continue
-            base="${tag#v}"
-            if ! grep -Fxq "$base" "$EXIST"; then
-              echo "$tag $base" >> "${GITHUB_WORKSPACE}/to_build.txt"
-            fi
-          done < "${GITHUB_WORKSPACE}/versions.txt"
-
-          echo "Candidates:";       cat "${GITHUB_WORKSPACE}/versions.txt" || true
-          echo "Already uploaded:"; cat "$EXIST" || true
-          echo "To build:";         cat "${GITHUB_WORKSPACE}/to_build.txt" || true
-
       - name: Build NEW versions
         env:
-          GITHUB_WORKSPACE: ${{ github.workspace }}
+          TO_BUILD: ${{ needs.guard.outputs.to_build }}
         run: |
           set -Eeuo pipefail
           OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
           cd "${GITHUB_WORKSPACE}/src"
 
-          LIST="${GITHUB_WORKSPACE}/to_build.txt"
-          if [[ ! -f "$LIST" || ! -s "$LIST" ]]; then
-            echo "No new versions to build."; exit 0; fi
+          LIST="$(mktemp)"
+          printf '%s\n' "${TO_BUILD}" | sed '/^\s*$/d' > "$LIST"
+          if [[ ! -s "$LIST" ]]; then
+            echo "No new versions to build."
+            exit 0
+          fi
 
           while read -r tag base; do
             echo "::group::Build ${tag} (dxvk)"
+
+            git reset --hard
+            git clean -fdx
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
 
-            CHANGED=0
-            # patches --------------------------------------------------------------- #
-            # v2.5 UnmappedSubresource constexpr init issue -> safe cast
-            TEX="src/d3d11/d3d11_texture.h"
-            if [[ -f "$TEX" ]] && grep -qE '\bUnmappedSubresource\b' "$TEX"; then
-              cp "$TEX" "${TEX}.bak"
-              perl -0777 -pe \
-                's/\bstatic\s+(?:const|constexpr)\s+D3D11_MAP\s+UnmappedSubresource\s*=\s*[^;]+;/inline static const D3D11_MAP UnmappedSubresource = static_cast<D3D11_MAP>(-1);/s' \
-                -i "$TEX" && CHANGED=1
-            fi
-            
-            # patches --------------------------------------------------------------- #
-            # Newer mingw headers define _D3DDEVINFO_RESOURCEMANAGER -> drop DXVK duplicate if toolchain has it
-            INC="src/d3d9/d3d9_include.h"
-            TOOL_X64="/opt/llvm-mingw/x86_64-w64-mingw32/include/d3d9types.h"
-            TOOL_X86="/opt/llvm-mingw/i686-w64-mingw32/include/d3d9types.h"
-            if [[ -f "$INC" ]] && (grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X64" || grep -Fq "_D3DDEVINFO_RESOURCEMANAGER" "$TOOL_X86"); then
-              if grep -qE 'typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b' "$INC"; then
-                cp "$INC" "${INC}.bak"
-                perl -0777 -pe 's/typedef\s+struct\s+_D3DDEVINFO_RESOURCEMANAGER\b.*?}\s*D3DDEVINFO_RESOURCEMANAGER\b[^;]*;//s' -i "$INC" && CHANGED=1
-              fi
-            fi
-            
-            # patches --------------------------------------------------------------- #
-            # Mismatched-tags warning: align forward decl to 'struct' (optional)
-            MEM="src/dxvk/dxvk_memory.h"
-            if [[ -f "$MEM" ]] \
-               && grep -qE '^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;' "$MEM" \
-               && grep -qE '^[[:space:]]*struct[[:space:]]+DxvkMemoryChunk[[:space:]]*\{' "$MEM"; then
-              cp "$MEM" "${MEM}.bak2"
-              sed -E -i 's/^[[:space:]]*class[[:space:]]+DxvkMemoryChunk;/struct DxvkMemoryChunk;/' "$MEM" && CHANGED=1
-            fi
-
-            ver="${tag#v}"
-
-            # Clean Tags ------------------------------------------------------------ #
-            if [[ "$CHANGED" -eq 1 ]]; then
-              git add -A
-              git -c user.name="DXVK Builder" -c user.email="builder@noreply" commit -m "compat: minimal build fixes for ${tag}"
-              git -c user.name="DXVK Builder" -c user.email="builder@noreply" tag -f "$tag" -m "temporary build tag for clean HUD"
-            fi
-
-            # Build using official script + cross files ----------------------------- #
             PKGDIR="${GITHUB_WORKSPACE}/pkg"
             mkdir -p "$PKGDIR"
-            # --no-package to keep unpacked tree; --dev-build keeps build dirs for faster rebuilds (harmless)
-            ./package-release.sh "$tag" "$PKGDIR" --no-package --dev-build
-            
-            # Collect DLLs
-            rm -rf "${GITHUB_WORKSPACE}/DXVK_WCP" "${GITHUB_WORKSPACE}/dist-x64" "${GITHUB_WORKSPACE}/dist-x86"
-            mkdir -p "${GITHUB_WORKSPACE}/DXVK_WCP/system32" "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64"
+            ./package-release.sh "$tag" "$PKGDIR" --no-package
 
-            SRC64="${PKGDIR}/dxvk-${tag}/x64"
-            SRC32="${PKGDIR}/dxvk-${tag}/x32"
-            cp -v "$SRC64"/*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/system32/" || true
-            cp -v "$SRC32"/*.dll  "${GITHUB_WORKSPACE}/DXVK_WCP/syswow64/" || true
+            PKG_ROOT="${GITHUB_WORKSPACE}/pkg/dxvk-${tag}"
+            PREFIX_X64="${PKG_ROOT}/x64"
+            PREFIX_X86="${PKG_ROOT}/x32"
+            [[ -d "${PREFIX_X64}/bin" ]] && PREFIX_X64="${PREFIX_X64}/bin"
+            [[ -d "${PREFIX_X86}/bin" ]] && PREFIX_X86="${PREFIX_X86}/bin"
 
-            export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct HEAD)"
-            find "${GITHUB_WORKSPACE}/DXVK_WCP" -type f -name '*.dll' -print0 | xargs -0 -I{} llvm-strip -s {} || true
-            
-            # Collect file lists and generate profile.json  -------------------------- #
-            (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
-            (cd "${GITHUB_WORKSPACE}/DXVK_WCP" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
+            WCP_DIR="${GITHUB_WORKSPACE}/DXVK_WCP"
+            rm -rf "$WCP_DIR"
+            mkdir -p "${WCP_DIR}/system32" "${WCP_DIR}/syswow64"
+
+            cp -v "${PREFIX_X64}/"*.dll  "${WCP_DIR}/system32/" || true
+            cp -v "${PREFIX_X86}/"*.dll  "${WCP_DIR}/syswow64/" || true
+
+            if command -v llvm-strip >/dev/null 2>&1; then
+              find "${WCP_DIR}" -type f -name '*.dll' -print0 | xargs -0 -I{} llvm-strip -s "{}" || true
+            fi
+
+            (cd "$WCP_DIR" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x64.txt || true
+            (cd "$WCP_DIR" && find syswow64 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/x86.txt || true
+
             if [[ ! -s /tmp/x64.txt && ! -s /tmp/x86.txt ]]; then
-              echo "::error::No DLLs discovered for ${ver}"; exit 1; fi
+              echo "::error::No DLLs discovered for ${tag}"
+              exit 1
+            fi
+
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x64.txt  > /tmp/x64.json
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
 
-            # Create profile.json
-            jq -n --arg VN "${ver}" --argjson VC 0 --arg DESC "DXVK build by Ari" \
-                  --arg SYS '${system32}/' --arg WOW '${syswow64}/' \
-                  --slurpfile x64 /tmp/x64.json --slurpfile x86 /tmp/x86.json '
-              ($x64[0] // []) as $A | ($x86[0] // []) as $B |
-              { type:"DXVK", versionName:$VN, versionCode:$VC, description:$DESC,
-                files: [ ($A[]? | {source:("system32/"+.), target:($SYS+.)}),
-                         ($B[]? | {source:("syswow64/"+.), target:($WOW+.)}) ] }' \
-              > "${GITHUB_WORKSPACE}/DXVK_WCP/profile.json"
+            jq -n \
+              --arg DESC "DXVK Automated Build (Built by Ari's Winlator WCP Hub. Upstream: doitsujin)" \
+              --arg VN "${base}" \
+              --argjson VC 0 \
+              --arg SYS '${system32}/' \
+              --arg WOW '${syswow64}/' \
+              --slurpfile x64 /tmp/x64.json \
+              --slurpfile x86 /tmp/x86.json \
+              '
+              ($x64[0] // []) as $A |
+              ($x86[0] // []) as $B |
+              {
+                type: "DXVK",
+                versionName: $VN,
+                versionCode: $VC,
+                description: $DESC,
+                files: [
+                  ($A[]? | {source: ("system32/"+ .), target: ($SYS + .)}),
+                  ($B[]? | {source: ("syswow64/"+ .), target: ($WOW + .)})
+                ]
+              }' > "${WCP_DIR}/profile.json"
 
-            mkdir -p "${GITHUB_WORKSPACE}/out"
-            tar -C "${GITHUB_WORKSPACE}/DXVK_WCP" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
-                --sort=name \
-                -cf "${GITHUB_WORKSPACE}/out/dxvk-${ver}.wcp" profile.json system32 syswow64
+            tar -C "$WCP_DIR" --zstd --format=gnu --owner=0 --group=0 --numeric-owner \
+              --sort=name \
+              -cf "${OUT}/dxvk-${base}.wcp" profile.json system32 syswow64
+
             echo "::endgroup::"
           done < "$LIST"
 
@@ -320,7 +259,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          printf '🤖 Automated DXVK builds (2.3.1+)\n\n' > "$NOTES"
+          printf '🤖 Automated DXVK builds (2.4.1+)\n\n' > "$NOTES"
           if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-*.wcp" > /dev/null; then
             latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
             ver="${latest#dxvk-}"; ver="${ver%.wcp}"
@@ -328,7 +267,7 @@ jobs:
           fi
           cat "$NOTES"
 
-      - name: Create/Update GitHub Release (DXVK) + upload new WCPs
+      - name: Create/Update GitHub Release (DXVK) + upload WCPs
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
