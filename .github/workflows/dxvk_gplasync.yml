@@ -197,7 +197,7 @@ jobs:
           sudo apt-get -yq install --no-install-recommends \
             curl xz-utils jq ca-certificates \
             git meson ninja-build glslang-tools pkg-config \
-            build-essential python3 zstd gh file
+            build-essential python3 zstd gh
 
       - name: Ensure glslang (--vn)
         run: |
