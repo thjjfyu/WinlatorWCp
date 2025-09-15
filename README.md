@@ -10,12 +10,19 @@
 
 ---
 <details>
-  <summary>🚀 <b>Winlator info</b></summary>
+  <summary>💡 <b>What is WCP?</b></summary>
+  
+- WCP is a custom component bundle for the Winlator ecosystem (originating from the Old Glibc fork, mainly used with CMod right now). It’s fundamentally a tar.zst archive with a .wcp extension.
+- Even if WCP installs aren’t supported, you can just unpack it and use the contents anywhere if you know the basics.
+
+</details>
+
+<details>
+  <summary>🤔 <b>Winlator?</b></summary>
 
 ## 🎮 Winlator
 
-Winlator is an Android application started by brunodev85 that lets you run Windows (x86_64) applications using Wine and Box86/Box64.
-
+Winlator is an Android application started by brunodev85 that lets you run Windows (x86_64) applications using Wine and Box64/FEX.
 
 | Type       | 🧠 |
 |:------:|:------:|
@@ -26,33 +33,34 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 
 | Runtime | Description |
 |:-:|-|
-|Glibc  | Official default. stable with solid performance. (Box64 Only) |
-|Bionic | Android native. faster, potential issues. (FEX + Box64) |
+|Glibc  | Official default. Wide compatibility, stable with solid performance. (Box64 Only) |
+|Bionic | Android native. Faster, potential issues on low-spec devices. (FEX + Box64) |
 
-- Discontinued or nightly builds are not covered.<br>
-- CMod (bionic) offers the best controller support.<br>
-
----
+- Although longjunyu2’s unofficial Glibc fork remains functional, it’s best to avoid using it.
+- Discontinued or nightly(alpha) builds are not covered.
+- CMod (bionic) offers the best controller support.
 
 </details>
 
-- _More to come…_
-- [**Troubleshooting**](https://github.com/Arihany/WinlatorWCPHub/blob/main/Troubleshooting.md) WIP
-- Tap ```⚡Useful info``` to see more details.
-- If I made a mistake, please let me know.
+---
+
+ℹ️ [~~Troubleshooting~~](https://github.com/Arihany/WinlatorWCPHub/blob/main/Troubleshooting.md) WIP<br>
+ℹ️ Tap ```⚡Useful info``` to see more details.<br>
+✨ ```2025.09.15```: **Workflow streamlined and improved. All assets & ```⚡Useful info``` updated.** <br>
+
 ---
 <br>
 
 ## ⚙️ FEXCore & Box64
 
-📌 FEX: Fixed a regression caused by a build flag error
+📌 ```FEX-Stable```: Fixed a regression caused by a build flag error
 
 | Type | Build | 🏷️ | 📜 |
 |:------:|:------:|:------:|:------:|
 | FEXCore | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEXCore) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEXCore-Nightly) | <!--fex--> 2509|<a href="https://github.com/FEX-Emu/FEX">🔗</a> |
 | Box64 Glibc | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-NIGHTLY) | <!--box64--> 0.3.6|<a href="https://github.com/ptitSeb/box64">🔗</a> |
 | Box64 Bionic | [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-BIONIC-NIGHTLY)| | |
-| WOWBox64 | | | |
+| WowBox64 | | | |
 
 <details>
   <summary>⚡Useful info</summary>
@@ -60,17 +68,18 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
   
 | Type       | Description |
 |:------:|-------------|
-| **FEX**  | Easy to configure, can improve performance when paired with the arm64ec translation layer. |
-| **Box64** | More complex to configure, but it generally runs a wider range of games than FEX. |
+| **FEX**  | handles both 32-bit and 64-bit. Pairing it with ARM64EC-built graphics runtimes like DXVK/VKD3D can reduce x64 translation boundaries and further lower overhead. |
+| **Box64** | power user friendly. Extensive dynarec tuning on top of a fast JIT and native-library bridges. |
 
-- Unity games are generally more stable when run with Box64.
-- Basic Box64 settings for unity games: ```STRONGMEM=1+``` ```CALLRET=0``` ```WEAKBARRIER=0~1```
+- With the ```2509``` update, Unity game performance has improved on ```FEX``` as well.
+- Unity games are generally more stable when run with ```Box64```.
+- Basic ```Box64``` settings for unity games: ```STRONGMEM=1+``` ```CALLRET=0``` ```WEAKBARRIER=0~1```
 - ```WEAKBARRIER``` can mitigate the performance hit from ```STRONGMEM```, but regressions or crashes have been reported depending on the build/version/game. If issues occur, set it to ```0```.
 
 </details>
 <br>
 
-## 🧩 DXVK (for DX9-11)
+## 🧩 DXVK (for DX8-11)
 
 📌 ```v2.5``` is **not** recommended
 
@@ -90,13 +99,13 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 
 | Type       | Description    |
 |:------:|-----------------|
-| **sarek**    | Provides backports for old GPUs that don’t support Vulkan 1.3. (May run better on older devices.) |
-| **gplasync** | Reduces stuttering by rendering frames before shader compilation. |
-| **arm64ec**  | Boosts performance in 64-bit games. ⚠️ **Use only with FEX.** ⚠️ |
+| **Sarek**    | Backports for older Vulkan. Keeps DXVK usable on Vulkan 1.1/1.2 hardware, with practical tweaks for legacy GPUs. |
+| **GPLAsync** | DXVK + async shader compilation + GPL cache to cut visible stutter during compilation. |
+| **ARM64EC**  | Designed to run with ❗FEX❗ to minimize x64→ARM translation and reduce overhead. |
 
-- GPLAsync patches are marked with ```-n``` so ```2.7-1``` is based on DXVK ```2.7```
-- Newer versions don’t always mean better performance.
-- If you encounter rendering issues, try a newer build or revert to the standard DXVK.
+- As a general pick, go with ```DXVK-Sarek``` or ```DXVK 2.4.1```
+- Recent ```GPLAsync``` builds may increase stuttering in certain games.
+- In GPU-bound scenarios, ```ARM64EC``` has little to no impact on average FPS.
 - If the game has a built-in frame limiter, use that. In some cases, ```DXVK_FRAME_RATE``` can introduce stutter.
 
 </details>
@@ -115,11 +124,11 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
   
 | Type       | Description                                                   |
 |:------:|---------------------------------------------------------------|
-| **arm64ec**  | Boosts performance in 64-bit games. ⚠️ **Use only with FEX.** ⚠️ |
+| **ARM64EC** | Designed to run with ❗FEX❗ to minimize x64→ARM translation and reduce overhead. |
 
-- If it isn’t required, **leave the VKD3D feature level at its default**. Forcing a higher feature level can trigger different code paths and extra shader compilation, which may lead to stutter.
+- If it isn’t required, **leave the ```VKD3D feature level``` at its default**. Forcing a higher feature level can trigger different code paths and extra shader compilation, which may lead to stutter.
 - You can limit the frame rate using: ```DXVK_FRAME_RATE``` or ```VKD3D_FRAME_RATE```
-- If the game has a built-in frame limiter, use that. In some cases, ```X_FRAME_RATE``` can introduce stutter.
+- If the game has a built-in frame limiter, use that. In some cases, ```..._FRAME_RATE``` can introduce stutter.
 
 </details>
 <br><br><br>
@@ -177,7 +186,7 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 </details>
 <br>
 
-## 🔁 Special patches & more info
+## 🔁 Proton (Wine) & more info
 [**Winlator 101**](https://github.com/K11MCH1/Winlator101) (K11MCH1)
 
 <br><br>
