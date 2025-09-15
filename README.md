@@ -42,10 +42,11 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 
 </details>
 
----
-
 ℹ️ [~~Troubleshooting~~](https://github.com/Arihany/WinlatorWCPHub/blob/main/Troubleshooting.md) WIP<br>
 ℹ️ Tap ```⚡Useful info``` to see more details.<br>
+
+---
+
 ✨ ```2025.09.15```: **Workflow streamlined and improved. All assets & ```⚡Useful info``` updated.** <br>
 
 ---
