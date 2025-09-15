@@ -69,7 +69,7 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 
 ## 🧩 DXVK (for DX9-11)
 
-📌 ```v2.5``` is not recommended
+📌 ```v2.5``` is **not** recommended
 
 | Build | 🏷️ | 📜 |
 |-------|:------:|:------:|
