@@ -287,7 +287,7 @@ jobs:
 
             jq -n \
               --arg DESC "VKD3D-Proton-ARM64EC Automated Build (Built by Ari's Winlator WCP Hub. Upstream: HansKristian-Work)" \
-              --arg VN "${base}" \
+              --arg VN "arm64ec-${base}" \
               --argjson VC 0 \
               --arg SYS '${system32}/' \
               --arg WOW '${syswow64}/' \
