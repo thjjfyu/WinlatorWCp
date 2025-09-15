@@ -10,7 +10,7 @@ on:
         default: false
         description: "true= self-hosted, false= github runner"
   schedule:
-  - cron: "0 18 * * *"
+    - cron: "0 18 * * *"
 
 permissions:
   contents: read
