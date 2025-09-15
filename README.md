@@ -45,6 +45,8 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 
 ## ⚙️ FEXCore & Box64
 
+📌 Fixed a regression caused by a build flag error
+
 | Type | Build | 🏷️ | 📜 |
 |:------:|:------:|:------:|:------:|
 | FEXCore | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEXCore) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEX-NIGHTLY) | <!--fex--> 2509|<a href="https://github.com/FEX-Emu/FEX">🔗</a> |
