@@ -1,12 +1,16 @@
-name: DXVK-Sarek-Async
-# LLVM_MINGW 20250910
+name: DXVK-SAREK-ASYNC
+# mstorsjo LLVM_MINGW 20250910
 # 1.11.0+
-# done for now
 
 on:
   workflow_dispatch:
+    inputs:
+      use_self_hosted:
+        type: boolean
+        default: false
+        description: "true= self-hosted, false= github runner"
   schedule:
-    - cron: "0 18 * * *"
+  - cron: "0 18 * * *"
 
 permissions:
   contents: read
@@ -22,7 +26,7 @@ concurrency:
 jobs:
   guard:
     name: Check Update
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON( (format('{0}', inputs.use_self_hosted) == 'true' && '["self-hosted"]') || '["ubuntu-latest"]' ) }}
     timeout-minutes: 5
     outputs:
       build:    ${{ steps.detect.outputs.missing }}
@@ -120,7 +124,7 @@ jobs:
 
   build-and-release:
     name: Build & release missing versions
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON( (format('{0}', inputs.use_self_hosted) == 'true' && '["self-hosted"]') || '["ubuntu-latest"]' ) }}
     needs: guard
     if: needs.guard.outputs.build == 'true'
     timeout-minutes: 60
@@ -181,6 +185,15 @@ jobs:
                "$url" -o /tmp/llvm-mingw.tar.xz
           sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Pre-clean workspace (self-hosted)
+        run: |
+          set -Eeuo pipefail
+          test -n "${GITHUB_WORKSPACE}" && test -d "${GITHUB_WORKSPACE}"
+          rm -rf "${GITHUB_WORKSPACE}/src" \
+                 "${GITHUB_WORKSPACE}/pkg" \
+                 "${GITHUB_WORKSPACE}/DXVK_WCP" \
+                 "${GITHUB_WORKSPACE}/out"
 
       - name: Clone DXVK-Sarek (async branch per upstream guidance)
         env:
@@ -276,7 +289,7 @@ jobs:
             jq -R -s 'split("\n") | map(select(length>0))' /tmp/x86.txt  > /tmp/x86.json
 
             jq -n \
-              --arg DESC "DXVK-Sarek-Async Automated Build (Built by Ari's Winlator WCP Hub. Upstream: doitsujin, pythonlover02)" \
+              --arg DESC "DXVK-SAREK-Async Automated Build (Built by Ari's Winlator WCP Hub. Upstream: doitsujin, pythonlover02)" \
               --arg VN "sarek-async-${base}" \
               --argjson VC 0 \
               --arg SYS '${system32}/' \
@@ -308,7 +321,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          printf '🤖 Automated DXVK-Sarek-Async builds (1.11.0+).\n\n' > "$NOTES"
+          printf '🤖 Automated DXVK-SAREK-Async builds (1.11.0+).\n\n' > "$NOTES"
           if compgen -G "${GITHUB_WORKSPACE}/out/dxvk-sarek-async-*.wcp" > /dev/null; then
             latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/dxvk-sarek-async-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
             ver="${latest#dxvk-sarek-async-}"; ver="${ver%.wcp}"
