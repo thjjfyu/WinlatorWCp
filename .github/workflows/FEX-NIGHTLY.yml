@@ -1,12 +1,19 @@
-name: FEX Nightly
+name: FEXCore-Nightly
+# mstorsjo LLVM_MINGW 20250910
+# nightly: builds latest main commit daily; artifact fex-YYMMDD.wcp
 
 on:
   workflow_dispatch:
+    inputs:
+      use_self_hosted:
+        type: boolean
+        default: false
+        description: "true= self-hosted, false= github runner"
   schedule:
-    - cron: "0 18 * * *"
+  - cron: "0 18 * * *"
 
 permissions:
-  contents: write
+  contents: read
 
 defaults:
   run:
@@ -17,298 +24,335 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  resolve-latest:
-    name: Resolve upstream HEAD (commit)
-    runs-on: ubuntu-latest
+  guard:
+    name: Nightly gate
+    runs-on: ${{ fromJSON( (format('{0}', inputs.use_self_hosted) == 'true' && '["self-hosted"]') || '["ubuntu-latest"]' ) }}
+    timeout-minutes: 5
     outputs:
-      branch:   ${{ steps.upstream.outputs.branch }}
-      sha:      ${{ steps.upstream.outputs.sha }}
-      short:    ${{ steps.upstream.outputs.short }}
-      datecode: ${{ steps.datecode.outputs.code }}
+      build:    ${{ steps.decide.outputs.build }}
+      date:     ${{ steps.collect.outputs.date }}
+      sha:      ${{ steps.collect.outputs.sha }}
+      shortsha: ${{ steps.collect.outputs.shortsha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FEX_REPO: ${{ vars.FEX_REPO || 'FEX-Emu/FEX' }}
+      RELEASE_TAG: FEXCore-Nightly
     steps:
-      - name: Install tools (jq, curl)
+      - name: Install jq, curl (minimal)
         run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends jq curl
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
 
-      - name: Resolve upstream FEX HEAD SHA (robust)
-        id: upstream
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Collect date (UTC) and latest main commit
+        id: collect
         run: |
           set -Eeuo pipefail
+          DATE=$(date -u +%y%m%d)
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
           API="https://api.github.com"
-          OWNER="FEX-Emu"
-          REPO="FEX"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-          ua=(-H "User-Agent: ${GITHUB_REPOSITORY:-fexcore-nightly-workflow}")
-          ver=(-H "X-GitHub-Api-Version: 2022-11-28" -H "Accept: application/vnd.github+json")
-          fetch() { curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ua[@]}" "${ver[@]}" "$1"; }
+          ver=(-H "Accept: application/vnd.github+json")
+          json=$(curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${FEX_REPO}/commits/main" )
+          SHA=$(jq -r '.sha' <<<"$json")
+          SHORT=${SHA:0:7}
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "shortsha=$SHORT" >> "$GITHUB_OUTPUT"
+          echo "Current UTC date: $DATE, head: $SHORT"
 
-          branch="$(fetch "$API/repos/$OWNER/$REPO" | jq -r .default_branch)"
-          [[ -z "$branch" || "$branch" == "null" ]] && branch="main"
-
-          sha="$(fetch "$API/repos/$OWNER/$REPO/commits/${branch}" | jq -r .sha)"
-          [[ -z "$sha" || "$sha" == "null" ]] && { echo "::error::Failed to resolve upstream HEAD SHA"; exit 1; }
-
-          short="$(printf '%s' "$sha" | cut -c1-7)"
-
-          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
-          echo "sha=${sha}"       >> "$GITHUB_OUTPUT"
-          echo "short=${short}"   >> "$GITHUB_OUTPUT"
-          echo "Upstream ${branch} @ ${short}"
-
-      - name: Decide date code (YYMMDD, KST)
-        id: datecode
-        run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
-
-  compile-fexcore:
-    name: Build & append ${{ needs.resolve-latest.outputs.short }}
-    needs: [resolve-latest]
-    runs-on: ubuntu-24.04-arm
-
-    steps:
-      - name: Install guard tools (gh, jq, curl)
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends gh jq curl
-
-      # Ultra-light guard: skip early if the exact upstream commit is already released
-      - name: Skip if same upstream commit already released
-        id: guard_commit
+      - name: Check existing release assets/body
+        id: have
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO:     ${{ github.repository }}
-          SHA:      ${{ needs.resolve-latest.outputs.sha }}
-        run: |
-          set -Eeuo pipefail
-          BODY="$(gh release view FEX-NIGHTLY --repo "$REPO" --json body --jq '.body' 2>/dev/null || true)"
-          if echo "$BODY" | grep -q "commit/${SHA}"; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Same upstream commit already released; skipping."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # Optional guard: avoid duplicate upload when the same date asset exists
-      - name: Skip if same-date asset exists
-        id: dupe
-        if: steps.guard_commit.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
+          DATE: ${{ steps.collect.outputs.date }}
         run: |
           set -Eeuo pipefail
           API="https://api.github.com"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
-          filename="fex-nightly-${DATECODE}.wcp"
-
-          HTTP="$(curl -s -o /tmp/nightly.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
-                  "$API/repos/${REPO}/releases/tags/FEX-NIGHTLY" || true)"
-
-          if [[ "$HTTP" == "200" ]] && jq -e --arg N "$filename" 'any(.assets[]?; .name==$N)' /tmp/nightly.json >/dev/null; then
-            echo "skip=true"  >> "$GITHUB_OUTPUT"
-            echo "Found asset ${filename} in release FEX-NIGHTLY; skipping build."
+          HTTP=$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
+                 "$API/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}" || true)
+          if [ "$HTTP" = "200" ]; then
+            HAVE_DATE=$(jq -r --arg fn "fex-${DATE}.wcp" '.assets[]?.name | select(.==$fn)' /tmp/rel.json | head -n1)
+            LAST_COMMIT=$(jq -r '.body' /tmp/rel.json | sed -n -E 's/^Commit:[[:space:]]*([0-9a-f]{7,40}).*/\1/p' | head -n1)
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            HAVE_DATE=""
+            LAST_COMMIT=""
           fi
+          echo "have_date=${HAVE_DATE}" >> "$GITHUB_OUTPUT"
+          echo "last_commit=${LAST_COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "HTTP=$HTTP, HAVE_DATE=${HAVE_DATE:-none}, LAST_COMMIT=${LAST_COMMIT:-none}"
 
-      - name: Install Nix
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
-        uses: cachix/install-nix-action@v31
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
-      - name: Install build tools
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends \
-            jq zstd curl wget git cmake ninja-build build-essential binutils xz-utils
-
-      - name: Install llvm-mingw toolchain (Linux aarch64 host) and set PATH
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+      - name: Decide build or skip
+        id: decide
         env:
-          GH_TOKEN: ${{ github.token }}
+          DATE:        ${{ steps.collect.outputs.date }}
+          SHA:         ${{ steps.collect.outputs.sha }}
+          HAVE_DATE:   ${{ steps.have.outputs.have_date }}
+          LAST_COMMIT: ${{ steps.have.outputs.last_commit }}
         run: |
           set -Eeuo pipefail
-          API="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest"
-          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-          ver=(-H "Accept: application/vnd.github+json")
-      
-          echo "Fetching latest llvm-mingw release for Linux aarch64 host..."
-          url="$(
-            curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors "${auth[@]}" "${ver[@]}" "$API" \
-            | jq -r '
-                (
-                  # 1st try: aarch64 + (ubuntu|linux) + tar.{xz,gz}
-                  [ .assets[]
-                    | select(.name | test("(aarch64|arm64).*(ubuntu|linux).*(tar\\.(xz|gz))$"; "i"))
-                    | .browser_download_url
-                  ]
-                  +
-                  # Fallback: aarch64 tarball, but NOT darwin/apple
-                  [ .assets[]
-                    | select((.name | test("aarch64.*(tar\\.(xz|gz))$"; "i"))
-                             and (.name | test("(darwin|apple)"; "i") | not))
-                    | .browser_download_url
-                  ]
-                )[0]
-              '
-          )"
-          [[ -z "$url" || "$url" == "null" ]] && { echo "::error::llvm-mingw aarch64 tarball not found (linux/ubuntu)"; exit 1; }
-      
-          mkdir -p "$HOME/.toolchains/llvm-mingw"
-          tmpd="$(mktemp -d)"; cd "$tmpd"
-          echo "Downloading: $url"
-          curl -fsSL --retry 6 --retry-delay 2 --retry-all-errors -o toolchain.tar "$url"
-          tar -xf toolchain.tar -C "$HOME/.toolchains/llvm-mingw" --strip-components=1
-      
-          echo "$HOME/.toolchains/llvm-mingw/bin" >> "$GITHUB_PATH"
-          ls "$HOME/.toolchains/llvm-mingw/bin" | grep -E '^(arm64ec|aarch64)-w64-mingw32-.*clang$' >/dev/null \
-            || { echo "::error::Expected triplet compilers not found in llvm-mingw bin/"; exit 1; }
+          do_build=true
+          if [ -n "$HAVE_DATE" ]; then
+            echo "::notice::Asset fex-$DATE.wcp already exists. Skipping."
+            do_build=false
+          elif [ -n "$LAST_COMMIT" ] && { [ "$LAST_COMMIT" = "$SHA" ] || [ "$LAST_COMMIT" = "${SHA:0:7}" ]; }; then
+            echo "::notice::Same commit already built. Skipping."
+            do_build=false
+          fi
+          echo "build=$do_build" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout upstream FEX (exact commit)
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
-        uses: actions/checkout@v4
+  build-and-release:
+    name: Build & release nightly
+    runs-on: ${{ fromJSON( (format('{0}', inputs.use_self_hosted) == 'true' && '["self-hosted"]') || '["ubuntu-latest"]' ) }}
+    needs: guard
+    if: needs.guard.outputs.build == 'true'
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      FEX_REPO: ${{ vars.FEX_REPO || 'FEX-Emu/FEX' }}
+      TOOLCHAIN_DIR: /opt/llvm-mingw
+      RELEASE_TAG: FEXCore-Nightly
+      GH_TOKEN: ${{ github.token }}
+      LLVM_MINGW_TAG: ${{ vars.LLVM_MINGW_TAG || '20250910' }}
+    steps:
+      - name: Install host tooling (lean set; no cache)
+        run: |
+          sudo apt-get -yq update
+          sudo apt-get -yq install --no-install-recommends \
+            curl xz-utils jq ca-certificates \
+            git ninja-build cmake pkg-config \
+            build-essential python3 zstd gh perl dos2unix sccache
+
+      - name: Prepare cache dirs
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${GITHUB_WORKSPACE}/.cache"
+      
+      - name: Restore llvm-mingw archive cache
+        id: restore_llvm
+        uses: actions/cache/restore@v4
         with:
-          repository: FEX-Emu/FEX
-          ref: ${{ needs.resolve-latest.outputs.sha }}
-          submodules: recursive
-          path: src
-          fetch-depth: 1
-
-      - name: Compile FEXCore with standard flags
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
-        run: |
-          set -Eeuo pipefail
-
-          # Common flags suggested by the standard guide
-          COMMON_FLAGS=(
-            -DCMAKE_BUILD_TYPE=Release
-            -DENABLE_LTO=False
-            -DBUILD_TESTS=False
-            -DENABLE_JEMALLOC_GLIBC_ALLOC=False
-            -DTUNE_CPU=none
-          )
-
-          # ARM64EC (Windows ARM64EC)
-          mkdir -p src/build/arm64ec && cd src/build/arm64ec
-          ../../Data/nix/cmake_configure_woa64.sh ../../ -G Ninja \
-            "${COMMON_FLAGS[@]}" \
-            -DMINGW_TRIPLE=arm64ec-w64-mingw32 \
-            -DCMAKE_INSTALL_PREFIX="$PWD/dist" \
-            -DCMAKE_INSTALL_LIBDIR=lib/wine/aarch64-windows
-          ninja -v
-          ninja install
-          cd ../../..
-
-          # WOW64 (Windows x86-on-ARM; FEX translator side, ARM64 host DLL)
-          mkdir -p src/build/wow64 && cd src/build/wow64
-          ../../Data/nix/cmake_configure_woa32.sh ../../ -G Ninja \
-            "${COMMON_FLAGS[@]}" \
-            -DMINGW_TRIPLE=aarch64-w64-mingw32 \
-            -DCMAKE_INSTALL_PREFIX="$PWD/dist" \
-            -DCMAKE_INSTALL_LIBDIR=lib/wine/aarch64-windows
-          ninja -v
-          ninja install
-          cd ../../..
-
-      # Nightly WCP 패키징은 요청대로 유지
-      - name: Package Nightly WCP (lowercase filename)
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+          path: ${{ github.workspace }}/.cache/llvm-mingw-${{ env.LLVM_MINGW_TAG }}.tar.xz
+          key:  llvm-mingw-${{ runner.os }}-${{ env.LLVM_MINGW_TAG }}
+          restore-keys: |
+            llvm-mingw-${{ runner.os }}-
+      
+      - name: Download pinned llvm-mingw (UCRT)
+        id: llvm
         env:
-          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
+          TAG: ${{ env.LLVM_MINGW_TAG }}
         run: |
           set -Eeuo pipefail
-          mkdir -p FEXCore_DLLs FEXCore_WCP/system32
-
-          # Place BOTH ARM64EC and WOW64 into system32 (intentional for this app)
-          cp -v ./src/build/arm64ec/Bin/libarm64ecfex.dll ./FEXCore_DLLs/ || true
-          cp -v ./src/build/wow64/Bin/libwow64fex.dll   ./FEXCore_DLLs/ || true
-          cp -v ./src/build/arm64ec/Bin/libarm64ecfex.dll ./FEXCore_WCP/system32/ || true
-          cp -v ./src/build/wow64/Bin/libwow64fex.dll   ./FEXCore_WCP/system32/ || true
-
-          # Optional strip (prefer llvm-strip; otherwise skip)
-          if command -v llvm-strip >/dev/null 2>&1; then
-            for f in ./FEXCore_WCP/system32/*.dll; do
-              [ -f "$f" ] && llvm-strip "$f" || true
+          API="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/tags/${TAG}"
+          json=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$API" || true)
+      
+          pick_url() {
+            local json="$1"; local url=""
+            for dist in 24.04 22.04 20.04; do
+              url=$(jq -r --arg dist "$dist" '
+                .assets[]? | select(.name | endswith("ucrt-ubuntu-" + $dist + "-x86_64.tar.xz")) | .browser_download_url
+              ' <<<"$json" | head -n1 || true)
+              [[ -n "$url" && "$url" != "null" ]] && { echo "$url"; return 0; }
             done
+            return 1
+          }
+      
+          url="$(pick_url "$json" || true)"
+          if [[ -z "${url:-}" ]]; then
+            echo "::warning::Pinned llvm-mingw ${TAG} asset not found; falling back to latest"
+            json=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" \
+                   https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest || true)
+            url="$(pick_url "$json" || true)"
+          fi
+          [[ -n "${url:-}" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
+      
+          TOOLCHAIN_DIR=/opt/llvm-mingw
+          ARCHIVE="${GITHUB_WORKSPACE}/.cache/llvm-mingw-${TAG}.tar.xz"
+          sudo mkdir -p "$TOOLCHAIN_DIR"
+          if [[ ! -s "$ARCHIVE" ]]; then
+            echo "Downloading llvm-mingw archive..."
+            curl -fL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$url" -o "$ARCHIVE"
+          else
+            echo "Using cached llvm-mingw archive at $ARCHIVE"
+          fi
+          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf "$ARCHIVE"
+          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+      
+      - name: Save llvm-mingw archive cache
+        if: steps.restore_llvm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.cache/llvm-mingw-${{ env.LLVM_MINGW_TAG }}.tar.xz
+          key:  llvm-mingw-${{ runner.os }}-${{ env.LLVM_MINGW_TAG }}
+
+      - name: Pre-clean workspace (self-hosted)
+        run: |
+          set -Eeuo pipefail
+          test -n "${GITHUB_WORKSPACE}" && test -d "${GITHUB_WORKSPACE}"
+          rm -rf "${GITHUB_WORKSPACE}/src" \
+                 "${GITHUB_WORKSPACE}/FEXCore_WCP" \
+                 "${GITHUB_WORKSPACE}/out"
+
+      - name: Clone FEX at decided commit
+        env:
+          SHA: ${{ needs.guard.outputs.sha }}
+        run: |
+          set -Eeuo pipefail
+          # Shallow, single-commit checkout + shallow submodules to minimize cloning
+          git init src
+          git -C src remote add origin https://github.com/${FEX_REPO}.git
+          git -C src -c protocol.version=2 fetch --depth=1 --filter=blob:none origin "$SHA"
+          git -C src checkout --detach FETCH_HEAD
+          git -C src submodule update --init --recursive --depth=1 --recommend-shallow
+
+      - name: Configure git identity
+        run: |
+          git -C src config user.name "FEXCore Nightly Builder"
+          git -C src config user.email "builder@users.noreply.github.com"
+
+      - name: Restore sccache cache
+        id: restore_sccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/sccache
+          key:  sccache-${{ runner.os }}-${{ env.LLVM_MINGW_TAG }}
+          restore-keys: |
+            sccache-${{ runner.os }}-${{ env.LLVM_MINGW_TAG }}-
+
+      - name: Build (ARM64EC + AArch64)
+        env:
+          DATE:     ${{ needs.guard.outputs.date }}
+          SHORTSHA: ${{ needs.guard.outputs.shortsha }}
+        run: |
+          set -Eeuo pipefail
+          cd "${GITHUB_WORKSPACE}/src"
+
+          export SCCACHE_DIR="${HOME}/.cache/sccache"
+          export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-10G}"
+          sccache --start-server || true
+
+          # Stage dirs for split installs
+          STAGE_ARM64EC="${GITHUB_WORKSPACE}/stage-arm64ec-${DATE}"
+          STAGE_AARCH64="${GITHUB_WORKSPACE}/stage-aarch64-${DATE}"
+          rm -rf "$STAGE_ARM64EC" "$STAGE_AARCH64"
+          mkdir -p "$STAGE_ARM64EC" "$STAGE_AARCH64"
+
+          # Build: ARM64EC (x86_64 emu module)
+          rm -rf build-arm64ec && mkdir build-arm64ec && cd build-arm64ec
+          cmake -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=../Data/CMake/toolchain_mingw.cmake \
+            -DCMAKE_INSTALL_LIBDIR=/usr/lib/wine/aarch64-windows \
+            -DENABLE_LTO=False \
+            -DMINGW_TRIPLE=arm64ec-w64-mingw32 \
+            -DBUILD_TESTING=False -DBUILD_TESTS=False \
+            -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+              -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ..
+          ninja -v
+          DESTDIR="$STAGE_ARM64EC" ninja install
+          cd ..
+
+          # Build: AArch64 (WOW64 emu module)
+          rm -rf build-wow64 && mkdir build-wow64 && cd build-wow64
+          cmake -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=../Data/CMake/toolchain_mingw.cmake \
+            -DCMAKE_INSTALL_LIBDIR=/usr/lib/wine/aarch64-windows \
+            -DENABLE_LTO=False \
+            -DMINGW_TRIPLE=aarch64-w64-mingw32 \
+            -DBUILD_TESTING=False -DBUILD_TESTS=False \
+            -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+              -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ..
+          ninja -v
+          DESTDIR="$STAGE_AARCH64" ninja install
+          cd ..
+
+          # Package WCP (system32 only)
+          WCP_DIR="${GITHUB_WORKSPACE}/FEXCore_WCP"
+          rm -rf "$WCP_DIR" && mkdir -p "$WCP_DIR/system32"
+
+          for ST in "$STAGE_ARM64EC" "$STAGE_AARCH64"; do
+            SRC="$ST/usr/lib/wine/aarch64-windows"
+            if [[ -d "$SRC" ]]; then
+              find "$SRC" -type f -name '*.dll' -print -exec cp -v {} "$WCP_DIR/system32/" \;
+            else
+              echo "::warning::Expected install dir not found: $SRC"
+            fi
+          done
+
+          if command -v llvm-strip >/dev/null 2>&1; then
+            find "$WCP_DIR/system32" -type f -name '*.dll' -print0 | xargs -0 -I{} llvm-strip -s "{}" || true
           fi
 
-          # Sanity check: ensure at least one DLL exists
-          if ! compgen -G "FEXCore_WCP/system32/*.dll" >/dev/null; then
-            echo "::error::No DLLs found under FEXCore_WCP/system32"; exit 1
-          fi
+          (cd "$WCP_DIR" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/s32.txt || true
+          test -s /tmp/s32.txt || { echo "::error::No DLLs discovered in system32"; exit 1; }
 
-          # Build profile.json from discovered DLLs
-          (find FEXCore_WCP/system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | sort) > /tmp/files.txt
-          jq -Rn '[inputs | {source: ("system32/"+.), target: ("${system32}/"+.)}]' \
-            < /tmp/files.txt > /tmp/files.json
-
-          DESC="${DATECODE} FEXCore build by Ari"
+          VER="$DATE"
           jq -n \
-            --argjson VC "${DATECODE}" \
-            --arg DESC "$DESC" \
-            --slurpfile F /tmp/files.json \
+            --arg VER "$VER" \
+            --arg DESC "FEXCore-Nightly $VER-$SHORTSHA Automated Build (Built by Ari's Winlator WCP Hub. Upstream: bylaws)" \
+            --argjson VC 0 \
+            --slurpfile S32 <(find "$WCP_DIR/system32" -maxdepth 1 -type f -name '*.dll' -printf '%f\n' \
+                              | jq -Rn '[inputs | {source: ("system32/"+.), target: ("${system32}/"+.)}]') \
             '{
               type: "FEXCore",
-              versionName: "nightly",
+              versionName: $VER,
               versionCode: $VC,
               description: $DESC,
-              files: ($F[0] // [])
-            }' > FEXCore_WCP/profile.json
+              files: ($S32[0] // [])
+            }' > "$WCP_DIR/profile.json"
 
-          tar --zstd -C FEXCore_WCP \
+          OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
+          tar --zstd -C "$WCP_DIR" \
             --format=gnu --owner=0 --group=0 --numeric-owner \
-            -cf "fex-nightly-${DATECODE}.wcp" profile.json system32
+            --sort=name \
+            -cf "$OUT/fex-${VER}.wcp" profile.json system32
 
-          mv -v "fex-nightly-${DATECODE}.wcp" FEXCore_DLLs/
+      - name: Save sccache cache
+        if: steps.restore_sccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/sccache
+          key:  sccache-${{ runner.os }}-${{ env.LLVM_MINGW_TAG }}
+      
+      - name: sccache stats
+        run: |
+          sccache --show-stats || true
+          sccache --stop-server || true
 
-      - name: Ensure/Update release (tag = FEX-NIGHTLY) and upload asset
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
+      - name: Build release notes
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO:     ${{ github.repository }}
-          SHORT:    ${{ needs.resolve-latest.outputs.short }}
-          SHA:      ${{ needs.resolve-latest.outputs.sha }}
-          DATECODE: ${{ needs.resolve-latest.outputs.datecode }}
+          DATE:     ${{ needs.guard.outputs.date }}
+          SHORTSHA: ${{ needs.guard.outputs.shortsha }}
         run: |
           set -Eeuo pipefail
-          BODY=$'🌙 Automated FEX nightly builds (rolling)\n\nCommit: ['"${SHORT}"'](https://github.com/FEX-Emu/FEX/commit/'"${SHA}"')'
+          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          printf '🤖 FEXCore Nightly builds\n\n' > "$NOTES"
+          echo "Current: ${DATE}"   >> "$NOTES"
+          echo "Commit: ${SHORTSHA}" >> "$NOTES"
+          cat "$NOTES"
 
-          if ! gh release view "FEX-NIGHTLY" --repo "$REPO" >/dev/null 2>&1; then
-            gh release create "FEX-NIGHTLY" --repo "$REPO" -t "FEX-NIGHTLY" -n "${BODY}"
+      - name: Create/Update GitHub Release (Nightly) + upload WCP
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          RELEASE_TAG="${RELEASE_TAG}"
+
+          if ! gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           else
-            gh release edit   "FEX-NIGHTLY" --repo "$REPO" -t "FEX-NIGHTLY" -n "${BODY}"
+            gh release edit   "${RELEASE_TAG}" --repo "${REPO}" -t "${RELEASE_TAG}" -F "$NOTES"
           fi
 
-          gh release upload "FEX-NIGHTLY" \
-            "./FEXCore_DLLs/fex-nightly-${DATECODE}.wcp" \
-            --repo "$REPO" --clobber
-
-      - name: Trim old assets (keep latest 5)
-        if: steps.guard_commit.outputs.skip != 'true' && steps.dupe.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          API="https://api.github.com/repos/${REPO}/releases/tags/FEX-NIGHTLY"
-          assets="$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API" | jq -c '.assets | sort_by(.created_at)')"
-          count="$(echo "$assets" | jq 'length')"
-          if [ "$count" -gt 5 ]; then
-            delcount=$((count-5))
-            echo "::notice::Found $count assets, will delete $delcount oldest."
-            echo "$assets" | jq -r ".[0:$delcount][] | .id" | while read -r id; do
-              curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                   "https://api.github.com/repos/${REPO}/releases/assets/${id}"
-              echo "Deleted asset id=$id"
-            done
+          if compgen -G "${GITHUB_WORKSPACE}/out/*.wcp" > /dev/null; then
+            gh release upload "${RELEASE_TAG}" "${GITHUB_WORKSPACE}/out/"*.wcp --repo "${REPO}" --clobber
           else
-            echo "::notice::Asset count $count (≤5); nothing to delete."
+            echo "No new WCP files to upload."
           fi
