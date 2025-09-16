@@ -37,7 +37,7 @@ jobs:
           mkdir -p .cache
           cat > /tmp/map.json <<'EOF'
           {
-            "fex":                    "FEX-STABLE",
+            "fex":                    "FEXCore",
             "box64":                  "BOX64-STABLE",
             "dxvk":                   "DXVK",
             "sarek":                  "DXVK-SAREK",
