@@ -45,10 +45,7 @@ Winlator is an Android application started by brunodev85 that lets you run Windo
 ---
 
 ℹ️ Tap ```⚡Useful info``` to see more details.<br>
-
----
-
-```2025.09.15```: Workflow streamlined. All assets & info updated. <br>
+ℹ️ ```2025.09.15```: Fixed a few mistakes. All assets & info updated. <br>
 
 ---
 <br>
