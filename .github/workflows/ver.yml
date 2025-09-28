@@ -112,7 +112,7 @@ jobs:
               fi
 
               suspicious=0
-              if [ "$tag" = "FEX-STABLE" ]; then
+              if [ "$tag" = "FEXCore" ]; then
                 perl -e 'exit((shift)=~/^\d{2,6}(\.\d+)?$/ ? 0 : 1)' "$ver" || suspicious=1
               else
                 perl -e 'exit((shift)=~/^(?:\d+\.\d+(?:\.\w+)*(?:[-+][0-9A-Za-z.]+)?|\d{4}[-.]\d{2}[-.]\d{2}|\d{8})$/ ? 0 : 1)' "$ver" || suspicious=1
