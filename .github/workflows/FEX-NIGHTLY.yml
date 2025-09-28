@@ -72,7 +72,9 @@ jobs:
                  "$API/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}" || true)
           if [ "$HTTP" = "200" ]; then
             HAVE_DATE=$(jq -r --arg fn "fex-${DATE}.wcp" '.assets[]?.name | select(.==$fn)' /tmp/rel.json | head -n1)
-            LAST_COMMIT=$(jq -r '.body' /tmp/rel.json | sed -n -E 's/^Commit:[[:space:]]*([0-9a-f]{7,40}).*/\1/p' | head -n1)
+            # Parse SHORT SHA from the 'Current:' line format only
+            LAST_COMMIT=$(jq -r '.body' /tmp/rel.json | \
+              sed -n -E '/^[[:space:]]*Current:/ s/.*\[([0-9a-f]{7,40})\].*/\1/p' | head -n1)
           else
             HAVE_DATE=""
             LAST_COMMIT=""
