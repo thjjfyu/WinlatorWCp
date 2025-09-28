@@ -331,7 +331,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
-          printf '🤖 FEXCore Nightly builds\n\n' > "$NOTES"
+          printf '🌙 Automated FEXCore nightly builds (rolling)\n\n' > "$NOTES"
           echo "Current: ${DATE}-[${SHORTSHA}](https://github.com/FEX-Emu/FEX/commit/${SHORTSHA})"   >> "$NOTES"
           cat "$NOTES"
 
