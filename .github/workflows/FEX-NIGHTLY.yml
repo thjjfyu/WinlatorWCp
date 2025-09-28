@@ -332,7 +332,7 @@ jobs:
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           printf '🌙 Automated FEXCore nightly builds (rolling)\n\n' > "$NOTES"
-          echo "Current: ${DATE}-[${SHORTSHA}](https://github.com/FEX-Emu/FEX/commit/${SHORTSHA})"   >> "$NOTES"
+          echo "Current: ${DATE}(YYMMDD)-[${SHORTSHA}](https://github.com/FEX-Emu/FEX/commit/${SHORTSHA})"   >> "$NOTES"
           cat "$NOTES"
 
       - name: Create/Update GitHub Release (Nightly) + upload WCP
