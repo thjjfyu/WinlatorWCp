@@ -38,7 +38,6 @@ jobs:
           cat > /tmp/map.json <<'EOF'
           {
             "fex":                    "FEXCore",
-            "box64":                  "BOX64-STABLE",
             "dxvk":                   "DXVK",
             "sarek":                  "DXVK-SAREK",
             "sarek-async":            "DXVK-SAREK-ASYNC",
