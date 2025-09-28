@@ -1,65 +1,50 @@
-<h1 align="center">Winlator WCP Hub</h1>
-<br>
 
 <p align="center">
   <img src="./img.png" alt="logoo" width="220">
 </p>
 
-
-<h3 align="center">Automated builds, Always up to date</h3>
-
----
-<details>
-  <summary>💡 <b>What is WCP?</b></summary>
-  
-- WCP is a custom component bundle for the Winlator ecosystem (originating from the Old Glibc fork, mainly used with CMod right now). It’s fundamentally a tar.zst archive with a .wcp extension.
-- Even if WCP installs aren’t supported, you can just unpack it and use the contents anywhere if you know the basics.
-
-</details>
-
-<details>
-  <summary>🤔 <b>Winlator?</b></summary>
-
-## 🎮 Winlator
-
-Winlator is an Android application started by brunodev85 that lets you run Windows (x86_64) applications using Wine and Box64/FEX.
-
-| Type       | 🧠 |
-|:------:|:------:|
-| [**Official Winlator**](https://github.com/brunodev85/winlator) | Glibc |
-| [**Winlator-Frost**](https://github.com/MrPhryaNikFrosty/Winlator-Frost) | Glibc |
-| [**Winlator-AMod**](https://github.com/afeimod/winlator-mod) | Glibc |
-| [**Winlator-CMod**](https://github.com/coffincolors/winlator) | Bionic |
-
-| Runtime | Description |
-|:-:|-|
-|Glibc  | Official default. Wide compatibility, stable with solid performance. (Box64 Only) |
-|Bionic | Android native. Faster, potential issues on low-spec devices. (FEX + Box64) |
-
-- Although longjunyu2’s unofficial Glibc fork remains functional, it’s best to avoid using it.
-- Discontinued or nightly(alpha) builds are not covered.
-- CMod (bionic) offers the best controller support.
-
-</details>
+<h3 align="center">Winlator WCP Hub</h3>
+<h4 align="center">Automated builds, Always up to date</h4>
 
 ---
 
-ℹ️ Tap ```⚡Useful info``` to see more details.<br>
-ℹ️ ```2025.09.15```: Fixed a few mistakes. All assets & info updated. <br>
-
----
-<br>
+> [!TIP]
+> <details>
+>  <summary><b>What is wcp?</b></summary>
+>
+> - wcp is a custom component bundle for the Winlator ecosystem, originating from the old glibc fork and currently used mainly with CMod. It’s essentially a tar.zst archive with a .wcp extension. Even if WCP installs aren’t supported, you can simply unpack it and use the contents anywhere if you know the basics.
+>
+> </details>
+>
+> <details>
+>  <summary><b>Winlator?</b></summary>
+> <br>
+>  
+> | Type | 🧠 |
+> |:------:|:------:|
+> | [**Official Winlator**](https://github.com/brunodev85/winlator) | Glibc |
+> | [**Winlator-Frost**](https://github.com/MrPhryaNikFrosty/Winlator-Frost) | Glibc |
+> | [**Winlator-AMod**](https://github.com/afeimod/winlator-mod) | Glibc |
+> | [**Winlator-CMod**](https://github.com/coffincolors/winlator) | Bionic |
+>
+> | Runtime | Description |
+> |:-:|-|
+> | Glibc  | Official default. Wide compatibility, stable with solid performance. (Box64 Only) |
+> | Bionic | Android native. Faster, potential issues on low-spec devices. (FEX + Box64) |
+> - Winlator is an Android application started by brunodev85 that lets you run Windows (x86_64) applications using Wine and Box64/FEX.
+> - Although longjunyu2’s unofficial Glibc fork remains functional, it’s best to avoid using it.
+> - Discontinued or alpha builds are not covered.
+>
+> </details>
 
 ## ⚙️ FEXCore & Box64
-
-📌 ```FEX-Stable```: Fixed a regression caused by a build flag error
 
 | Type | Build | 🏷️ | 📜 |
 |:------:|:------:|:------:|:------:|
 | FEXCore | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEXCore) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEXCore-Nightly) | <!--fex--> 2509.1|<a href="https://github.com/FEX-Emu/FEX">🔗</a> |
-| ~~Box64 Glibc~~ | [**~~Stable~~**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-STABLE) · [**~~Nightly~~**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-NIGHTLY) | <!--box64--> 0.3.6|<a href="https://github.com/ptitSeb/box64">🔗</a> |
-| Box64 Bionic | [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-BIONIC-NIGHTLY)| | |
-| WowBox64 | | | |
+| Box64 bionic | Stable · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-BIONIC-NIGHTLY)| <!--box64--> 0.3.6 · 0.3.7| <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| Box64 glibc | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-NIGHTLY) | Paused ||
+| WowBox64 | 🚧 | 🚧 | |
 
 <details>
   <summary>⚡Useful info</summary>
