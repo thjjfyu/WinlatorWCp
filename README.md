@@ -88,7 +88,7 @@
   <summary>💡Useful info</summary>
 <br> 
 
-| 📦 | 📝 |
+| Type | 📝 |
 |:-:|-|
 | **Sarek**    | Backports for older Vulkan. Keeps DXVK usable on Vulkan 1.1/1.2 hardware, with practical tweaks for legacy GPUs. |
 | **GPLAsync** | DXVK + async shader compilation + GPL cache to cut visible stutter during compilation. |
