@@ -2,7 +2,6 @@ name: FEXCore
 # mstorsjo LLVM_MINGW 20250910
 # 2508+
 # ARM64EC disallowed registers hotfix
-# silent
 
 on:
   workflow_dispatch:
@@ -136,13 +135,10 @@ jobs:
           json=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$API" || true)
 
           pick_url() {
-            local json="$1"
-            local url=""
+            local json="$1"; local url=""
             for dist in 24.04 22.04 20.04; do
               url=$(jq -r --arg dist "$dist" '
-                .assets[]?
-                | select(.name | endswith("ucrt-ubuntu-" + $dist + "-x86_64.tar.xz"))
-                | .browser_download_url
+                .assets[]? | select(.name | endswith("ucrt-ubuntu-" + $dist + "-x86_64.tar.xz")) | .browser_download_url
               ' <<<"$json" | head -n1 || true)
               [[ -n "$url" && "$url" != "null" ]] && { echo "$url"; return 0; }
             done
@@ -156,13 +152,11 @@ jobs:
                    https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest || true)
             url="$(pick_url "$json" || true)"
           fi
-
           [[ -n "${url:-}" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
 
           TOOLCHAIN_DIR=/opt/llvm-mingw
           sudo mkdir -p "$TOOLCHAIN_DIR"
-          curl -fL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" \
-               "$url" -o /tmp/llvm-mingw.tar.xz
+          curl -fL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
           sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
@@ -186,7 +180,7 @@ jobs:
           git -C src config user.name "FEXCore Builder"
           git -C src config user.email "builder@users.noreply.github.com"
 
-      - name: Build NEW versions
+      - name: Build (ARM64EC + AArch64)
         env:
           TO_BUILD: ${{ needs.guard.outputs.to_build }}
         run: |
