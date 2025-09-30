@@ -46,8 +46,8 @@ jobs:
             "arm64ec":                "DXVK-ARM64EC",
             "gplasync-arm64ec":       "DXVK-GPLASYNC-ARM64EC",
             "vkd3d":                  "VKD3D-PROTON",
-            "vkd3d-arm64ec":          "VKD3D-PROTON-ARM64EC"
-            "box64":                   "BOX64-BIONIC-NIGHTLY"
+            "vkd3d-arm64ec":          "VKD3D-PROTON-ARM64EC",
+            "box64":                  "BOX64-BIONIC-NIGHTLY"
           }
           EOF
 
