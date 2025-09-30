@@ -1,6 +1,7 @@
 name: FEXCore-Nightly
 # mstorsjo LLVM_MINGW 20250910
 # nightly: builds latest main commit daily; artifact fex-YYMMDD.wcp
+# ARM64EC disallowed registers hotfix
 
 on:
   workflow_dispatch:
@@ -40,8 +41,8 @@ jobs:
     steps:
       - name: Install jq, curl (minimal)
         run: |
-          sudo apt-get -yq update
-          sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
+          sudo apt-get -yqq update
+          sudo apt-get -yqq install --no-install-recommends jq curl ca-certificates
 
       - name: Collect date (UTC) and latest main commit
         id: collect
@@ -52,7 +53,7 @@ jobs:
           API="https://api.github.com"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
-          json=$(curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${FEX_REPO}/commits/main" )
+          json=$(curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${FEX_REPO}/commits/main")
           SHA=$(jq -r '.sha' <<<"$json")
           SHORT=${SHA:0:7}
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
@@ -72,9 +73,8 @@ jobs:
                  "$API/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}" || true)
           if [ "$HTTP" = "200" ]; then
             HAVE_DATE=$(jq -r --arg fn "fex-${DATE}.wcp" '.assets[]?.name | select(.==$fn)' /tmp/rel.json | head -n1)
-            # Parse SHORT SHA from the 'Current:' line format only
-            LAST_COMMIT=$(jq -r '.body' /tmp/rel.json | \
-              sed -n -E '/^[[:space:]]*Current:/ s/.*\[([0-9a-f]{7,40})\].*/\1/p' | head -n1)
+            LAST_COMMIT=$(jq -r '.body' /tmp/rel.json \
+              | sed -n -E '/^[[:space:]]*Current:/ s/.*\[([0-9a-f]{7,40})\].*/\1/p' | head -n1)
           else
             HAVE_DATE=""
             LAST_COMMIT=""
@@ -119,26 +119,12 @@ jobs:
     steps:
       - name: Install host tooling (lean set; no cache)
         run: |
-          sudo apt-get -yq update
-          sudo apt-get -yq install --no-install-recommends \
+          sudo apt-get -yqq update
+          sudo apt-get -yqq install --no-install-recommends \
             curl xz-utils jq ca-certificates \
             git ninja-build cmake pkg-config \
-            build-essential python3 zstd gh perl dos2unix sccache
+            build-essential python3 zstd gh perl dos2unix
 
-      - name: Prepare cache dirs
-        run: |
-          set -Eeuo pipefail
-          mkdir -p "${GITHUB_WORKSPACE}/.cache"
-      
-      - name: Restore llvm-mingw archive cache
-        id: restore_llvm
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ github.workspace }}/.cache/llvm-mingw-${{ env.LLVM_MINGW_TAG }}.tar.xz
-          key:  llvm-mingw-${{ runner.os }}-${{ env.LLVM_MINGW_TAG }}
-          restore-keys: |
-            llvm-mingw-${{ runner.os }}-
-      
       - name: Download pinned llvm-mingw (UCRT)
         id: llvm
         env:
@@ -147,7 +133,7 @@ jobs:
           set -Eeuo pipefail
           API="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/tags/${TAG}"
           json=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$API" || true)
-      
+
           pick_url() {
             local json="$1"; local url=""
             for dist in 24.04 22.04 20.04; do
@@ -158,7 +144,7 @@ jobs:
             done
             return 1
           }
-      
+
           url="$(pick_url "$json" || true)"
           if [[ -z "${url:-}" ]]; then
             echo "::warning::Pinned llvm-mingw ${TAG} asset not found; falling back to latest"
@@ -167,25 +153,12 @@ jobs:
             url="$(pick_url "$json" || true)"
           fi
           [[ -n "${url:-}" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
-      
+
           TOOLCHAIN_DIR=/opt/llvm-mingw
-          ARCHIVE="${GITHUB_WORKSPACE}/.cache/llvm-mingw-${TAG}.tar.xz"
           sudo mkdir -p "$TOOLCHAIN_DIR"
-          if [[ ! -s "$ARCHIVE" ]]; then
-            echo "Downloading llvm-mingw archive..."
-            curl -fL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$url" -o "$ARCHIVE"
-          else
-            echo "Using cached llvm-mingw archive at $ARCHIVE"
-          fi
-          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf "$ARCHIVE"
+          curl -fL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
+          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
           echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
-      
-      - name: Save llvm-mingw archive cache
-        if: steps.restore_llvm.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ github.workspace }}/.cache/llvm-mingw-${{ env.LLVM_MINGW_TAG }}.tar.xz
-          key:  llvm-mingw-${{ runner.os }}-${{ env.LLVM_MINGW_TAG }}
 
       - name: Pre-clean workspace (self-hosted)
         run: |
@@ -200,7 +173,6 @@ jobs:
           SHA: ${{ needs.guard.outputs.sha }}
         run: |
           set -Eeuo pipefail
-          # Shallow, single-commit checkout + shallow submodules to minimize cloning
           git init src
           git -C src remote add origin https://github.com/${FEX_REPO}.git
           git -C src -c protocol.version=2 fetch --depth=1 --filter=blob:none origin "$SHA"
@@ -212,14 +184,27 @@ jobs:
           git -C src config user.name "FEXCore Nightly Builder"
           git -C src config user.email "builder@users.noreply.github.com"
 
-      - name: Restore sccache cache
-        id: restore_sccache
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/sccache
-          key:  sccache-${{ runner.os }}-${{ env.LLVM_MINGW_TAG }}
-          restore-keys: |
-            sccache-${{ runner.os }}-${{ env.LLVM_MINGW_TAG }}-
+      - name: ARM64EC disallowed registers hotfix (CI-local)
+        run: |
+          set -Eeuo pipefail
+          cd "${GITHUB_WORKSPACE}/src"
+          FILE="Source/Windows/ARM64EC/Module.S"
+          if [[ -f "$FILE" ]]; then
+            echo "Checking ARM64EC asm for disallowed registers..."
+            if grep -nE '\b[wx](13|14|23|24|28)\b' "$FILE"; then
+              cp "$FILE" "$FILE.bak"
+              perl -0777 -pe 's/\bx23\b/x12/g; s/\bw23\b/w12/g' -i "$FILE"
+              if grep -qE '\b[wx](13|14|23|24|28)\b' "$FILE"; then
+                echo "::error::ARM64EC banned registers remain after patch"; exit 1
+              else
+                echo "Patched $FILE for ARM64EC"
+              fi
+            else
+              echo "No banned registers detected in $FILE"
+            fi
+          else
+            echo "::notice::$FILE not found; skipping ARM64EC hotfix"
+          fi
 
       - name: Build (ARM64EC + AArch64)
         env:
@@ -228,10 +213,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           cd "${GITHUB_WORKSPACE}/src"
-
-          export SCCACHE_DIR="${HOME}/.cache/sccache"
-          export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-10G}"
-          sccache --start-server || true
 
           # Stage dirs for split installs
           STAGE_ARM64EC="${GITHUB_WORKSPACE}/stage-arm64ec-${DATE}"
@@ -242,6 +223,8 @@ jobs:
           # Build: ARM64EC (x86_64 emu module)
           rm -rf build-arm64ec && mkdir build-arm64ec && cd build-arm64ec
           cmake -GNinja \
+            --log-level=WARNING \
+            -Wno-dev \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE=../Data/CMake/toolchain_mingw.cmake \
             -DCMAKE_INSTALL_LIBDIR=/usr/lib/wine/aarch64-windows \
@@ -249,16 +232,16 @@ jobs:
             -DMINGW_TRIPLE=arm64ec-w64-mingw32 \
             -DBUILD_TESTING=False -DBUILD_TESTS=False \
             -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
-            -DCMAKE_INSTALL_PREFIX=/usr \
-              -DCMAKE_C_COMPILER_LAUNCHER=sccache \
-              -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ..
-          ninja -v
+            -DCMAKE_INSTALL_PREFIX=/usr ..
+          NINJA_STATUS="" ninja
           DESTDIR="$STAGE_ARM64EC" ninja install
           cd ..
 
           # Build: AArch64 (WOW64 emu module)
           rm -rf build-wow64 && mkdir build-wow64 && cd build-wow64
           cmake -GNinja \
+            --log-level=WARNING \
+            -Wno-dev \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE=../Data/CMake/toolchain_mingw.cmake \
             -DCMAKE_INSTALL_LIBDIR=/usr/lib/wine/aarch64-windows \
@@ -266,10 +249,8 @@ jobs:
             -DMINGW_TRIPLE=aarch64-w64-mingw32 \
             -DBUILD_TESTING=False -DBUILD_TESTS=False \
             -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
-            -DCMAKE_INSTALL_PREFIX=/usr \
-              -DCMAKE_C_COMPILER_LAUNCHER=sccache \
-              -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ..
-          ninja -v
+            -DCMAKE_INSTALL_PREFIX=/usr ..
+          NINJA_STATUS="" ninja
           DESTDIR="$STAGE_AARCH64" ninja install
           cd ..
 
@@ -280,7 +261,7 @@ jobs:
           for ST in "$STAGE_ARM64EC" "$STAGE_AARCH64"; do
             SRC="$ST/usr/lib/wine/aarch64-windows"
             if [[ -d "$SRC" ]]; then
-              find "$SRC" -type f -name '*.dll' -print -exec cp -v {} "$WCP_DIR/system32/" \;
+              find "$SRC" -type f -name '*.dll' -exec cp {} "$WCP_DIR/system32/" \;
             else
               echo "::warning::Expected install dir not found: $SRC"
             fi
@@ -314,18 +295,6 @@ jobs:
             --sort=name \
             -cf "$OUT/fex-${VER}.wcp" profile.json system32
 
-      - name: Save sccache cache
-        if: steps.restore_sccache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.cache/sccache
-          key:  sccache-${{ runner.os }}-${{ env.LLVM_MINGW_TAG }}
-      
-      - name: sccache stats
-        run: |
-          sccache --show-stats || true
-          sccache --stop-server || true
-
       - name: Build release notes
         env:
           DATE:     ${{ needs.guard.outputs.date }}
@@ -334,7 +303,7 @@ jobs:
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           printf '🌙 Automated FEXCore nightly builds (rolling)\n\n' > "$NOTES"
-          echo "Current: ${DATE}(YYMMDD)-[${SHORTSHA}](https://github.com/FEX-Emu/FEX/commit/${SHORTSHA})"   >> "$NOTES"
+          echo "Current: ${DATE}(YYMMDD)-[${SHORTSHA}](https://github.com/FEX-Emu/FEX/commit/${SHORTSHA})" >> "$NOTES"
           cat "$NOTES"
 
       - name: Create/Update GitHub Release (Nightly) + upload WCP
