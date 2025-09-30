@@ -1,6 +1,8 @@
 name: FEXCore
 # mstorsjo LLVM_MINGW 20250910
 # 2508+
+# ARM64EC disallowed registers hotfix
+# silent
 
 on:
   workflow_dispatch:
@@ -39,8 +41,8 @@ jobs:
     steps:
       - name: Install jq, curl (minimal)
         run: |
-          sudo apt-get -yq update
-          sudo apt-get -yq install --no-install-recommends jq curl ca-certificates
+          sudo apt-get -yqq update
+          sudo apt-get -yqq install --no-install-recommends jq curl ca-certificates util-linux
 
       - name: Collect already-published versions
         id: have
@@ -118,10 +120,10 @@ jobs:
     steps:
       - name: Install host tooling (lean set; no cache)
         run: |
-          sudo apt-get -yq update
-          sudo apt-get -yq install --no-install-recommends \
+          sudo apt-get -yqq update
+          sudo apt-get -yqq install --no-install-recommends \
             curl xz-utils jq ca-certificates \
-            git ninja-build cmake pkg-config \
+            git ninja-build cmake pkg-config util-linux \
             build-essential python3 zstd gh perl dos2unix
 
       - name: Download pinned llvm-mingw (UCRT)
@@ -207,6 +209,25 @@ jobs:
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
 
+            # ARM64EC disallowed registers hotfix (CI-local; no commit)
+            FILE="Source/Windows/ARM64EC/Module.S"
+            if [[ -f "$FILE" ]]; then
+            echo "Checking ARM64EC asm for disallowed registers..."
+            if grep -nE '\b[wx](13|14|23|24|28)\b' "$FILE"; then
+            cp "$FILE" "$FILE.bak"
+            # Replace only exact tokens: x23/w23 -> x12/w12
+            perl -0777 -pe 's/\bx23\b/x12/g; s/\bw23\b/w12/g' -i "$FILE"
+            # Verify no banned regs remain
+            if grep -qE '\b[wx](13|14|23|24|28)\b' "$FILE"; then
+            echo "::error::ARM64EC banned registers remain after patch"; exit 1
+            else
+            echo "Patched $FILE for ARM64EC"
+            fi
+            else
+            echo "No banned registers detected in $FILE"
+            fi
+            fi
+
             # Stage dirs for split installs
             STAGE_ARM64EC="${GITHUB_WORKSPACE}/stage-arm64ec-${base}"
             STAGE_AARCH64="${GITHUB_WORKSPACE}/stage-aarch64-${base}"
@@ -216,6 +237,8 @@ jobs:
             # Build: ARM64EC (x86_64 emu module)
             rm -rf build-arm64ec && mkdir build-arm64ec && cd build-arm64ec
             cmake -GNinja \
+              --log-level=WARNING \
+              -Wno-dev \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_TOOLCHAIN_FILE=../Data/CMake/toolchain_mingw.cmake \
               -DCMAKE_INSTALL_LIBDIR=/usr/lib/wine/aarch64-windows \
@@ -225,7 +248,7 @@ jobs:
               -DBUILD_TESTS=False \
               -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
               -DCMAKE_INSTALL_PREFIX=/usr ..
-            ninja -v
+            NINJA_STATUS="" ninja
             DESTDIR="$STAGE_ARM64EC" ninja install
             cd ..
 
@@ -241,7 +264,7 @@ jobs:
               -DBUILD_TESTS=False \
               -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
               -DCMAKE_INSTALL_PREFIX=/usr ..
-            ninja -v
+            NINJA_STATUS="" ninja
             DESTDIR="$STAGE_AARCH64" ninja install
             cd ..
 
@@ -253,7 +276,7 @@ jobs:
             for ST in "$STAGE_ARM64EC" "$STAGE_AARCH64"; do
               SRC="$ST/usr/lib/wine/aarch64-windows"
               if [[ -d "$SRC" ]]; then
-                find "$SRC" -type f -name '*.dll' -print -exec cp -v {} "$WCP_DIR/system32/" \;
+                find "$SRC" -type f -name '*.dll' -exec cp {} "$WCP_DIR/system32/" \;
               else
                 echo "::warning::Expected install dir not found: $SRC"
               fi
@@ -276,7 +299,7 @@ jobs:
               --arg VER "${CLEAN_TAG}" \
               --arg DESC "FEXCore Automated Build (Built by Ari's Winlator WCP Hub. Upstream: bylaws)" \
               --argjson VC 0 \
-              --slurpfile S32 <(find FEXCore_WCP/system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' \
+              --slurpfile S32 <(find "$WCP_DIR/system32" -maxdepth 1 -type f -name '*.dll' -printf '%f\n' \
                                 | jq -Rn '[inputs | {source: ("system32/"+.), target: ("${system32}/"+.)}]') \
               '{
                 type: "FEXCore",
