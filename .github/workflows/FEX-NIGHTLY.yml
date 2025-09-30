@@ -1,6 +1,6 @@
 name: FEXCore-Nightly
 # mstorsjo LLVM_MINGW 20250910
-# nightly: builds latest main commit daily; artifact fex-YYMMDD.wcp
+# nightly: builds latest main commit daily; artifact fex-<STABLE>-<YYMMDD>-<shortsha7>.wcp
 # ARM64EC disallowed registers hotfix
 
 on:
@@ -34,6 +34,11 @@ jobs:
       date:     ${{ steps.collect.outputs.date }}
       sha:      ${{ steps.collect.outputs.sha }}
       shortsha: ${{ steps.collect.outputs.shortsha }}
+      stable:   ${{ steps.collect.outputs.stable }}
+      patch:    ${{ steps.collect.outputs.patch }}
+      version:  ${{ steps.collect.outputs.version }}
+      version_name: ${{ steps.collect.outputs.version_name }}
+      version_code: ${{ steps.collect.outputs.version_code }}
     env:
       GH_TOKEN: ${{ github.token }}
       FEX_REPO: ${{ vars.FEX_REPO || 'FEX-Emu/FEX' }}
@@ -44,26 +49,78 @@ jobs:
           sudo apt-get -yqq update
           sudo apt-get -yqq install --no-install-recommends jq curl ca-certificates
 
-      - name: Collect date (UTC) and latest main commit
+      - name: Collect date (UTC) and latest main commit + compose version
         id: collect
         run: |
           set -Eeuo pipefail
           DATE=$(date -u +%y%m%d)
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
+
           API="https://api.github.com"
           auth=(-H "Authorization: Bearer ${GH_TOKEN}")
           ver=(-H "Accept: application/vnd.github+json")
+
+          # Get main head SHA
           json=$(curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${FEX_REPO}/commits/main")
           SHA=$(jq -r '.sha' <<<"$json")
           SHORT=${SHA:0:7}
+
+          # Discover stable version from source tags/releases: expect FEX-YYMM(.P)? where P=1..9
+          rel=$(curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${FEX_REPO}/releases?per_page=100" || true)
+          tags=$(curl -fsSL "${auth[@]}" "${ver[@]}" "$API/repos/${FEX_REPO}/tags?per_page=100" || true)
+
+          candidates=$(
+            { jq -r '.[].tag_name // empty' <<<"$rel"; jq -r '.[].name // empty' <<<"$tags"; } \
+            | grep -E '^FEX-[0-9]{4}(\.[1-9])?$' | sort -u
+          )
+
+          if [[ -z "${candidates}" ]]; then
+            echo "::error::No FEX-YYMM(.P) style tags/releases found in ${FEX_REPO}"; exit 1
+          fi
+
+          best=$(printf '%s\n' "$candidates" | awk -F'-' '
+                      {
+                        n=$2
+                        split(n, a, ".")
+                        base=a[1]
+                        p=a[2]
+                        pv = (p == "" ? 0 : p)
+                        if (base ~ /^[0-9]{4}$/ && (p == "" || p ~ /^[1-9]$/)) {
+                          key = base*10 + pv
+                          if (key>max) { max=key; b=base; patch=p }
+                        }
+                      }
+                      END {
+                        if (max=="") exit 1;
+                        if (patch=="") printf("%s", b); else printf("%s.%s", b, patch);
+                      }
+                    ')
+
+          STABLE="$best"
+
+          if [[ "$STABLE" =~ ^([0-9]{4})(\.[1-9])?$ ]]; then
+            PATCH="${BASH_REMATCH[2]#.}"
+          else
+            echo "::error::Invalid stable derived from tag: '$STABLE'"; exit 1
+          fi
+
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "shortsha=$SHORT" >> "$GITHUB_OUTPUT"
-          echo "Current UTC date: $DATE, head: $SHORT"
+          echo "stable=$STABLE" >> "$GITHUB_OUTPUT"
+          echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
+
+          VERSION="${STABLE}-${DATE}-${SHORT}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          VERSION_NAME="${STABLE}-${SHORT}"
+          VERSION_CODE="$DATE"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "Current UTC date: $DATE, head: $SHORT, version: $VERSION"
 
       - name: Check existing release assets/body
         id: have
         env:
-          DATE: ${{ steps.collect.outputs.date }}
+          VERSION: ${{ steps.collect.outputs.version }}
         run: |
           set -Eeuo pipefail
           API="https://api.github.com"
@@ -72,29 +129,29 @@ jobs:
           HTTP=$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
                  "$API/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}" || true)
           if [ "$HTTP" = "200" ]; then
-            HAVE_DATE=$(jq -r --arg fn "fex-${DATE}.wcp" '.assets[]?.name | select(.==$fn)' /tmp/rel.json | head -n1)
+            WANT="fex-${VERSION}.wcp"
+            HAVE_ASSET=$(jq -r --arg fn "$WANT" '.assets[]?.name | select(.==$fn)' /tmp/rel.json | head -n1)
             LAST_COMMIT=$(jq -r '.body' /tmp/rel.json \
               | sed -n -E '/^[[:space:]]*Current:/ s/.*\[([0-9a-f]{7,40})\].*/\1/p' | head -n1)
           else
-            HAVE_DATE=""
+            HAVE_ASSET=""
             LAST_COMMIT=""
           fi
-          echo "have_date=${HAVE_DATE}" >> "$GITHUB_OUTPUT"
+          echo "have_asset=${HAVE_ASSET}" >> "$GITHUB_OUTPUT"
           echo "last_commit=${LAST_COMMIT}" >> "$GITHUB_OUTPUT"
-          echo "HTTP=$HTTP, HAVE_DATE=${HAVE_DATE:-none}, LAST_COMMIT=${LAST_COMMIT:-none}"
+          echo "HTTP=$HTTP, HAVE_ASSET=${HAVE_ASSET:-none}, LAST_COMMIT=${LAST_COMMIT:-none}"
 
       - name: Decide build or skip
         id: decide
         env:
-          DATE:        ${{ steps.collect.outputs.date }}
           SHA:         ${{ steps.collect.outputs.sha }}
-          HAVE_DATE:   ${{ steps.have.outputs.have_date }}
+          HAVE_ASSET:  ${{ steps.have.outputs.have_asset }}
           LAST_COMMIT: ${{ steps.have.outputs.last_commit }}
         run: |
           set -Eeuo pipefail
           do_build=true
-          if [ -n "$HAVE_DATE" ]; then
-            echo "::notice::Asset fex-$DATE.wcp already exists. Skipping."
+          if [ -n "$HAVE_ASSET" ]; then
+            echo "::notice::Asset already exists ($HAVE_ASSET). Skipping."
             do_build=false
           elif [ -n "$LAST_COMMIT" ] && { [ "$LAST_COMMIT" = "$SHA" ] || [ "$LAST_COMMIT" = "${SHA:0:7}" ]; }; then
             echo "::notice::Same commit already built. Skipping."
@@ -116,6 +173,12 @@ jobs:
       RELEASE_TAG: FEXCore-Nightly
       GH_TOKEN: ${{ github.token }}
       LLVM_MINGW_TAG: ${{ vars.LLVM_MINGW_TAG || '20250910' }}
+      VERSION: ${{ needs.guard.outputs.version }}
+      VERSION_NAME: ${{ needs.guard.outputs.version_name }}
+      VERSION_CODE: ${{ needs.guard.outputs.version_code }}
+      STABLE: ${{ needs.guard.outputs.stable }}
+      SHORTSHA: ${{ needs.guard.outputs.shortsha }}
+      DATE: ${{ needs.guard.outputs.date }}
     steps:
       - name: Install host tooling (lean set; no cache)
         run: |
@@ -191,10 +254,10 @@ jobs:
           FILE="Source/Windows/ARM64EC/Module.S"
           if [[ -f "$FILE" ]]; then
             echo "Checking ARM64EC asm for disallowed registers..."
-            if grep -nE '\b[wx](13|14|23|24|28)\b' "$FILE"; then
+            if grep -nE '\\b[wx](13|14|23|24|28)\\b' "$FILE"; then
               cp "$FILE" "$FILE.bak"
-              perl -0777 -pe 's/\bx23\b/x12/g; s/\bw23\b/w12/g' -i "$FILE"
-              if grep -qE '\b[wx](13|14|23|24|28)\b' "$FILE"; then
+              perl -0777 -pe 's/\\bx23\\b/x12/g; s/\\bw23\\b/w12/g' -i "$FILE"
+              if grep -qE '\\b[wx](13|14|23|24|28)\\b' "$FILE"; then
                 echo "::error::ARM64EC banned registers remain after patch"; exit 1
               else
                 echo "Patched $FILE for ARM64EC"
@@ -207,9 +270,6 @@ jobs:
           fi
 
       - name: Build (ARM64EC + AArch64)
-        env:
-          DATE:     ${{ needs.guard.outputs.date }}
-          SHORTSHA: ${{ needs.guard.outputs.shortsha }}
         run: |
           set -Eeuo pipefail
           cd "${GITHUB_WORKSPACE}/src"
@@ -274,16 +334,19 @@ jobs:
           (cd "$WCP_DIR" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/s32.txt || true
           test -s /tmp/s32.txt || { echo "::error::No DLLs discovered in system32"; exit 1; }
 
-          VER="$DATE"
+          VER="$VERSION"
+          VER_NAME="${VERSION_NAME:-${STABLE}-${SHORTSHA}}"
+          VC="${VERSION_CODE:-$DATE}"
+
           jq -n \
-            --arg VER "$VER" \
-            --arg DESC "FEXCore-Nightly $VER-$SHORTSHA Automated Build (Built by Ari's Winlator WCP Hub. Upstream: bylaws)" \
-            --argjson VC 0 \
+            --arg VER_NAME "$VER_NAME" \
+            --arg DESC "FEXCore-Nightly $VERSION Automated Build (Built by Ari's Winlator WCP Hub. Upstream: bylaws)" \
+            --argjson VC "$VC" \
             --slurpfile S32 <(find "$WCP_DIR/system32" -maxdepth 1 -type f -name '*.dll' -printf '%f\n' \
                               | jq -Rn '[inputs | {source: ("system32/"+.), target: ("${system32}/"+.)}]') \
             '{
               type: "FEXCore",
-              versionName: $VER,
+              versionName: $VER_NAME,
               versionCode: $VC,
               description: $DESC,
               files: ($S32[0] // [])
@@ -297,13 +360,13 @@ jobs:
 
       - name: Build release notes
         env:
-          DATE:     ${{ needs.guard.outputs.date }}
           SHORTSHA: ${{ needs.guard.outputs.shortsha }}
+          VERSION:  ${{ needs.guard.outputs.version }}
         run: |
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           printf '🌙 Automated FEXCore nightly builds (rolling)\n\n' > "$NOTES"
-          echo "Current: ${DATE}(YYMMDD)-[${SHORTSHA}](https://github.com/FEX-Emu/FEX/commit/${SHORTSHA})" >> "$NOTES"
+          echo "Current: ${STABLE}-${DATE}-[${SHORTSHA}](https://github.com/FEX-Emu/FEX/commit/${SHORTSHA})" >> "$NOTES"
           cat "$NOTES"
 
       - name: Create/Update GitHub Release (Nightly) + upload WCP
