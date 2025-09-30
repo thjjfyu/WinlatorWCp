@@ -251,22 +251,19 @@ jobs:
         run: |
           set -Eeuo pipefail
           cd "${GITHUB_WORKSPACE}/src"
-          FILE="Source/Windows/ARM64EC/Module.S"
-          if [[ -f "$FILE" ]]; then
-            echo "Checking ARM64EC asm for disallowed registers..."
-            if grep -nE '\b[wx](13|14|23|24|28)\b' "$FILE"; then
-              cp "$FILE" "$FILE.bak"
-              perl -0777 -pe 's/\bx23\b/x12/g; s/\bw23\b/w12/g' -i "$FILE"
-              if grep -qE '\b[wx](13|14|23|24|28)\b' "$FILE"; then
-                echo "::error::ARM64EC banned registers remain after patch"; exit 1
-              else
-                echo "Patched $FILE for ARM64EC"
-              fi
-            else
-              echo "No banned registers detected in $FILE"
-            fi
+          mapfile -t FILES < <(git ls-files 'Source/Windows/ARM64EC/**/*.S' 'Source/Windows/ARM64EC/*.S' 2>/dev/null || true)
+          if (( ${#FILES[@]} == 0 )); then
+            echo "::notice::No ARM64EC asm files found; skipping hotfix"
           else
-            echo "::notice::$FILE not found; skipping ARM64EC hotfix"
+            scan() { grep -nH -E '(^|[^A-Za-z0-9_])[wx](13|14|23|24|28)($|[^A-Za-z0-9_])' "${FILES[@]}" || true; }
+            BEFORE=$(scan | tee /dev/stderr || true)
+            if [[ -n "${BEFORE}" ]]; then
+              perl -0777 -i -pe 's{(^|[^A-Za-z0-9_])x23([^A-Za-z0-9_]|$)}{$1x12$2}g; s{(^|[^A-Za-z0-9_])w23([^A-Za-z0-9_]|$)}{$1w12$2}g' "${FILES[@]}"
+            fi
+            AFTER=$(scan | tee /dev/stderr || true)
+            if grep -qE '(^|[^A-Za-z0-9_])[wx]23($|[^A-Za-z0-9_])' <<<"$AFTER"; then
+              echo "::error::ARM64EC x/w23 still present after patch"; exit 1
+            fi
           fi
 
       - name: Build (ARM64EC + AArch64)
