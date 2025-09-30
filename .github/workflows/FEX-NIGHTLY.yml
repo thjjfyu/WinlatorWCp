@@ -254,10 +254,10 @@ jobs:
           FILE="Source/Windows/ARM64EC/Module.S"
           if [[ -f "$FILE" ]]; then
             echo "Checking ARM64EC asm for disallowed registers..."
-            if grep -nE '\\b[wx](13|14|23|24|28)\\b' "$FILE"; then
+            if grep -nE '\b[wx](13|14|23|24|28)\b' "$FILE"; then
               cp "$FILE" "$FILE.bak"
-              perl -0777 -pe 's/\\bx23\\b/x12/g; s/\\bw23\\b/w12/g' -i "$FILE"
-              if grep -qE '\\b[wx](13|14|23|24|28)\\b' "$FILE"; then
+              perl -0777 -pe 's/\bx23\b/x12/g; s/\bw23\b/w12/g' -i "$FILE"
+              if grep -qE '\b[wx](13|14|23|24|28)\b' "$FILE"; then
                 echo "::error::ARM64EC banned registers remain after patch"; exit 1
               else
                 echo "Patched $FILE for ARM64EC"
@@ -366,7 +366,7 @@ jobs:
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           printf '🌙 Automated FEXCore nightly builds (rolling)\n\n' > "$NOTES"
-          echo "Current: ${STABLE}-${DATE}-[${SHORTSHA}](https://github.com/FEX-Emu/FEX/commit/${SHORTSHA})" >> "$NOTES"
+          echo "Current: ${STABLE}-${DATE}(YYMMDD)-[${SHORTSHA}](https://github.com/FEX-Emu/FEX/commit/${SHORTSHA})" >> "$NOTES"
           cat "$NOTES"
 
       - name: Create/Update GitHub Release (Nightly) + upload WCP
