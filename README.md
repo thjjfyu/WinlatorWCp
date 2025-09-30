@@ -43,7 +43,7 @@
 
 ### 🌀 FEXCore & Box64
 > [!IMPORTANT]
-> If you downloaded FEX before, please re-download it.
+> If you downloaded FEX/Box64-Bionic before, please re-download it.
 
 | Type | 📦 | 🏷️ | 📜 |
 |:-:|:-:|:-:|:-:|
