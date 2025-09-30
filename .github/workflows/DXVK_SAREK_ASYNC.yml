@@ -260,7 +260,18 @@ jobs:
             mkdir -p "$PKGDIR"
             ./package-release.sh "$tag" "$PKGDIR" --no-package
 
-            PKG_ROOT="${GITHUB_WORKSPACE}/pkg/dxvk-async-${tag}"
+            PKG_ROOT=""
+            if [[ -d "${GITHUB_WORKSPACE}/pkg/dxvk-${tag}" ]]; then
+              PKG_ROOT="${GITHUB_WORKSPACE}/pkg/dxvk-${tag}"
+            elif [[ -d "${GITHUB_WORKSPACE}/pkg/dxvk-async-${tag}" ]]; then
+              PKG_ROOT="${GITHUB_WORKSPACE}/pkg/dxvk-async-${tag}"
+            else
+              echo "::error::Package root not found for ${tag}. Contents of pkg/:"
+              ls -la "${GITHUB_WORKSPACE}/pkg" || true
+              exit 1
+            fi
+            echo "PKG_ROOT resolved to: ${PKG_ROOT}"
+
             PREFIX_X64="${PKG_ROOT}/x64"
             PREFIX_X86="${PKG_ROOT}/x32"
             [[ -d "${PREFIX_X64}/bin" ]] && PREFIX_X64="${PREFIX_X64}/bin"
@@ -270,8 +281,10 @@ jobs:
             rm -rf "$WCP_DIR"
             mkdir -p "${WCP_DIR}/system32" "${WCP_DIR}/syswow64"
 
+            shopt -s nullglob
             cp -v "${PREFIX_X64}/"*.dll  "${WCP_DIR}/system32/" || true
             cp -v "${PREFIX_X86}/"*.dll  "${WCP_DIR}/syswow64/" || true
+            shopt -u nullglob
 
             if command -v llvm-strip >/dev/null 2>&1; then
               find "${WCP_DIR}" -type f -name '*.dll' -print0 | xargs -0 -I{} llvm-strip -s "{}" || true
