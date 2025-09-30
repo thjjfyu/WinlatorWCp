@@ -47,6 +47,7 @@ jobs:
             "gplasync-arm64ec":       "DXVK-GPLASYNC-ARM64EC",
             "vkd3d":                  "VKD3D-PROTON",
             "vkd3d-arm64ec":          "VKD3D-PROTON-ARM64EC"
+            "box64":                   "BOX64-BIONIC-NIGHTLY"
           }
           EOF
 
@@ -114,7 +115,7 @@ jobs:
               if [ "$tag" = "FEXCore" ]; then
                 perl -e 'exit((shift)=~/^\d{2,6}(\.\d+)?$/ ? 0 : 1)' "$ver" || suspicious=1
               else
-                perl -e 'exit((shift)=~/^(?:\d+\.\d+(?:\.\w+)*(?:[-+][0-9A-Za-z.]+)?|\d{4}[-.]\d{2}[-.]\d{2}|\d{8})$/ ? 0 : 1)' "$ver" || suspicious=1
+                perl -e 'exit((shift)=~/^(?:\d+\.\d+\.\d+(?:[-+][0-9A-Za-z().-]+)?|\d+\.\d+(?:\.\w+)*(?:[-+][0-9A-Za-z().-]+)?|\d{4}[-.]\d{2}[-.]\d{2}|\d{8})$/ ? 0 : 1)' "$ver" || suspicious=1
               fi
 
               if [ "$suspicious" -eq 1 ]; then
@@ -128,8 +129,30 @@ jobs:
               fi
             fi
 
-            jq --arg k "$key" --arg v "$ver" '.[$k]=$v' /tmp/new.json > /tmp/new.json.tmp && mv /tmp/new.json.tmp /tmp/new.json
-            echo "${key} = ${ver}"
+            if [ "$key" = "box64" ]; then
+              base="$(printf '%s' "$ver" | perl -ne 'print "$1.$2.$3" if /^(\d+)\.(\d+)\.(\d+)/')"
+              if [ -n "$base" ]; then
+                maj="${base%%.*}"; rest="${base#*.}"; min="${rest%%.*}"; pat="${rest#*.}"
+                if [ "$pat" -gt 0 ] 2>/dev/null; then
+                  prev_patch=$((pat-1))
+                  vout="${maj}.${min}.${prev_patch} · ${maj}.${min}.${pat}"
+                else
+
+                  oldpair="$(jq -r --arg k "$key" '.[$k] // empty' /tmp/old.json)"
+                  vout="${oldpair:-${maj}.${min}.0 · ${maj}.${min}.0}"
+                fi
+              else
+
+                oldpair="$(jq -r --arg k "$key" '.[$k] // empty' /tmp/old.json)"
+                vout="${oldpair:-$ver}"
+              fi
+            else
+              vout="$ver"
+            fi
+
+            jq --arg k "$key" --arg v "$vout" '.[$k]=$v' /tmp/new.json > /tmp/new.json.tmp && mv /tmp/new.json.tmp /tmp/new.json
+            echo "${key} = ${vout}"
+            
           done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' /tmp/map.json)
 
           echo "new=$(cat /tmp/new.json | jq -c .)" >> $GITHUB_OUTPUT
