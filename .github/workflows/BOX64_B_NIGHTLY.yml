@@ -111,7 +111,7 @@ jobs:
 
       - name: Decide date code
         id: datecode
-        run: echo "code=$(TZ=Asia/Seoul date +%y%m%d)" >> "$GITHUB_OUTPUT"
+        run: echo "code=$(date +%y%m%d)" >> "$GITHUB_OUTPUT"
 
   build-android-bionic:
     name: Build & release ${{ needs.resolve-latest.outputs.short }}
