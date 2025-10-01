@@ -1,5 +1,5 @@
 name: Box64-Bionic Nightly
-#Fix -Wformat on Android/Clang: replace sprintf with snprintf and cast Elf64*/__u64 fields to match PRIx64/PRIu64 in elfload_dump.c/env.c.
+#Revert Fix -Wformat on Android/Clang
 
 on:
   workflow_dispatch:
@@ -223,90 +223,6 @@ jobs:
           echo "NDK=$NDK_DIR" >> $GITHUB_ENV
           echo "BOX64_COMPILER=$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${API_LEVEL}-clang" >> $GITHUB_ENV
           echo "BOX64_PLATFORM_MACRO=-DANDROID=1 -DARM_DYNAREC=1 -DBAD_SIGNAL=1" >> $GITHUB_ENV
-
-      - name: Fix 64-bit printf formats in elfload_dump.c (+env.c), incl. s->d_tag for PRIX64
-        working-directory: src
-        run: |
-          set -Eeuo pipefail
-      
-          FILE_ELF="$(git ls-files | grep -E '/elfs/elfload_dump\.c$' | head -n1 || true)"
-          FILE_ENV="$(git ls-files | grep -E '/tools/env\.c$'        | head -n1 || true)"
-      
-          if [[ -z "$FILE_ELF" || ! -f "$FILE_ELF" ]]; then
-            echo "::error::elfload_dump.c not found"; git ls-files | sed -n '1,200p'; exit 1
-          fi
-          [[ -n "$FILE_ENV" ]] || echo "::notice::tools/env.c not found; skipping that part"
-      
-          echo "ELF file: $FILE_ELF"
-          [[ -n "$FILE_ENV" ]] && echo "ENV file: $FILE_ENV"
-      
-          # 0) PRI*
-          for f in "$FILE_ELF" ${FILE_ENV:-}; do
-            [[ -n "$f" ]] || continue
-            if ! grep -qE '#include[[:space:]]*<inttypes\.h>' "$f"; then
-              awk 'NR==1{print "#include <inttypes.h>"}{print}' "$f" > "$f.new" && mv "$f.new" "$f"
-            fi
-          done
-      
-          # 1) elfload_dump.c: sprintf → snprintf(…, sizeof(buff), …)
-          sed -i -E 's/\bsprintf\([[:space:]]*buff,[[:space:]]*/snprintf(buff, sizeof(buff), /g' "$FILE_ELF"
-      
-          # 2)
-          sed -i -E 's/\(Add\)\?s->d_un\.d_ptr:s->d_un\.d_val/(uint64_t)((Add)?s->d_un.d_ptr:s->d_un.d_val)/g' "$FILE_ELF"
-      
-          # 3)
-          sed -i 's/\be->p_offset\b/(uint64_t)e->p_offset/g' "$FILE_ELF"
-          sed -i 's/\be->p_filesz\b/(uint64_t)e->p_filesz/g' "$FILE_ELF"
-          sed -i 's/\be->p_memsz\b/(uint64_t)e->p_memsz/g'   "$FILE_ELF"
-          sed -i 's/\be->p_align\b/(uint64_t)e->p_align/g'   "$FILE_ELF"
-      
-          # 4)
-          sed -i -E 's/([^[:alnum:]_])s->sh_offset([^[:alnum:]_])/\1(unsigned long)s->sh_offset\2/g'      "$FILE_ELF"
-          sed -i -E 's/([^[:alnum:]_])s->sh_size([^[:alnum:]_])/\1(unsigned long)s->sh_size\2/g'          "$FILE_ELF"
-          sed -i -E 's/([^[:alnum:]_])s->sh_flags([^[:alnum:]_])/\1(unsigned long)s->sh_flags\2/g'        "$FILE_ELF"
-          sed -i -E 's/([^[:alnum:]_])s->sh_addralign([^[:alnum:]_])/\1(unsigned long)s->sh_addralign\2/g' "$FILE_ELF"
-      
-          # 5)
-          sed -i -E 's/([^[:alnum:]_])sym->st_size([^[:alnum:]_])/\1(unsigned long)sym->st_size\2/g' "$FILE_ELF"
-      
-          # 6)
-          sed -i -E 's/(unknown type"[[:space:]]*,[[:space:]]*)s->d_tag/\1(uint64_t)s->d_tag/' "$FILE_ELF"
-
-          sed -i -E 's/(PRIX64[^,]*,[[:space:]]*)s->d_tag/\1(uint64_t)s->d_tag/g' "$FILE_ELF"
-
-          awk -v OFS="" '
-            /PRIX64/ && /d_tag/ {
-              if ($0 !~ /\(uint64_t\)[[:space:]]*s->d_tag/) gsub(/s->d_tag/,"(uint64_t)s->d_tag");
-            }
-            { print }
-          ' "$FILE_ELF" > "$FILE_ELF.new" && mv "$FILE_ELF.new" "$FILE_ELF"
-      
-          # 7) env.c: %llx → %" PRIx64
-          if [[ -n "$FILE_ENV" ]]; then
-            sed -i 's|"%s-%llx-%u"|"%s-%" PRIx64 "-%u"|g' "$FILE_ENV"
-            sed -i 's/, *dynarec_settings,/, (uint64_t)dynarec_settings,/g' "$FILE_ENV"
-          fi
-      
-          # 8)
-          if grep -nE '\bsprintf\([[:space:]]*buff,' "$FILE_ELF"; then
-            echo "::error::elfload_dump.c still uses sprintf(buff, ...)"; exit 1
-          fi
-
-          if awk '
-              /\?s->d_un\.d_ptr:s->d_un\.d_val/ &&
-              $0 !~ /\(uint64_t\)[[:space:]]*\(\(Add\)\?s->d_un\.d_ptr:s->d_un\.d_val\)/
-            { print "uncasted d_un ternary at:", NR ":" $0; bad=1 }
-            END{ exit bad }
-          ' "$FILE_ELF"
-          then
-            echo "::error::un-cast dynamic value (d_un) present"; exit 1
-          fi
-
-          if grep -nE 'PRIX64[^,]*,[[:space:]]*s->d_tag' "$FILE_ELF"; then
-            echo "::error::s->d_tag still uncast with PRIX64"; exit 1
-          fi
-      
-          echo "Hotfixes applied cleanly on: $FILE_ELF"
 
       - name: Configure (CMake)
         run: |
