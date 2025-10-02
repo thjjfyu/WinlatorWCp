@@ -115,7 +115,7 @@ jobs:
               if [ "$tag" = "FEXCore" ]; then
                 perl -e 'exit((shift)=~/^\d{2,6}(\.\d+)?$/ ? 0 : 1)' "$ver" || suspicious=1
               else
-                perl -e 'exit((shift)=~/^(?:\d+\.\d+\.\d+(?:[-+][0-9A-Za-z().-]+)?|\d+\.\d+(?:\.\w+)*(?:[-+][0-9A-Za-z().-]+)?|\d{4}[-.]\d{2}[-.]\d{2}|\d{8})$/ ? 0 : 1)' "$ver" || suspicious=1
+                perl -e 'exit((shift)=~/^(?:\d+\.\d+\.\d+(?:[-+][0-9A-Za-z().-]+)*|\d+\.\d+(?:\.\w+)*(?:[-+][0-9A-Za-z().-]+)*|\d{4}[-.]\d{2}[-.]\d{2}|\d{8})$/ ? 0 : 1)' "$ver" || suspicious=1
               fi
 
               if [ "$suspicious" -eq 1 ]; then
@@ -124,7 +124,12 @@ jobs:
                   echo "::warning::accepting first-time value '${ver}' for ${tag} (validator mismatch)"
                 else
                   echo "::warning::parsed suspicious version '${ver}' from ${tag}; keeping previous value for ${key}"
-                  ver="$prev"
+                  if [ "$key" = "box64" ]; then
+                    prev_raw="$(printf '%s' "$prev" | perl -ne 'if (/^\s*(\d+\.\d+\.\d+)\s+·\s+(\d+\.\d+\.\d+)\s*$/){print $2} elsif (/^(\d+\.\d+\.\d+)/){print $1}')"
+                    ver="${prev_raw:-$prev}"
+                  else
+                    ver="$prev"
+                  fi
                 fi
               fi
             fi
@@ -137,12 +142,10 @@ jobs:
                   prev_patch=$((pat-1))
                   vout="${maj}.${min}.${prev_patch} · ${maj}.${min}.${pat}"
                 else
-
                   oldpair="$(jq -r --arg k "$key" '.[$k] // empty' /tmp/old.json)"
                   vout="${oldpair:-${maj}.${min}.0 · ${maj}.${min}.0}"
                 fi
               else
-
                 oldpair="$(jq -r --arg k "$key" '.[$k] // empty' /tmp/old.json)"
                 vout="${oldpair:-$ver}"
               fi
@@ -152,7 +155,6 @@ jobs:
 
             jq --arg k "$key" --arg v "$vout" '.[$k]=$v' /tmp/new.json > /tmp/new.json.tmp && mv /tmp/new.json.tmp /tmp/new.json
             echo "${key} = ${vout}"
-            
           done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' /tmp/map.json)
 
           echo "new=$(cat /tmp/new.json | jq -c .)" >> $GITHUB_OUTPUT
