@@ -40,13 +40,8 @@ jobs:
             "fex":                    "FEXCore",
             "dxvk":                   "DXVK",
             "sarek":                  "DXVK-SAREK",
-            "sarek-async":            "DXVK-SAREK-ASYNC",
-            "sarek-async-arm64ec":    "DXVK-SAREK-ASYNC-ARM64EC",
             "gplasync":               "DXVK-GPLASYNC",
-            "arm64ec":                "DXVK-ARM64EC",
-            "gplasync-arm64ec":       "DXVK-GPLASYNC-ARM64EC",
             "vkd3d":                  "VKD3D-PROTON",
-            "vkd3d-arm64ec":          "VKD3D-PROTON-ARM64EC",
             "box64":                  "BOX64-BIONIC-NIGHTLY"
           }
           EOF
