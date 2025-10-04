@@ -104,8 +104,7 @@
 
 | 📦 | 🏷️ | 📜 |
 |-|:-:|:-:|
-| [**VKD3D-proton**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON) | <!--vkd3d--> 2.14.1|<a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
-| [**VKD3D-proton-arm64ec**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON-ARM64EC) | <!--vkd3d-arm64ec--> 2.14.1| |
+| [**VKD3D-proton**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON) · [**ARM64EC**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/VKD3D-PROTON-ARM64EC) | <!--vkd3d--> 2.14.1|<a href="https://github.com/HansKristian-Work/vkd3d-proton">🔗</a> |
 
 <details>
   <summary>💡Useful info</summary>
