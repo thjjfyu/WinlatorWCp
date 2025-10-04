@@ -1,7 +1,6 @@
 name: FEXCore-Nightly
-# mstorsjo LLVM_MINGW 20250910
+# bylaws LLVM_MINGW 20250920
 # nightly: builds latest main commit daily; artifact fex-<STABLE>-<YYMMDD>-<shortsha7>.wcp
-# ARM64EC disallowed registers hotfix
 
 on:
   workflow_dispatch:
@@ -10,6 +9,18 @@ on:
         type: boolean
         default: false
         description: "true= self-hosted, false= github runner"
+      sanitize_llvm_mingw_flags:
+        type: boolean
+        default: true
+        description: "Sanitize llvm-mingw flags"
+      revert_p_environ:
+        type: boolean
+        default: true
+        description: "Revert __p__environ import back to local definition"
+      arm64ec_module_hotfix:
+        type: boolean
+        default: true
+        description: "ARM64EC Module.S x23→x12 hotfix"
   schedule:
     - cron: "0 18 * * *"
 
@@ -172,13 +183,16 @@ jobs:
       TOOLCHAIN_DIR: /opt/llvm-mingw
       RELEASE_TAG: FEXCore-Nightly
       GH_TOKEN: ${{ github.token }}
-      LLVM_MINGW_TAG: ${{ vars.LLVM_MINGW_TAG || '20250910' }}
+      LLVM_MINGW_TAG: ${{ vars.LLVM_MINGW_TAG || '20250920' }}
       VERSION: ${{ needs.guard.outputs.version }}
       VERSION_NAME: ${{ needs.guard.outputs.version_name }}
       VERSION_CODE: ${{ needs.guard.outputs.version_code }}
       STABLE: ${{ needs.guard.outputs.stable }}
       SHORTSHA: ${{ needs.guard.outputs.shortsha }}
       DATE: ${{ needs.guard.outputs.date }}
+      DO_SANITIZE: ${{ (github.event_name != 'workflow_dispatch') || inputs.sanitize_llvm_mingw_flags }}
+      DO_PENVIRON: ${{ (github.event_name != 'workflow_dispatch') || inputs.revert_p_environ }}
+      DO_EC_HOTFIX: ${{ (github.event_name != 'workflow_dispatch') || inputs.arm64ec_module_hotfix }}
     steps:
       - name: Install host tooling (lean set; no cache)
         run: |
@@ -188,40 +202,17 @@ jobs:
             git ninja-build cmake pkg-config \
             build-essential python3 zstd gh perl dos2unix
 
-      - name: Download pinned llvm-mingw (UCRT)
-        id: llvm
+      - name: Download pinned llvm-mingw
         env:
           TAG: ${{ env.LLVM_MINGW_TAG }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          API="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/tags/${TAG}"
-          json=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$API" || true)
-
-          pick_url() {
-            local json="$1"; local url=""
-            for dist in 24.04 22.04 20.04; do
-              url=$(jq -r --arg dist "$dist" '
-                .assets[]? | select(.name | endswith("ucrt-ubuntu-" + $dist + "-x86_64.tar.xz")) | .browser_download_url
-              ' <<<"$json" | head -n1 || true)
-              [[ -n "$url" && "$url" != "null" ]] && { echo "$url"; return 0; }
-            done
-            return 1
-          }
-
-          url="$(pick_url "$json" || true)"
-          if [[ -z "${url:-}" ]]; then
-            echo "::warning::Pinned llvm-mingw ${TAG} asset not found; falling back to latest"
-            json=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" \
-                   https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest || true)
-            url="$(pick_url "$json" || true)"
-          fi
-          [[ -n "${url:-}" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
-
-          TOOLCHAIN_DIR=/opt/llvm-mingw
-          sudo mkdir -p "$TOOLCHAIN_DIR"
-          curl -fL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
-          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
-          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+          gh release download "$TAG" -R bylaws/llvm-mingw \
+            -p '*ucrt-ubuntu-22.04-x86_64.tar.xz' -O /tmp/llvm-mingw.tar.xz --clobber
+          sudo mkdir -p /opt/llvm-mingw
+          sudo tar -C /opt/llvm-mingw --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
+          echo "/opt/llvm-mingw/bin" >> "$GITHUB_PATH"
 
       - name: Pre-clean workspace (self-hosted)
         run: |
@@ -247,24 +238,73 @@ jobs:
           git -C src config user.name "FEXCore Nightly Builder"
           git -C src config user.email "builder@users.noreply.github.com"
 
-      - name: ARM64EC disallowed registers hotfix (CI-local)
+      - name: Sanitize llvm-mingw flags (keep -static, drop GCC-only & -lucrtbase)
+        if: ${{ env.DO_SANITIZE == 'true' }}
         run: |
           set -Eeuo pipefail
-          cd "${GITHUB_WORKSPACE}/src"
-          mapfile -t FILES < <(git ls-files 'Source/Windows/ARM64EC/**/*.S' 'Source/Windows/ARM64EC/*.S' 2>/dev/null || true)
-          if (( ${#FILES[@]} == 0 )); then
-            echo "::notice::No ARM64EC asm files found; skipping hotfix"
-          else
-            scan() { grep -nH -E '(^|[^A-Za-z0-9_])[wx](13|14|23|24|28)($|[^A-Za-z0-9_])' "${FILES[@]}" || true; }
-            BEFORE=$(scan | tee /dev/stderr || true)
-            if [[ -n "${BEFORE}" ]]; then
-              perl -0777 -i -pe 's{(^|[^A-Za-z0-9_])x23([^A-Za-z0-9_]|$)}{$1x12$2}g; s{(^|[^A-Za-z0-9_])w23([^A-Za-z0-9_]|$)}{$1w12$2}g' "${FILES[@]}"
-            fi
-            AFTER=$(scan | tee /dev/stderr || true)
-            if grep -qE '(^|[^A-Za-z0-9_])[wx]23($|[^A-Za-z0-9_])' <<<"$AFTER"; then
-              echo "::error::ARM64EC x/w23 still present after patch"; exit 1
-            fi
+          T="${GITHUB_WORKSPACE}/src/Data/CMake/toolchain_mingw.cmake"
+          [[ -f "$T" ]] || { echo "::error::toolchain file not found: $T"; exit 1; }
+      
+          grep -Fq 'CMAKE_SHARED_LINKER_FLAGS_INIT' "$T" || { echo "::error::Missing SHARED INIT"; exit 1; }
+          grep -Fq 'CMAKE_EXE_LINKER_FLAGS_INIT' "$T" || { echo "::error::Missing EXE INIT"; exit 1; }
+      
+          perl -0777 -i -pe 's/\Q-static-libgcc \E//g; s/\Q-static-libstdc++ \E//g' "$T"
+          perl -0777 -i -pe 's/(^|\s)-lucrtbase(\s|$)/ /g' "$T"
+
+          if grep -Eq -- '-static-lib(gcc|stdc\+\+)([[:space:]]|$)' "$T"; then
+            echo "::error::GCC-only purge failed"; exit 1
           fi
+          
+          if grep -Eq -- '(^|[[:space:]])-lucrtbase([[:space:]]|$)' "$T"; then
+            echo "::error::-lucrtbase still present"; exit 1
+          fi
+      
+      - name: Revert __p__environ import back to local definition (if present)
+        if: ${{ env.DO_PENVIRON == 'true' }}
+        run: |
+          set -Eeuo pipefail
+          F="${GITHUB_WORKSPACE}/src/Source/Windows/Common/CRT/Misc.cpp"
+          [[ -f "$F" ]] || { echo "::error::File not found: $F"; exit 1; }
+
+          if grep -Fxq 'extern "C" __declspec(dllimport) char*** __cdecl __p__environ(void);' "$F"; then
+            perl -0777 -i -pe 's{^\Qextern "C" __declspec(dllimport) char*** __cdecl __p__environ(void);\E$}{char*** __p__environ() {\n  return &EnvArray;\n}}m' "$F"
+            grep -Fxq 'char*** __p__environ() {' "$F" || { echo "::error::Restore failed"; exit 1; }
+          else
+            echo "::notice::__p__environ already local; nothing to revert"
+          fi
+
+      - name: ARM64EC Module.S x23→x12 hotfix (strict, no-heredoc)
+        if: ${{ env.DO_EC_HOTFIX == 'true' }}
+        run: |
+          set -Eeuo pipefail
+          FILE="${GITHUB_WORKSPACE}/src/Source/Windows/ARM64EC/Module.S"
+          [[ -f "$FILE" ]] || { echo "::error::File not found: $FILE"; exit 1; }
+
+          L1='  ldursw x23, [x17, #-0x4] // Load either the entry thunk offset or the calling instruction.'
+          L2='  cmp w23, w16'
+          L3='  and x23, x23, #-0x4'
+          L4='  add x17, x17, x23 // Resolve entry thunk address.'
+      
+          for n in "$L1" "$L2" "$L3" "$L4"; do
+            grep -Fqx -- "$n" "$FILE" || { echo "::error::Upstream drift in $FILE (expected line missing): [$n]"; exit 1; }
+          done
+ 
+          perl -0777 -i -pe 's{^\Q  ldursw x23, [x17, #-0x4] // Load either the entry thunk offset or the calling instruction.\E$}{  ldursw x12, [x17, #-0x4] // Load either the entry thunk offset or the calling instruction. [CI hotfix: x23->x12]}m; s{^\Q  cmp w23, w16\E$}{  cmp w12, w16}m; s{^\Q  and x23, x23, #-0x4\E$}{  and x12, x12, #-0x4}m; s{^\Q  add x17, x17, x23 // Resolve entry thunk address.\E$}{  add x17, x17, x12 // Resolve entry thunk address.}m;' "$FILE"
+      
+
+          NEW1='  ldursw x12, [x17, #-0x4] // Load either the entry thunk offset or the calling instruction. [CI hotfix: x23->x12]'
+          NEW2='  cmp w12, w16'
+          NEW3='  and x12, x12, #-0x4'
+          NEW4='  add x17, x17, x12 // Resolve entry thunk address.'
+      
+          for n in "$NEW1" "$NEW2" "$NEW3" "$NEW4"; do
+            grep -Fqx -- "$n" "$FILE" || { echo "::error::Patched line missing: [$n]"; exit 1; }
+          done
+          for n in "$L1" "$L2" "$L3" "$L4"; do
+            ! grep -Fqx -- "$n" "$FILE" || { echo "::error::Old line still present after patch: [$n]"; exit 1; }
+          done
+      
+          echo "::notice::Applied strict Module.S hotfix at $FILE"
 
       - name: Build (ARM64EC + AArch64)
         run: |
@@ -289,10 +329,18 @@ jobs:
             -DMINGW_TRIPLE=arm64ec-w64-mingw32 \
             -DBUILD_TESTING=False -DBUILD_TESTS=False \
             -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
+            -DCMAKE_C_FLAGS="${CFLAGS:+$CFLAGS }-D_CRTIMP= -D_SECIMP=" \
+            -DCMAKE_CXX_FLAGS="${CXXFLAGS:+$CXXFLAGS }-D_CRTIMP= -D_SECIMP=" \
             -DCMAKE_INSTALL_PREFIX=/usr ..
           NINJA_STATUS="" ninja
           DESTDIR="$STAGE_ARM64EC" ninja install
           cd ..
+
+          # ---- revert ARM64EC hotfix: keep tree clean for AArch64 ----
+          git -C "${GITHUB_WORKSPACE}/src" restore --source=HEAD -- "Source/Windows/ARM64EC/Module.S" \
+            || git -C "${GITHUB_WORKSPACE}/src" checkout -- "Source/Windows/ARM64EC/Module.S"
+          echo "::notice::Reverted Module.S to HEAD for AArch64 build"
+          # ------------------------------------------------------------
 
           # Build: AArch64 (WOW64 emu module)
           rm -rf build-wow64 && mkdir build-wow64 && cd build-wow64
@@ -306,6 +354,8 @@ jobs:
             -DMINGW_TRIPLE=aarch64-w64-mingw32 \
             -DBUILD_TESTING=False -DBUILD_TESTS=False \
             -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
+            -DCMAKE_C_FLAGS="${CFLAGS:+$CFLAGS }-D_CRTIMP= -D_SECIMP=" \
+            -DCMAKE_CXX_FLAGS="${CXXFLAGS:+$CXXFLAGS }-D_CRTIMP= -D_SECIMP=" \
             -DCMAKE_INSTALL_PREFIX=/usr ..
           NINJA_STATUS="" ninja
           DESTDIR="$STAGE_AARCH64" ninja install
