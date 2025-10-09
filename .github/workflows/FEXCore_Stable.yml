@@ -256,7 +256,6 @@ jobs:
               -DENABLE_LTO=False \
               -DMINGW_TRIPLE=arm64ec-w64-mingw32 \
               -DBUILD_TESTING=False \
-              -DBUILD_TESTS=False \
               -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
               -DCMAKE_INSTALL_PREFIX=/usr ..
             NINJA_STATUS="" ninja
@@ -275,7 +274,6 @@ jobs:
               -DENABLE_LTO=False \
               -DMINGW_TRIPLE=aarch64-w64-mingw32 \
               -DBUILD_TESTING=False \
-              -DBUILD_TESTS=False \
               -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
               -DCMAKE_INSTALL_PREFIX=/usr ..
             NINJA_STATUS="" ninja
