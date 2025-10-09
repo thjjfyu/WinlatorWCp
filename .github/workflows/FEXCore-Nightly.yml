@@ -327,7 +327,7 @@ jobs:
             -DCMAKE_INSTALL_LIBDIR=/usr/lib/wine/aarch64-windows \
             -DENABLE_LTO=False \
             -DMINGW_TRIPLE=arm64ec-w64-mingw32 \
-            -DBUILD_TESTING=False -DBUILD_TESTS=False \
+            -DBUILD_TESTING=False \
             -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
             -DCMAKE_C_FLAGS="${CFLAGS:+$CFLAGS }-D_CRTIMP= -D_SECIMP=" \
             -DCMAKE_CXX_FLAGS="${CXXFLAGS:+$CXXFLAGS }-D_CRTIMP= -D_SECIMP=" \
@@ -352,7 +352,7 @@ jobs:
             -DCMAKE_INSTALL_LIBDIR=/usr/lib/wine/aarch64-windows \
             -DENABLE_LTO=False \
             -DMINGW_TRIPLE=aarch64-w64-mingw32 \
-            -DBUILD_TESTING=False -DBUILD_TESTS=False \
+            -DBUILD_TESTING=False \
             -DENABLE_JEMALLOC_GLIBC_ALLOC=False \
             -DCMAKE_C_FLAGS="${CFLAGS:+$CFLAGS }-D_CRTIMP= -D_SECIMP=" \
             -DCMAKE_CXX_FLAGS="${CXXFLAGS:+$CXXFLAGS }-D_CRTIMP= -D_SECIMP=" \
