@@ -24,8 +24,8 @@
 >
 > | 🧠 | 📝 |
 > |:-:|-|
-> | Glibc  | Official default. Wide compatibility, stable with solid performance. (Box64 Only) |
-> | Bionic | Android native. Faster, potential issues on low-spec devices. (FEX + Box64) |
+> | glibc  | Official default. Wide compatibility, stable with solid performance. (Box64 Only) |
+> | bionic | Android native. Faster, potential issues on low-spec devices. (FEX + Box64) |
 > - Although longjunyu2’s unofficial Glibc fork remains functional, it’s best to avoid using it.
 > - Discontinued or alpha builds are not covered.
 >
@@ -42,14 +42,14 @@
 ---
 
 ### 🌀 FEXCore & Box64
-> [!IMPORTANT]
+> [!NOTE]
 > Files here may change on a whim.
 
 | Type | 📦 | 🏷️ | 📜 |
 |:-:|:-:|:-:|:-:|
 | FEXCore | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEXCore) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/FEXCore-Nightly) | <!--fex--> 2510|<a href="https://github.com/FEX-Emu/FEX">🔗</a> |
-| Box64 bionic | Stable · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-BIONIC-NIGHTLY)| <!--box64--> 0.3.6 · 0.3.7| <a href="https://github.com/ptitSeb/box64">🔗</a> |
-| Box64 glibc | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-NIGHTLY) | Paused ||
+| Box64-bionic | Stable · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-BIONIC-NIGHTLY)| <!--box64--> 0.3.6 · 0.3.7| <a href="https://github.com/ptitSeb/box64">🔗</a> |
+| Box64-glibc | [**Stable**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-STABLE) · [**Nightly**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/BOX64-NIGHTLY) | Paused ||
 | WowBox64 |  |  | |
 
 <details>
@@ -58,8 +58,8 @@
   
 | Type | 📝 |
 |:-:|-|
-| **FEX**  | handles both 32-bit and 64-bit. Pairing it with ARM64EC-built graphics runtimes like DXVK/VKD3D can reduce x64 translation boundaries and further lower overhead. |
-| **Box64** | power user friendly. Extensive dynarec tuning on top of a fast JIT and native-library bridges. |
+| **FEXCore**  | Handles both 32-bit and 64-bit. Pairing it with ARM64EC-built graphics runtimes like DXVK/VKD3D can reduce x64 translation boundaries and further lower overhead. |
+| **Box64** | Power user friendly. Extensive dynarec tuning on top of a fast JIT and native-library bridges. |
 
 - With the ```2509``` update, Unity game performance has improved on ```FEX``` as well.
 - Unity games are generally more stable when run with ```Box64```.
@@ -72,14 +72,14 @@
 
 ### ⚡ DXVK (DX8-11)
 > [!NOTE]
-> ```v2.5``` is **not** recommended
+> ```v2.5``` is **NOT** recommended.
 
 | 📦 | 🏷️ | 📜 |
 |-|:-:|:-:|
 | [**DXVK**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK) · [**ARM64EC**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-ARM64EC) | <!--dxvk--> 2.7.1| <a href="https://github.com/doitsujin/dxvk">🔗</a> |
 | [**DXVK-GPLAsync**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-GPLASYNC) · [**ARM64EC**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-GPLASYNC-ARM64EC)| <!--gplasync--> 2.7.1-1| <a href="https://gitlab.com/Ph42oN/dxvk-gplasync">🔗</a> |
 | [**DXVK-Sarek**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-SAREK) · [**Async**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-SAREK-ASYNC) · [**ARM64EC**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-SAREK-ASYNC-ARM64EC) · [**Mali fix**](https://github.com/Arihany/WinlatorWCPHub/releases/tag/DXVK-SAREK-MALIFIX)| <!--sarek--> 1.11.0| <a href="https://github.com/pythonlover02/DXVK-Sarek">🔗</a> |
-| DXVK-gplall | | |
+| DXVK-GPLAsync-LowLatency | | |
 
 <details>
   <summary>💡Useful info</summary>
@@ -88,7 +88,7 @@
 | Type | 📝 |
 |:-:|-|
 | **Sarek**    | Backports for older Vulkan. Keeps DXVK usable on Vulkan 1.1/1.2 hardware, with practical tweaks for legacy GPUs. |
-| **GPLAsync** | DXVK + async shader compilation + GPL cache to cut visible stutter during compilation. |
+| **GPLAsync** | DXVK + Async shader compilation + GPL cache to cut visible stutter during compilation. |
 | **ARM64EC**  | Designed to run with ❗FEX❗ to minimize x64→ARM translation and reduce overhead. |
 
 - As a general pick, go with ```DXVK-Sarek``` or ```DXVK 2.4.1```
@@ -126,8 +126,7 @@
 
 | 📦 | 🏷️ | 📜 |
 |:-:|:-:|:-:|
-| Proton ||
-| Wine ||
+| ||
 
 ---
 
