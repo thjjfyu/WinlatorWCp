@@ -182,7 +182,7 @@ jobs:
             local FILE="Source/Windows/ARM64EC/Module.S"
 
             [[ -f "$FILE" ]] || { echo "::error::File not found: $FILE"; return 1; }
-            # CRLF 방지
+
             dos2unix -q "$FILE" || true
 
             local L1='  ldursw x23, [x17, #-0x4] // Load either the entry thunk offset or the calling instruction.'
