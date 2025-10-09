@@ -1,6 +1,5 @@
 name: FEXCore-Nightly
 # bylaws LLVM_MINGW 20250920
-# nightly: builds latest main commit daily; artifact fex-<STABLE>-<YYMMDD>-<shortsha7>.wcp
 
 on:
   workflow_dispatch:
@@ -140,7 +139,7 @@ jobs:
           HTTP=$(curl -s -o /tmp/rel.json -w '%{http_code}' "${auth[@]}" "${ver[@]}" \
                  "$API/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}" || true)
           if [ "$HTTP" = "200" ]; then
-            WANT="fex-${VERSION}.wcp"
+            WANT="FEXCore-${VERSION}.wcp"
             HAVE_ASSET=$(jq -r --arg fn "$WANT" '.assets[]?.name | select(.==$fn)' /tmp/rel.json | head -n1)
             LAST_COMMIT=$(jq -r '.body' /tmp/rel.json \
               | sed -n -E '/^[[:space:]]*Current:/ s/.*\[([0-9a-f]{7,40})\].*/\1/p' | head -n1)
@@ -403,7 +402,7 @@ jobs:
           tar --zstd -C "$WCP_DIR" \
             --format=gnu --owner=0 --group=0 --numeric-owner \
             --sort=name \
-            -cf "$OUT/fex-${VER}.wcp" profile.json system32
+            -cf "$OUT/FEXCore-${VER}.wcp" profile.json system32
 
       - name: Build release notes
         env:
