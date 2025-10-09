@@ -1,5 +1,5 @@
 name: FEXCore
-# mstorsjo LLVM_MINGW 20250910
+# bylaws LLVM_MINGW 20250920
 # 2508+
 # ARM64EC disallowed registers hotfix
 
@@ -10,6 +10,10 @@ on:
         type: boolean
         default: false
         description: "true= self-hosted, false= github runner"
+      arm64ec_module_hotfix:
+        type: boolean
+        default: true
+        description: "ARM64EC Module.S x23→x12 hotfix"
   schedule:
     - cron: "0 18 * * *"
 
@@ -54,7 +58,7 @@ jobs:
                   "$API/repos/${REPO}/releases/tags/${RELEASE_TAG}" || true)"
           if [ "$HTTP" = "200" ]; then
             jq -r '.assets[].name' /tmp/rel.json \
-              | sed -n -E 's/^fex-([0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
+              | sed -n -E 's/^FEXCore-([0-9]+(\.[0-9]+)?)\.wcp$/\1/p' \
               | LC_ALL=C sort -V > /tmp/exist.txt
           else
             : > /tmp/exist.txt
@@ -115,7 +119,8 @@ jobs:
       TOOLCHAIN_DIR: /opt/llvm-mingw
       RELEASE_TAG: FEXCore
       GH_TOKEN: ${{ github.token }}
-      LLVM_MINGW_TAG: ${{ vars.LLVM_MINGW_TAG || '20250910' }}
+      LLVM_MINGW_TAG: ${{ vars.LLVM_MINGW_TAG || '20250920' }}
+      DO_EC_HOTFIX: ${{ (github.event_name != 'workflow_dispatch') || inputs.arm64ec_module_hotfix }}
     steps:
       - name: Install host tooling (lean set; no cache)
         run: |
@@ -125,40 +130,17 @@ jobs:
             git ninja-build cmake pkg-config util-linux \
             build-essential python3 zstd gh perl dos2unix
 
-      - name: Download pinned llvm-mingw (UCRT)
-        id: llvm
+      - name: Download pinned llvm-mingw
         env:
           TAG: ${{ env.LLVM_MINGW_TAG }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          API="https://api.github.com/repos/mstorsjo/llvm-mingw/releases/tags/${TAG}"
-          json=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$API" || true)
-
-          pick_url() {
-            local json="$1"; local url=""
-            for dist in 24.04 22.04 20.04; do
-              url=$(jq -r --arg dist "$dist" '
-                .assets[]? | select(.name | endswith("ucrt-ubuntu-" + $dist + "-x86_64.tar.xz")) | .browser_download_url
-              ' <<<"$json" | head -n1 || true)
-              [[ -n "$url" && "$url" != "null" ]] && { echo "$url"; return 0; }
-            done
-            return 1
-          }
-
-          url="$(pick_url "$json" || true)"
-          if [[ -z "${url:-}" ]]; then
-            echo "::warning::Pinned llvm-mingw ${TAG} asset not found; falling back to latest"
-            json=$(curl -fsSL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" \
-                   https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest || true)
-            url="$(pick_url "$json" || true)"
-          fi
-          [[ -n "${url:-}" ]] || { echo "::error::llvm-mingw asset not found"; exit 1; }
-
-          TOOLCHAIN_DIR=/opt/llvm-mingw
-          sudo mkdir -p "$TOOLCHAIN_DIR"
-          curl -fL --retry 3 --retry-delay 2 -H "Authorization: Bearer $GH_TOKEN" "$url" -o /tmp/llvm-mingw.tar.xz
-          sudo tar -C "$TOOLCHAIN_DIR" --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
-          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+          gh release download "$TAG" -R bylaws/llvm-mingw \
+            -p '*ucrt-ubuntu-22.04-x86_64.tar.xz' -O /tmp/llvm-mingw.tar.xz --clobber
+          sudo mkdir -p /opt/llvm-mingw
+          sudo tar -C /opt/llvm-mingw --strip-components=1 -xJf /tmp/llvm-mingw.tar.xz
+          echo "/opt/llvm-mingw/bin" >> "$GITHUB_PATH"
 
       - name: Pre-clean workspace (self-hosted)
         run: |
@@ -180,28 +162,10 @@ jobs:
           git -C src config user.name "FEXCore Builder"
           git -C src config user.email "builder@users.noreply.github.com"
 
-      - name: ARM64EC disallowed registers hotfix (CI-local)
-        run: |
-          set -Eeuo pipefail
-          cd "${GITHUB_WORKSPACE}/src"
-          mapfile -t FILES < <(git ls-files 'Source/Windows/ARM64EC/**/*.S' 'Source/Windows/ARM64EC/*.S' 2>/dev/null || true)
-          if (( ${#FILES[@]} == 0 )); then
-            echo "::notice::No ARM64EC asm files found; skipping hotfix"
-          else
-            scan() { grep -nH -E '(^|[^A-Za-z0-9_])[wx](13|14|23|24|28)($|[^A-Za-z0-9_])' "${FILES[@]}" || true; }
-            BEFORE=$(scan | tee /dev/stderr || true)
-            if [[ -n "${BEFORE}" ]]; then
-              perl -0777 -i -pe 's{(^|[^A-Za-z0-9_])x23([^A-Za-z0-9_]|$)}{$1x12$2}g; s{(^|[^A-Za-z0-9_])w23([^A-Za-z0-9_]|$)}{$1w12$2}g' "${FILES[@]}"
-            fi
-            AFTER=$(scan | tee /dev/stderr || true)
-            if grep -qE '(^|[^A-Za-z0-9_])[wx]23($|[^A-Za-z0-9_])' <<<"$AFTER"; then
-              echo "::error::ARM64EC x/w23 still present after patch"; exit 1
-            fi
-          fi
-
       - name: Build (ARM64EC + AArch64)
         env:
           TO_BUILD: ${{ needs.guard.outputs.to_build }}
+          DO_EC_HOTFIX: ${{ (github.event_name != 'workflow_dispatch') || inputs.arm64ec_module_hotfix }}
         run: |
           set -Eeuo pipefail
           OUT="${GITHUB_WORKSPACE}/out"; mkdir -p "$OUT"
@@ -214,6 +178,53 @@ jobs:
             exit 0
           fi
 
+          apply_ec_hotfix_strict() {
+            local FILE="Source/Windows/ARM64EC/Module.S"
+
+            [[ -f "$FILE" ]] || { echo "::error::File not found: $FILE"; return 1; }
+            # CRLF 방지
+            dos2unix -q "$FILE" || true
+
+            local L1='  ldursw x23, [x17, #-0x4] // Load either the entry thunk offset or the calling instruction.'
+            local L2='  cmp w23, w16'
+            local L3='  and x23, x23, #-0x4'
+            local L4='  add x17, x17, x23 // Resolve entry thunk address.'
+
+            for n in "$L1" "$L2" "$L3" "$L4"; do
+              grep -Fqx -- "$n" "$FILE" || {
+                echo "::error::Upstream drift in $FILE (expected line missing): [$n]"
+                return 1
+              }
+            done
+
+            perl -0777 -i -pe \
+              's{^\Q  ldursw x23, [x17, #-0x4] // Load either the entry thunk offset or the calling instruction.\E$}{  ldursw x12, [x17, #-0x4] // Load either the entry thunk offset or the calling instruction. [CI hotfix: x23->x12]}m;
+               s{^\Q  cmp w23, w16\E$}{  cmp w12, w16}m;
+               s{^\Q  and x23, x23, #-0x4\E$}{  and x12, x12, #-0x4}m;
+               s{^\Q  add x17, x17, x23 // Resolve entry thunk address.\E$}{  add x17, x17, x12 // Resolve entry thunk address.}m;' \
+              "$FILE"
+
+            local NEW1='  ldursw x12, [x17, #-0x4] // Load either the entry thunk offset or the calling instruction. [CI hotfix: x23->x12]'
+            local NEW2='  cmp w12, w16'
+            local NEW3='  and x12, x12, #-0x4'
+            local NEW4='  add x17, x17, x12 // Resolve entry thunk address.'
+
+            for n in "$NEW1" "$NEW2" "$NEW3" "$NEW4"; do
+              grep -Fqx -- "$n" "$FILE" || {
+                echo "::error::Patched line missing: [$n]"
+                return 1
+              }
+            done
+            for n in "$L1" "$L2" "$L3" "$L4"; do
+              ! grep -Fqx -- "$n" "$FILE" || {
+                echo "::error::Old line still present after patch: [$n]"
+                return 1
+              }
+            done
+
+            echo "::notice::Applied strict Module.S hotfix at $FILE"
+          }
+
           while read -r tag base; do
             echo "::group::Build ${tag} (FEXCore)"
 
@@ -221,6 +232,12 @@ jobs:
             git clean -fdx
             git checkout -f "$tag"
             git submodule update --init --recursive --checkout
+
+            if [[ "${DO_EC_HOTFIX}" == "true" ]]; then
+              apply_ec_hotfix_strict || { echo "::error::EC hotfix failed on ${tag}"; exit 1; }
+            else
+              echo "::warning::EC hotfix disabled by input. You will see x23/w23 warnings."
+            fi
 
             # Stage dirs for split installs
             STAGE_ARM64EC="${GITHUB_WORKSPACE}/stage-arm64ec-${base}"
@@ -246,6 +263,9 @@ jobs:
             DESTDIR="$STAGE_ARM64EC" ninja install
             cd ..
 
+            git restore --worktree --staged -- "Source/Windows/ARM64EC/Module.S" || git checkout -- "Source/Windows/ARM64EC/Module.S"
+            echo "::notice::Reverted Module.S to HEAD for AArch64 build"
+
             # Build: AArch64 (WOW64 emu module)
             rm -rf build-wow64 && mkdir build-wow64 && cd build-wow64
             cmake -GNinja \
@@ -262,11 +282,9 @@ jobs:
             DESTDIR="$STAGE_AARCH64" ninja install
             cd ..
 
-            # Package WCP (system32 only)
             WCP_DIR="${GITHUB_WORKSPACE}/FEXCore_WCP"
             rm -rf "$WCP_DIR" && mkdir -p "$WCP_DIR/system32"
 
-            # Merge both installs into system32; later copies may overwrite duplicates
             for ST in "$STAGE_ARM64EC" "$STAGE_AARCH64"; do
               SRC="$ST/usr/lib/wine/aarch64-windows"
               if [[ -d "$SRC" ]]; then
@@ -281,13 +299,11 @@ jobs:
             fi
 
             (cd "$WCP_DIR" && find system32 -maxdepth 1 -type f -name '*.dll' -printf '%f\n' | LC_ALL=C sort) > /tmp/s32.txt || true
-
             if [[ ! -s /tmp/s32.txt ]]; then
               echo "::error::No DLLs discovered in system32 for ${tag}"
               exit 1
             fi
 
-            # Build profile.json
             CLEAN_TAG="$base"
             jq -n \
               --arg VER "${CLEAN_TAG}" \
@@ -307,7 +323,7 @@ jobs:
             tar --zstd -C "$WCP_DIR" \
               --format=gnu --owner=0 --group=0 --numeric-owner \
               --sort=name \
-              -cf "${OUT}/fex-${CLEAN_TAG}.wcp" profile.json system32
+              -cf "${OUT}/FEXCore-${CLEAN_TAG}.wcp" profile.json system32
 
             echo "::endgroup::"
           done < "$LIST"
@@ -317,9 +333,9 @@ jobs:
           set -Eeuo pipefail
           NOTES="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
           printf '🤖 Automated FEXCore builds (2508+)\n\n' > "$NOTES"
-          if compgen -G "${GITHUB_WORKSPACE}/out/fex-*.wcp" > /dev/null; then
-            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/fex-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
-            ver="${latest#fex-}"; ver="${ver%.wcp}"
+          if compgen -G "${GITHUB_WORKSPACE}/out/FEXCore-*.wcp" > /dev/null; then
+            latest="$(ls -1 "${GITHUB_WORKSPACE}/out"/FEXCore-*.wcp | sed 's#.*/##' | LC_ALL=C sort -V | tail -n1)"
+            ver="${latest#FEXCore-}"; ver="${ver%.wcp}"
             echo "Current: ${ver}" >> "$NOTES"
           fi
           cat "$NOTES"
