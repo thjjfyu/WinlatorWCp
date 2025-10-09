@@ -98,7 +98,7 @@ jobs:
               fi
               ver="$prev"
             else
-              ver="$(printf '%s' "$line" | perl -ne 'print $1 if /^\s*Current:\s*([0-9]+(?:\.[0-9]+){1,2}(?:[-+][0-9A-Za-z().-]+)*)/')"
+              ver="$(printf '%s' "$line" | perl -ne 'print $1 if /^\s*Current:\s*([0-9]+(?:\.[0-9]+){0,2}(?:[-+][0-9A-Za-z().-]+)*)/')"
               if [ -z "$ver" ]; then
                 echo "::warning::could not parse version token from ${tag}; falling back to previous"
                 prev=$(jq -r --arg k "$key" '.[$k] // empty' /tmp/old.json)
