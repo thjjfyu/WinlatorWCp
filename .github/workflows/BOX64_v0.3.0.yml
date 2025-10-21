@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 60
 
     env:
-      BOX64_COMMIT: 62695ce5c1f74800b5bba57c104cca37eef1a11c
+      BOX64_COMMIT: 62695ce
       RELEASE_TAG: BOX64-v0.3.0
       NDK_VERSION: r26b
       API_LEVEL: 31
@@ -28,7 +28,7 @@ jobs:
           sudo apt-get -yqq install --no-install-recommends \
             git cmake make ninja-build python3 zstd file curl unzip ca-certificates binutils
 
-      - name: Checkout Box64 at exact commit 62695ce
+      - name: Checkout Box64 at commit 62695ce (v0.3.0)
         uses: actions/checkout@v4
         with:
           repository: ptitSeb/box64
@@ -117,8 +117,7 @@ jobs:
           cat > /tmp/release_notes.md <<'EOF'
           Box64 v0.3.0 for Winlator
           
-          Built from exact commit: 62695ce5c1f74800b5bba57c104cca37eef1a11c
-          Release date: July 9, 2024
+          Built from commit: 62695ce (v0.3.0 tag, July 9, 2024)
           Official release: https://github.com/ptitSeb/box64/releases/tag/v0.3.0
           
           Build configuration:
