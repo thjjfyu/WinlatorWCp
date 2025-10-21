@@ -114,18 +114,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES="Box64 v0.3.0 for Winlator
+          cat > /tmp/release_notes.md <<'EOF'
+          Box64 v0.3.0 for Winlator
           
-Built from official release: https://github.com/ptitSeb/box64/releases/tag/v0.3.0
-Android NDK: ${NDK_VERSION}
-API Level: ${API_LEVEL}
-Build Type: ${BUILD_TYPE}"
+          Built from official release: https://github.com/ptitSeb/box64/releases/tag/v0.3.0
+          - Android NDK: r26b
+          - API Level: 31
+          - Build Type: Release
+          EOF
           
           if ! gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" \
               --repo "${{ github.repository }}" \
               --title "Box64 v0.3.0" \
-              --notes "$NOTES"
+              --notes-file /tmp/release_notes.md
           fi
           
           gh release upload "${RELEASE_TAG}" \
