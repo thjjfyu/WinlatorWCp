@@ -2,6 +2,8 @@ name: Box64 v0.3.0 for Winlator
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
 
 permissions:
   contents: write
