@@ -35,6 +35,7 @@ jobs:
           ref: ${{ env.BOX64_COMMIT }}
           submodules: recursive
           path: box64
+          fetch-depth: 0
 
       - name: Download and setup Android NDK
         run: |
