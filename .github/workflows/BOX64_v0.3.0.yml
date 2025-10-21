@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 60
 
     env:
-      BOX64_VERSION: v0.3.0
+      BOX64_COMMIT: 62695ce5c1f74800b5bba57c104cca37eef1a11c
       RELEASE_TAG: BOX64-v0.3.0
       NDK_VERSION: r26b
       API_LEVEL: 31
@@ -26,14 +26,13 @@ jobs:
           sudo apt-get -yqq install --no-install-recommends \
             git cmake make ninja-build python3 zstd file curl unzip ca-certificates binutils
 
-      - name: Checkout Box64 v0.3.0
+      - name: Checkout Box64 at exact commit 62695ce
         uses: actions/checkout@v4
         with:
           repository: ptitSeb/box64
-          ref: ${{ env.BOX64_VERSION }}
+          ref: ${{ env.BOX64_COMMIT }}
           submodules: recursive
           path: box64
-          fetch-depth: 1
 
       - name: Download and setup Android NDK
         run: |
@@ -115,13 +114,16 @@ jobs:
           cat > /tmp/release_notes.md <<'EOF'
           Box64 v0.3.0 for Winlator
           
-          Built from official tag v0.3.0 (commit 62695ce, July 9, 2024)
-          https://github.com/ptitSeb/box64/releases/tag/v0.3.0
+          Built from exact commit: 62695ce5c1f74800b5bba57c104cca37eef1a11c
+          Release date: July 9, 2024
+          Official release: https://github.com/ptitSeb/box64/releases/tag/v0.3.0
           
-          Build details:
+          Build configuration:
           - Android NDK: r26b
           - API Level: 31
           - Build Type: Release
+          - ZYDIS3: disabled
+          - BOX32: disabled
           EOF
           
           if ! gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
