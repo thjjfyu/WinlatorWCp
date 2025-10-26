@@ -1,4 +1,4 @@
-name: Box64-Bionic
+name: Box64-Bionic Last commit
 
 on:
   workflow_dispatch:
@@ -181,7 +181,7 @@ jobs:
           if ! gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" \
               --repo "${{ github.repository }}" \
-              --title "Box64 Bionic" \
+              --title "Box64 Bionic Last commit" \
               --notes-file /tmp/notes.md
           else
             gh release edit "${RELEASE_TAG}" \
