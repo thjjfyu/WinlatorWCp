@@ -39,12 +39,13 @@ jobs:
           
           # Remove old meson and install latest via pip
           sudo apt-get remove -y meson || true
-          pip3 install --user meson
+          pip3 install --user meson mako
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Verify Meson version
+      - name: Verify build tools
         run: |
           meson --version
+          python3 -c "import mako; print('Mako version:', mako.__version__)"
           which meson
 
       - name: Checkout Mesa from GitLab
