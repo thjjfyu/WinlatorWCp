@@ -31,13 +31,12 @@ jobs:
             wayland-protocols libwayland-egl-backend-dev libvulkan-dev \
             glslang-tools libzstd-dev libexpat1-dev
 
-      - name: Checkout Mesa
-        uses: actions/checkout@v4
-        with:
-          repository: mesa3d/mesa
-          ref: ${{ env.MESA_VERSION }}
-          path: mesa
-          fetch-depth: 0
+      - name: Checkout Mesa from GitLab
+        run: |
+          git clone --depth 1 --branch ${{ env.MESA_VERSION }} \
+            https://gitlab.freedesktop.org/mesa/mesa.git mesa
+          cd mesa
+          git submodule update --init --recursive
 
       - name: Get Mesa commit info
         id: mesa_info
@@ -54,13 +53,13 @@ jobs:
           cd mesa
           
           echo "=== Applying patch 1: Turnip Winlator support ==="
-          curl -fsSL https://gitlab.freedesktop.org/Pipetto-crypto/mesa/-/commit/9575886914d4a4ca09694c42e261f568ee8575d7.patch | git apply -v || echo "Patch 1 failed"
+          curl -fsSL https://gitlab.freedesktop.org/Pipetto-crypto/mesa/-/commit/9575886914d4a4ca09694c42e261f568ee8575d7.patch | git apply -v || echo "Patch 1 failed or already applied"
           
           echo "=== Applying patch 2: Additional fixes ==="
-          curl -fsSL https://gitlab.freedesktop.org/Pipetto-crypto/mesa/-/commit/d264c66f9950cb2331c22c21172a07520fb38c68.patch | git apply -v || echo "Patch 2 failed"
+          curl -fsSL https://gitlab.freedesktop.org/Pipetto-crypto/mesa/-/commit/d264c66f9950cb2331c22c21172a07520fb38c68.patch | git apply -v || echo "Patch 2 failed or already applied"
           
           echo "=== Applying patch 3: Performance optimizations ==="
-          curl -fsSL https://gitlab.freedesktop.org/Pipetto-crypto/mesa/-/commit/96c4cb07b2a52124021c807f2c1ad4ab1f1cbf9c.patch | git apply -v || echo "Patch 3 failed"
+          curl -fsSL https://gitlab.freedesktop.org/Pipetto-crypto/mesa/-/commit/96c4cb07b2a52124021c807f2c1ad4ab1f1cbf9c.patch | git apply -v || echo "Patch 3 failed or already applied"
 
       - name: Configure Meson
         run: |
@@ -148,6 +147,7 @@ jobs:
           
           **Mesa Commit:** ${{ steps.mesa_info.outputs.commit }}
           **Build Date:** ${{ steps.mesa_info.outputs.date }}
+          **Source:** https://gitlab.freedesktop.org/mesa/mesa
           
           **Patches Applied:**
           - Winlator GlibC support patches from Pipetto-crypto
