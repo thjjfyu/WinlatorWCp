@@ -13,27 +13,39 @@ env:
 
 jobs:
   build:
-    name: Build Mesa Turnip
+    name: Build Mesa Turnip for Winlator
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
     steps:
       - name: Install build dependencies
         run: |
+          # Enable source repositories
+          sudo sed -i 's/^# deb-src/deb-src/' /etc/apt/sources.list
           sudo apt-get -yqq update
+          
+          # Install Mesa build dependencies
+          sudo apt-get -yqq build-dep mesa || true
+          
+          # Install additional build tools
           sudo apt-get -yqq install --no-install-recommends \
-            git build-essential ninja-build python3 python3-pip python3-setuptools \
-            python3-mako bison flex cmake zstd file curl wget ca-certificates \
+            git ninja-build pkg-config python3-pip python3-setuptools python3-wheel \
+            bison flex cmake zstd file curl wget ca-certificates \
             libdrm-dev libx11-dev libxext-dev libxdamage-dev libxcb-glx0-dev \
             libxcb-shm0-dev libx11-xcb-dev libxcb-dri2-0-dev libxcb-dri3-dev \
             libxcb-present-dev libxshmfence-dev libxxf86vm-dev libxrandr-dev \
-            llvm-dev libclang-dev clang lld libelf-dev libwayland-dev \
-            wayland-protocols libwayland-egl-backend-dev libvulkan-dev \
-            glslang-tools libzstd-dev libexpat1-dev
+            libelf-dev libwayland-dev wayland-protocols libwayland-egl-backend-dev \
+            libvulkan-dev glslang-tools libzstd-dev libexpat1-dev
           
-          # Upgrade Meson to latest version (>= 1.4.0)
-          sudo pip3 install --upgrade meson
+          # Remove old meson and install latest via pip
+          sudo apt-get remove -y meson || true
+          pip3 install --user meson
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Verify Meson version
+        run: |
           meson --version
+          which meson
 
       - name: Checkout Mesa from GitLab
         run: |
@@ -48,142 +60,171 @@ jobs:
           cd mesa
           COMMIT=$(git rev-parse --short HEAD)
           DATE=$(git log -1 --format=%cd --date=format:'%Y%m%d')
-          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
-          echo "date=$DATE" >> $GITHUB_OUTPUT
-          echo "version=${DATE}-${COMMIT}" >> $GITHUB_OUTPUT
-
-      - name: Apply Winlator GlibC patches
-        run: |
-          cd mesa
           
-          echo "=== Applying patch 1: Turnip Winlator support ==="
-          curl -fsSL https://gitlab.freedesktop.org/Pipetto-crypto/mesa/-/commit/9575886914d4a4ca09694c42e261f568ee8575d7.patch | git apply -v || echo "Patch 1 failed or already applied"
-          
-          echo "=== Applying patch 2: Additional fixes ==="
-          curl -fsSL https://gitlab.freedesktop.org/Pipetto-crypto/mesa/-/commit/d264c66f9950cb2331c22c21172a07520fb38c68.patch | git apply -v || echo "Patch 2 failed or already applied"
-          
-          echo "=== Applying patch 3: Performance optimizations ==="
-          curl -fsSL https://gitlab.freedesktop.org/Pipetto-crypto/mesa/-/commit/96c4cb07b2a52124021c807f2c1ad4ab1f1cbf9c.patch | git apply -v || echo "Patch 3 failed or already applied"
-
-      - name: Configure Meson
-        run: |
-          cd mesa
-          
-          meson setup build \
-            --prefix=/usr \
-            --libdir=lib/aarch64-linux-gnu \
-            --buildtype=release \
-            -Dplatforms=x11,wayland \
-            -Dvulkan-drivers=freedreno \
-            -Dgallium-drivers= \
-            -Dglx=disabled \
-            -Degl=disabled \
-            -Dgbm=disabled \
-            -Dtools=[] \
-            -Dllvm=enabled \
-            -Dshared-llvm=enabled \
-            -Dfreedreno-kmds=kgsl \
-            -Db_lto=true \
-            -Db_ndebug=true
-
-      - name: Build Mesa Turnip
-        run: |
-          cd mesa
-          ninja -C build -j$(nproc)
-
-      - name: Strip binaries
-        run: |
-          cd mesa/build
-          find . -name "*.so*" -type f -exec strip --strip-unneeded {} \; || true
-
-      - name: Package WCP for Winlator GlibC
-        id: package
-        run: |
-          VERSION="${{ steps.mesa_info.outputs.version }}"
-          WCP_NAME="mesa-turnip-${VERSION}.wcp"
-          
-          mkdir -p Turnip_WCP artifacts
-          
-          # Copy Turnip driver
-          if [ -f mesa/build/src/freedreno/vulkan/libvulkan_freedreno.so ]; then
-            cp mesa/build/src/freedreno/vulkan/libvulkan_freedreno.so Turnip_WCP/
+          # Try to get version from VERSION file
+          if [ -f "VERSION" ]; then
+            OFFICIAL_VERSION=$(cat VERSION)
           else
-            echo "ERROR: libvulkan_freedreno.so not found!"
-            find mesa/build -name "*vulkan*" -o -name "*freedreno*"
-            exit 1
+            OFFICIAL_VERSION=$(git describe --tags --always 2>/dev/null || echo "$DATE-$COMMIT")
           fi
           
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+          echo "version=${OFFICIAL_VERSION}" >> $GITHUB_OUTPUT
+          echo "full_version=${DATE}-${COMMIT}" >> $GITHUB_OUTPUT
+
+      - name: Configure Mesa for Winlator
+        run: |
+          cd mesa
+          
+          # Create Winlator prefix directory
+          sudo mkdir -p /data/data/com.winlator/files/rootfs/usr
+          sudo chmod 777 -R /data
+          
+          # Configure Mesa with Winlator-compatible settings
+          meson setup builddir \
+            --libdir=lib \
+            -Dprefix=/data/data/com.winlator/files/rootfs/usr \
+            -Dbuildtype=release \
+            -Doptimization=3 \
+            -Db_lto=true \
+            -Dplatforms=x11 \
+            -Degl-native-platform=x11 \
+            -Dglx=dri \
+            -Dglx-direct=true \
+            -Dopengl=true \
+            -Dgles1=enabled \
+            -Dgles2=enabled \
+            -Dglvnd=disabled \
+            -Degl=enabled \
+            -Dllvm=disabled \
+            -Dshared-llvm=disabled \
+            -Dshader-cache=enabled \
+            -Dxlib-lease=enabled \
+            -Dvulkan-beta=true \
+            -Dgallium-drivers=zink,freedreno \
+            -Dvulkan-drivers=freedreno \
+            -Dfreedreno-kmds=msm,kgsl \
+            -Dvideo-codecs=all \
+            -Dgbm=enabled \
+            -Dtools=drm-shim,freedreno
+
+      - name: Build Mesa
+        run: |
+          cd mesa
+          ninja -C builddir -j$(nproc)
+          ninja -C builddir install
+
+      - name: Create build info
+        run: |
+          cat > /data/data/com.winlator/files/rootfs/usr/mesa-build-info.txt << EOF
+          Mesa Build Information for Winlator
+          ====================================
+          Version: ${{ steps.mesa_info.outputs.version }}
+          Commit: ${{ steps.mesa_info.outputs.commit }}
+          Build Date: ${{ steps.mesa_info.outputs.date }}
+          Build Type: Release (Optimized with LTO)
+          Target: aarch64 Winlator GlibC
+          
+          Drivers:
+          - Gallium: zink, freedreno
+          - Vulkan: freedreno (Turnip)
+          - OpenGL: Enabled
+          - OpenGL ES 1.x/2.x: Enabled
+          - EGL: Enabled
+          - GBM: Enabled
+          
+          Features:
+          - GLX DRI: Enabled
+          - Shader Cache: Enabled
+          - Video Codecs: All
+          - Freedreno KMDs: msm, kgsl
+          EOF
+
+      - name: Package WCP for Winlator
+        id: package
+        run: |
+          VERSION="${{ steps.mesa_info.outputs.full_version }}"
+          WCP_NAME="mesa-turnip-${VERSION}.wcp"
+          
+          mkdir -p Mesa_WCP artifacts
+          
+          # Copy all Mesa files
+          cp -r /data/data/com.winlator/files/rootfs/usr/* Mesa_WCP/
+          
           # Create profile.json for WCP
-          cat > Turnip_WCP/profile.json <<JSON
+          cat > Mesa_WCP/profile.json <<JSON
           {
-            "type": "Turnip",
+            "type": "Mesa",
             "versionName": "${VERSION}",
             "versionCode": $(date +%Y%m%d),
-            "description": "Mesa Turnip Driver for Winlator GlibC (commit ${{ steps.mesa_info.outputs.commit }})",
-            "files": [
-              { "source": "libvulkan_freedreno.so", "target": "\${libdir}/libvulkan_freedreno.so" }
-            ]
+            "description": "Mesa Turnip + Zink for Winlator GlibC (commit ${{ steps.mesa_info.outputs.commit }})",
+            "files": []
           }
           JSON
           
           # Create WCP package
-          cd Turnip_WCP
+          cd Mesa_WCP
           tar --zstd --format=gnu --owner=0 --group=0 --numeric-owner --sort=name \
-              -cf "../artifacts/${WCP_NAME}" profile.json libvulkan_freedreno.so
+              -cf "../artifacts/${WCP_NAME}" .
           
           echo "wcp_name=${WCP_NAME}" >> $GITHUB_OUTPUT
           
-          # Get driver info
           cd ..
-          ls -lh Turnip_WCP/libvulkan_freedreno.so
-          file Turnip_WCP/libvulkan_freedreno.so
-          readelf -d Turnip_WCP/libvulkan_freedreno.so | grep NEEDED || true
+          ls -lh artifacts/
 
       - name: Create/Update Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           RELEASE_TAG="MESA-TURNIP"
-          VERSION="${{ steps.mesa_info.outputs.version }}"
+          VERSION="${{ steps.mesa_info.outputs.full_version }}"
           
           cat > /tmp/notes.md <<EOF
-          Mesa Turnip Driver for Winlator GlibC
+          Mesa Turnip + Zink Drivers for Winlator GlibC
           
-          **Mesa Commit:** ${{ steps.mesa_info.outputs.commit }}
+          **Mesa Version:** ${{ steps.mesa_info.outputs.version }}
+          **Commit:** ${{ steps.mesa_info.outputs.commit }}
           **Build Date:** ${{ steps.mesa_info.outputs.date }}
           **Source:** https://gitlab.freedesktop.org/mesa/mesa
           
-          **Patches Applied:**
-          - Winlator GlibC support patches from Pipetto-crypto
-          - Turnip optimizations for Android
+          **Drivers & Features:**
+          - ✅ **Gallium Drivers:** zink, freedreno
+          - ✅ **Vulkan Driver:** freedreno (Turnip)
+          - ✅ **OpenGL:** Full support
+          - ✅ **OpenGL ES:** 1.x and 2.x
+          - ✅ **EGL:** Enabled
+          - ✅ **GBM:** Enabled
+          - ✅ **GLX DRI:** Direct rendering
+          - ✅ **Shader Cache:** Enabled
+          - ✅ **Video Codecs:** All supported
+          - ✅ **Freedreno KMDs:** msm, kgsl (both)
+          
+          **Build Configuration:**
+          - Release build with optimization level 3
+          - LTO (Link Time Optimization) enabled
+          - X11 platform support
+          - LLVM disabled (not needed for ARM)
           
           **Installation (Winlator GlibC 7.1.2+):**
           1. Download the .wcp file
           2. In Winlator, open side menu → Contents
-          3. Select "Turnip" in dropdown
+          3. Select "Turnip" or "Mesa" in dropdown
           4. Tap "Install Content" and select the .wcp file
-          5. Select the driver in Container settings
-          
-          **Manual Installation (Native GlibC):**
-          - Copy \`libvulkan_freedreno.so\` to \`z:/usr/lib\`
-          
-          **Build details:**
-          - Ubuntu Latest
-          - LLVM enabled with LTO
-          - Freedreno KMD: KGSL
-          - Platform: ARM64
+          5. Restart container if needed
           
           **Credits:**
           - Mesa3D Team
-          - Pipetto-crypto (patches)
-          - K11MCH1 (original build scripts)
+          - afeimod (Winlator Mod build config)
           - Winlator community
+          
+          **Note:** This is a complete Mesa build with all necessary components for Winlator, not just Vulkan driver.
           EOF
           
           if ! gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" \
               --repo "${{ github.repository }}" \
-              --title "Mesa Turnip Drivers" \
+              --title "Mesa Turnip + Zink Drivers" \
               --notes-file /tmp/notes.md
           else
             gh release edit "${RELEASE_TAG}" \
