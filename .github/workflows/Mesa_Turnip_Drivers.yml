@@ -14,7 +14,7 @@ env:
 jobs:
   build:
     name: Build Mesa Turnip
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     timeout-minutes: 180
 
     steps:
@@ -164,7 +164,7 @@ jobs:
           - Copy \`libvulkan_freedreno.so\` to \`z:/usr/lib\`
           
           **Build details:**
-          - Ubuntu 20.04 Focal
+          - Ubuntu Latest
           - LLVM enabled with LTO
           - Freedreno KMD: KGSL
           - Platform: ARM64
