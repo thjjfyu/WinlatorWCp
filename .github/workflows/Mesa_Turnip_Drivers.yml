@@ -22,7 +22,7 @@ jobs:
         run: |
           sudo apt-get -yqq update
           sudo apt-get -yqq install --no-install-recommends \
-            git build-essential meson ninja-build python3 python3-pip python3-setuptools \
+            git build-essential ninja-build python3 python3-pip python3-setuptools \
             python3-mako bison flex cmake zstd file curl wget ca-certificates \
             libdrm-dev libx11-dev libxext-dev libxdamage-dev libxcb-glx0-dev \
             libxcb-shm0-dev libx11-xcb-dev libxcb-dri2-0-dev libxcb-dri3-dev \
@@ -30,6 +30,10 @@ jobs:
             llvm-dev libclang-dev clang lld libelf-dev libwayland-dev \
             wayland-protocols libwayland-egl-backend-dev libvulkan-dev \
             glslang-tools libzstd-dev libexpat1-dev
+          
+          # Upgrade Meson to latest version (>= 1.4.0)
+          sudo pip3 install --upgrade meson
+          meson --version
 
       - name: Checkout Mesa from GitLab
         run: |
